@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     app_env: str = "dev"
     app_name: str = "Remote Desktop Manager"
     app_secret_key: str = "change-me"
-    database_url: str = "postgresql://rdm:rdm-dev-password@postgres:5432/rdm"
+    database_url: str = "postgresql+psycopg://nimda:change-me@postgres:5432/rdm"
     redis_url: str = "redis://redis:6379/0"
     celery_broker_url: str = "redis://redis:6379/1"
     celery_result_backend: str = "redis://redis:6379/2"
@@ -25,6 +25,9 @@ class Settings(BaseSettings):
             if origin.strip()
         ]
 
+    @cached_property
+    def psycopg_database_url(self) -> str:
+        return self.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
 
 settings = Settings()
-

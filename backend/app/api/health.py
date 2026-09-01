@@ -17,7 +17,7 @@ def ready() -> dict[str, str]:
     checks: dict[str, str] = {}
 
     try:
-        with psycopg.connect(settings.database_url, connect_timeout=3) as connection:
+        with psycopg.connect(settings.psycopg_database_url, connect_timeout=3) as connection:
             with connection.cursor() as cursor:
                 cursor.execute("SELECT 1")
                 cursor.fetchone()

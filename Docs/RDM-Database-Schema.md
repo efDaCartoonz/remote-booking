@@ -400,14 +400,25 @@ where status_code not in (5, 6);
 ```sql
 create extension if not exists btree_gist;
 
+create function make_connection_card_planned_range(
+  planned_start_at timestamptz,
+  planned_duration_minutes integer
+)
+returns tstzrange as $$
+  select tstzrange(
+    planned_start_at,
+    planned_start_at + planned_duration_minutes * interval '1 minute',
+    '[)'
+  )
+$$ language sql immutable;
+
 alter table connection_cards
 add constraint ex_connection_cards_l2_no_overlap
 exclude using gist (
   l2_engineer_id with =,
-  tstzrange(
+  make_connection_card_planned_range(
     planned_start_at,
-    planned_start_at + make_interval(mins => planned_duration_minutes),
-    '[)'
+    planned_duration_minutes
   ) with &&
 )
 where (

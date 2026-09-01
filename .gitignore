@@ -6,6 +6,8 @@ omnidesk-api-key
 *api-key*
 *token*
 *secret*
+db-password*.txt
+*-password-*.txt
 *.pem
 *.key
 __pycache__/
@@ -22,3 +24,8 @@ postgres-data/
 redis-data/
 Docs/*-v0*.md
 RDM-*-v0*.md
+
+# Локальный рабочий контекст Codex: хранится рядом с проектом, но не версионируется.
+/PROJECT.md
+/decisions/
+/skills/
