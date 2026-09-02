@@ -9,6 +9,7 @@ from app.cards.service import CardService
 from app.frame.omnidesk import (
     OmnideskTicket,
     OmnideskTicketClient,
+    OmnideskTicketNotFoundError,
     OmnideskTicketReopenError,
 )
 from app.frame.schemas import FrameCardCreateRequest
@@ -141,7 +142,10 @@ class FrameService:
         return ticket
 
     def _get_available_ticket(self, ticket_number: str) -> OmnideskTicket:
-        ticket = self.omnidesk_client.get_ticket(ticket_number)
+        try:
+            ticket = self.omnidesk_client.get_ticket(ticket_number)
+        except OmnideskTicketNotFoundError as exc:
+            raise FrameTicketAccessError("ticket_not_available") from exc
         if ticket is None or ticket.deleted or ticket.spam:
             raise FrameTicketAccessError("ticket_not_available")
         return ticket

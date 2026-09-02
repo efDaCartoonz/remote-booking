@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from app.cards.repository import CardRepository, PostgresCardRepository
 from app.db import get_db
 from app.frame.omnidesk import (
+    OmnideskInvalidResponseError,
     OmnideskTicketClient,
     OmnideskTicketReopenError,
     OmnideskUnavailableError,
@@ -143,6 +144,10 @@ def create_frame_card(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.detail
         ) from exc
+    except OmnideskInvalidResponseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=exc.detail
+        ) from exc
     except OmnideskTicketReopenError as exc:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT, detail=exc.detail
@@ -160,6 +165,10 @@ def _handle_ticket_check(operation: Callable[[], T]) -> T:
     except OmnideskUnavailableError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.detail
+        ) from exc
+    except OmnideskInvalidResponseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=exc.detail
         ) from exc
 
 

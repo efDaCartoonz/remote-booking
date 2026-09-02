@@ -18,7 +18,9 @@ class Settings(BaseSettings):
     auth_cookie_samesite: str = "lax"
     frame_session_ttl_minutes: int = 15
     omnidesk_base_url: str = "https://iridi.omnidesk.ru"
+    omnidesk_staff_email: str = ""
     omnidesk_api_key: str = ""
+    omnidesk_timeout_seconds: float = 5.0
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
