@@ -9,12 +9,17 @@ from app.cards.service import CardService
 from app.frame.omnidesk import (
     OmnideskTicket,
     OmnideskTicketClient,
+    OmnideskTicketReopenError,
 )
 from app.frame.schemas import FrameCardCreateRequest
 from app.frame.sessions import CreatedFrameSession, FrameSession, FrameSessionStore
 
 
 class FrameSessionNotFoundError(Exception):
+    pass
+
+
+class FrameSessionOriginMismatchError(Exception):
     pass
 
 
@@ -65,12 +70,16 @@ class FrameService:
             origin=origin,
         )
 
-    def get_session(self, token: str | None) -> FrameSession:
+    def get_session(
+        self, token: str | None, request_origin: str | None
+    ) -> FrameSession:
         if not token:
             raise FrameSessionNotFoundError
         session = self.session_store.get_session(token)
         if session is None:
             raise FrameSessionNotFoundError
+        if session.origin and request_origin and request_origin != session.origin:
+            raise FrameSessionOriginMismatchError
         return session
 
     def list_cards(self, session: FrameSession) -> list[CardRecord]:
@@ -140,9 +149,17 @@ class FrameService:
     def _ensure_ticket_open(self, ticket: OmnideskTicket) -> OmnideskTicket:
         if ticket.status != "closed":
             return ticket
-        reopened = self.omnidesk_client.reopen_ticket(ticket.number)
-        if reopened.deleted or reopened.spam or reopened.user_id != ticket.user_id:
+        self.omnidesk_client.reopen_ticket(ticket.number)
+        reopened = self.omnidesk_client.get_ticket(ticket.number)
+        if (
+            reopened is None
+            or reopened.deleted
+            or reopened.spam
+            or reopened.user_id != ticket.user_id
+        ):
             raise FrameTicketAccessError("ticket_not_available")
+        if reopened.status != "open":
+            raise OmnideskTicketReopenError("omnidesk_ticket_not_open_after_reopen")
         return reopened
 
     def _validate_planning_window(self, planned_start_at: datetime) -> None:

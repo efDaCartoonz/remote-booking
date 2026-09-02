@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from ipaddress import ip_address
 from typing import Annotated, TypeVar
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
@@ -29,6 +30,7 @@ from app.frame.service import (
     FrameCardValidationError,
     FrameService,
     FrameSessionNotFoundError,
+    FrameSessionOriginMismatchError,
     FrameTicketAccessError,
 )
 from app.frame.sessions import (
@@ -63,15 +65,21 @@ def get_frame_service(
 
 
 def get_current_frame_session(
+    request: Request,
     service: Annotated[FrameService, Depends(get_frame_service)],
     token: Annotated[str | None, Header(alias=FRAME_TOKEN_HEADER)] = None,
 ) -> FrameSession:
     try:
-        return service.get_session(token)
+        return service.get_session(token, _frame_request_origin(request))
     except FrameSessionNotFoundError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="frame_session_not_authenticated",
+        ) from exc
+    except FrameSessionOriginMismatchError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="frame_session_origin_mismatch",
         ) from exc
 
 
@@ -88,7 +96,7 @@ def create_frame_session(
     created_session = _handle_ticket_check(
         lambda: service.create_session(
             omnidesk_ticket_number=payload.omnidesk_ticket_number,
-            origin=request.headers.get("origin"),
+            origin=_frame_request_origin(request),
         )
     )
     return frame_session_response(created_session.session, created_session.token)
@@ -164,3 +172,20 @@ def _client_ip(request: Request) -> str | None:
     except ValueError:
         return None
     return candidate
+
+
+def _frame_request_origin(request: Request) -> str | None:
+    origin = request.headers.get("origin")
+    if origin:
+        return _normalize_origin(origin)
+    referer = request.headers.get("referer")
+    if referer:
+        return _normalize_origin(referer)
+    return None
+
+
+def _normalize_origin(value: str) -> str:
+    parsed = urlsplit(value)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return value

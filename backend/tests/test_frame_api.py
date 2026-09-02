@@ -62,15 +62,18 @@ class FakeFrameSessionStore:
 class FakeOmnideskTicketClient:
     def __init__(self) -> None:
         self.tickets: dict[str, OmnideskTicket] = {}
+        self.get_calls: list[str] = []
         self.reopen_calls: list[str] = []
+        self.reopen_status = "open"
 
     def get_ticket(self, ticket_number: str) -> OmnideskTicket | None:
+        self.get_calls.append(ticket_number)
         return self.tickets.get(ticket_number)
 
     def reopen_ticket(self, ticket_number: str) -> OmnideskTicket:
         self.reopen_calls.append(ticket_number)
         ticket = self.tickets[ticket_number]
-        reopened = replace(ticket, status="open")
+        reopened = replace(ticket, status=self.reopen_status)
         self.tickets[ticket_number] = reopened
         return reopened
 
@@ -110,6 +113,17 @@ def create_frame_session(client: TestClient, ticket_number: str = "123-456789") 
         "/api/v1/frame/sessions",
         json={"omnidesk_ticket_number": ticket_number},
         headers={"origin": "https://iridi.omnidesk.ru"},
+    )
+    assert response.status_code == 201
+    return response.json()["token"]
+
+
+def create_frame_session_without_origin(
+    client: TestClient, ticket_number: str = "123-456789"
+) -> str:
+    response = client.post(
+        "/api/v1/frame/sessions",
+        json={"omnidesk_ticket_number": ticket_number},
     )
     assert response.status_code == 201
     return response.json()["token"]
@@ -249,6 +263,168 @@ def test_frame_api_creates_card_only_for_session_ticket() -> None:
     assert stored.client_id == 1
     assert repository.events[-1]["actor_type"] == ActorType.FRAME_CLIENT
     assert repository.audit[-1]["actor_type"] == ActorType.FRAME_CLIENT
+
+
+def test_frame_api_rejects_card_create_when_closed_ticket_is_not_reopened() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    omnidesk_client.reopen_status = "closed"
+    seed_ticket(omnidesk_client, status="closed")
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(client)
+
+    response = client.post(
+        "/api/v1/frame/cards",
+        json={"planned_start_at": future_start()},
+        headers={FRAME_TOKEN_HEADER: token},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "omnidesk_ticket_not_open_after_reopen"
+    assert omnidesk_client.reopen_calls == ["123-456789"]
+    assert repository.cards == {}
+
+
+def test_frame_api_rereads_ticket_after_successful_reopen_before_create() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(omnidesk_client, status="closed")
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(client)
+    omnidesk_client.get_calls.clear()
+
+    response = client.post(
+        "/api/v1/frame/cards",
+        json={"planned_start_at": future_start()},
+        headers={FRAME_TOKEN_HEADER: token},
+    )
+
+    assert response.status_code == 201
+    assert omnidesk_client.reopen_calls == ["123-456789"]
+    assert omnidesk_client.get_calls == ["123-456789", "123-456789"]
+    assert len(repository.cards) == 1
+
+
+def test_frame_api_accepts_matching_origin_for_existing_frame_session() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(omnidesk_client)
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(client)
+
+    response = client.get(
+        "/api/v1/frame/cards",
+        headers={
+            FRAME_TOKEN_HEADER: token,
+            "origin": "https://iridi.omnidesk.ru",
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_frame_api_accepts_matching_referer_for_existing_frame_session() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(omnidesk_client)
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(client)
+
+    response = client.get(
+        "/api/v1/frame/cards",
+        headers={
+            FRAME_TOKEN_HEADER: token,
+            "referer": "https://iridi.omnidesk.ru/l_rus/user/cases/record/123-456789/",
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_frame_api_rejects_mismatched_origin_for_existing_frame_session() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(omnidesk_client)
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(client)
+
+    response = client.get(
+        "/api/v1/frame/cards",
+        headers={
+            FRAME_TOKEN_HEADER: token,
+            "origin": "https://example.invalid",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "frame_session_origin_mismatch"
+
+
+def test_frame_api_allows_missing_origin_or_referer_for_existing_frame_session() -> (
+    None
+):
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(omnidesk_client)
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(client)
+
+    response = client.get("/api/v1/frame/cards", headers={FRAME_TOKEN_HEADER: token})
+
+    assert response.status_code == 200
+
+
+def test_frame_api_allows_session_created_without_origin_or_referer() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(omnidesk_client)
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session_without_origin(client)
+
+    response = client.get(
+        "/api/v1/frame/cards",
+        headers={
+            FRAME_TOKEN_HEADER: token,
+            "origin": "https://iridi.omnidesk.ru",
+        },
+    )
+
+    assert response.status_code == 200
 
 
 def test_frame_api_rejects_create_when_active_card_exists_for_ticket() -> None:
