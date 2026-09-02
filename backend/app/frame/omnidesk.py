@@ -25,9 +25,11 @@ class OmnideskTicket:
 
 
 class OmnideskTicketClient(Protocol):
-    def get_ticket(self, ticket_number: str) -> OmnideskTicket | None: ...
+    def get_ticket_by_id(
+        self, case_id: str, ticket_number: str
+    ) -> OmnideskTicket | None: ...
 
-    def reopen_ticket(self, ticket_number: str) -> OmnideskTicket: ...
+    def reopen_ticket(self, case_id: str, ticket_number: str) -> OmnideskTicket: ...
 
 
 class OmnideskUnavailableError(Exception):
@@ -44,6 +46,12 @@ class OmnideskInvalidResponseError(Exception):
 
 class OmnideskTicketNotFoundError(Exception):
     def __init__(self, detail: str = "omnidesk_ticket_not_found") -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+class OmnideskTicketMismatchError(Exception):
+    def __init__(self, detail: str = "omnidesk_ticket_id_number_mismatch") -> None:
         self.detail = detail
         super().__init__(detail)
 
@@ -75,38 +83,38 @@ class HttpOmnideskTicketClient:
             },
         )
 
-    def get_ticket(self, ticket_number: str) -> OmnideskTicket | None:
+    def get_ticket_by_id(
+        self, case_id: str, ticket_number: str
+    ) -> OmnideskTicket | None:
         payload = self._request(
             "GET",
-            "/api/cases.json",
-            params={
-                "case_number": f"^{ticket_number}^",
-                "limit": 10,
-            },
+            f"/api/cases/{quote(case_id, safe='')}.json",
         )
-        case = _find_case_by_number(payload, ticket_number)
-        if case is None:
-            raise OmnideskTicketNotFoundError
-        return _parse_ticket(case)
+        ticket = _parse_ticket(payload.get("case"))
+        if ticket.number != ticket_number:
+            raise OmnideskTicketMismatchError
+        return ticket
 
-    def reopen_ticket(self, ticket_number: str) -> OmnideskTicket:
-        ticket = self.get_ticket(ticket_number)
-        if ticket is None or ticket.case_id is None:
-            raise OmnideskTicketReopenError("omnidesk_ticket_id_missing")
-
+    def reopen_ticket(self, case_id: str, ticket_number: str) -> OmnideskTicket:
         try:
             payload = self._request(
                 "PUT",
-                f"/api/cases/{quote(ticket.case_id, safe='')}.json",
+                f"/api/cases/{quote(case_id, safe='')}.json",
                 json={"case": {"status": "open"}},
             )
             reopened = _parse_ticket(payload.get("case"))
         except OmnideskUnavailableError:
             raise
-        except (OmnideskInvalidResponseError, OmnideskTicketNotFoundError) as exc:
+        except (
+            OmnideskInvalidResponseError,
+            OmnideskTicketMismatchError,
+            OmnideskTicketNotFoundError,
+        ) as exc:
             raise OmnideskTicketReopenError from exc
 
-        if reopened.number != ticket.number:
+        if reopened.case_id != case_id:
+            raise OmnideskTicketReopenError("omnidesk_reopened_ticket_id_mismatch")
+        if reopened.number != ticket_number:
             raise OmnideskTicketReopenError("omnidesk_reopened_ticket_mismatch")
         if reopened.status != "open":
             raise OmnideskTicketReopenError("omnidesk_ticket_not_open_after_reopen")
@@ -145,10 +153,12 @@ class HttpOmnideskTicketClient:
 
 
 class NotConfiguredOmnideskTicketClient:
-    def get_ticket(self, ticket_number: str) -> OmnideskTicket | None:
+    def get_ticket_by_id(
+        self, case_id: str, ticket_number: str
+    ) -> OmnideskTicket | None:
         raise OmnideskUnavailableError("omnidesk_client_not_configured")
 
-    def reopen_ticket(self, ticket_number: str) -> OmnideskTicket:
+    def reopen_ticket(self, case_id: str, ticket_number: str) -> OmnideskTicket:
         raise OmnideskUnavailableError("omnidesk_client_not_configured")
 
 
@@ -161,20 +171,6 @@ def get_omnidesk_ticket_client() -> OmnideskTicketClient:
             timeout_seconds=settings.omnidesk_timeout_seconds,
         )
     return NotConfiguredOmnideskTicketClient()
-
-
-def _find_case_by_number(
-    payload: dict[str, Any], ticket_number: str
-) -> dict[str, Any] | None:
-    for value in payload.values():
-        if not isinstance(value, dict):
-            continue
-        case = value.get("case")
-        if not isinstance(case, dict):
-            continue
-        if _optional_string(case.get("case_number")) == ticket_number:
-            return case
-    return None
 
 
 def _parse_ticket(case: Any) -> OmnideskTicket:

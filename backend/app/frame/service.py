@@ -9,6 +9,7 @@ from app.cards.service import CardService
 from app.frame.omnidesk import (
     OmnideskTicket,
     OmnideskTicketClient,
+    OmnideskTicketMismatchError,
     OmnideskTicketNotFoundError,
     OmnideskTicketReopenError,
 )
@@ -58,13 +59,15 @@ class FrameService:
     def create_session(
         self,
         *,
+        omnidesk_case_id: str,
         omnidesk_ticket_number: str,
         origin: str | None,
     ) -> CreatedFrameSession:
-        ticket = self._get_available_ticket(omnidesk_ticket_number)
+        ticket = self._get_available_ticket(omnidesk_case_id, omnidesk_ticket_number)
         if not ticket.user_id:
             raise FrameTicketAccessError("ticket_client_missing")
         return self.session_store.create_session(
+            omnidesk_case_id=ticket.case_id,
             omnidesk_ticket_number=ticket.number,
             omnidesk_user_id=ticket.user_id,
             omnidesk_company_id=ticket.company_id,
@@ -136,25 +139,33 @@ class FrameService:
         )
 
     def _validate_current_ticket(self, session: FrameSession) -> OmnideskTicket:
-        ticket = self._get_available_ticket(session.omnidesk_ticket_number)
+        ticket = self._get_available_ticket(
+            session.omnidesk_case_id, session.omnidesk_ticket_number
+        )
         if ticket.user_id != session.omnidesk_user_id:
             raise FrameTicketAccessError("ticket_client_mismatch")
         return ticket
 
-    def _get_available_ticket(self, ticket_number: str) -> OmnideskTicket:
+    def _get_available_ticket(
+        self, case_id: str, ticket_number: str
+    ) -> OmnideskTicket:
         try:
-            ticket = self.omnidesk_client.get_ticket(ticket_number)
+            ticket = self.omnidesk_client.get_ticket_by_id(case_id, ticket_number)
         except OmnideskTicketNotFoundError as exc:
             raise FrameTicketAccessError("ticket_not_available") from exc
+        except OmnideskTicketMismatchError as exc:
+            raise FrameTicketAccessError(exc.detail) from exc
         if ticket is None or ticket.deleted or ticket.spam:
             raise FrameTicketAccessError("ticket_not_available")
+        if ticket.case_id != case_id or ticket.number != ticket_number:
+            raise FrameTicketAccessError("omnidesk_ticket_id_number_mismatch")
         return ticket
 
     def _ensure_ticket_open(self, ticket: OmnideskTicket) -> OmnideskTicket:
         if ticket.status != "closed":
             return ticket
-        self.omnidesk_client.reopen_ticket(ticket.number)
-        reopened = self.omnidesk_client.get_ticket(ticket.number)
+        self.omnidesk_client.reopen_ticket(ticket.case_id, ticket.number)
+        reopened = self.omnidesk_client.get_ticket_by_id(ticket.case_id, ticket.number)
         if (
             reopened is None
             or reopened.deleted

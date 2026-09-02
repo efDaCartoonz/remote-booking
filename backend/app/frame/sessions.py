@@ -16,6 +16,7 @@ FRAME_SESSION_PERMISSIONS = ("cards:read", "cards:create")
 
 @dataclass(frozen=True)
 class FrameSession:
+    omnidesk_case_id: str
     omnidesk_ticket_number: str
     omnidesk_user_id: str
     created_at: datetime
@@ -35,6 +36,7 @@ class FrameSessionStore(Protocol):
     def create_session(
         self,
         *,
+        omnidesk_case_id: str,
         omnidesk_ticket_number: str,
         omnidesk_user_id: str,
         omnidesk_company_id: str | None,
@@ -51,6 +53,7 @@ class RedisFrameSessionStore:
     def create_session(
         self,
         *,
+        omnidesk_case_id: str,
         omnidesk_ticket_number: str,
         omnidesk_user_id: str,
         omnidesk_company_id: str | None,
@@ -60,6 +63,7 @@ class RedisFrameSessionStore:
         now = datetime.now(UTC)
         ttl_seconds = settings.frame_session_ttl_minutes * 60
         session = FrameSession(
+            omnidesk_case_id=omnidesk_case_id,
             omnidesk_ticket_number=omnidesk_ticket_number,
             omnidesk_user_id=omnidesk_user_id,
             omnidesk_company_id=omnidesk_company_id,
@@ -86,6 +90,7 @@ class RedisFrameSessionStore:
         if expires_at <= datetime.now(UTC):
             return None
         return FrameSession(
+            omnidesk_case_id=data["omnidesk_case_id"],
             omnidesk_ticket_number=data["omnidesk_ticket_number"],
             omnidesk_user_id=data["omnidesk_user_id"],
             omnidesk_company_id=data.get("omnidesk_company_id"),

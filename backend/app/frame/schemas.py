@@ -13,11 +13,13 @@ from app.cards.schemas import TicketNumber
 from app.frame.sessions import FrameSession
 
 TimezoneName = Annotated[str, Field(min_length=1, max_length=64)]
+OmnideskCaseId = Annotated[str, Field(min_length=1, max_length=32, pattern=r"^\d+$")]
 
 
 class FrameSessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
+    omnidesk_case_id: OmnideskCaseId
     omnidesk_ticket_number: TicketNumber
 
 
