@@ -12,6 +12,10 @@ class Settings(BaseSettings):
     celery_broker_url: str = "redis://redis:6379/1"
     celery_result_backend: str = "redis://redis:6379/2"
     backend_cors_origins: str = "http://localhost:8080,http://127.0.0.1:8080"
+    auth_session_cookie_name: str = "rdm_session"
+    auth_session_ttl_minutes: int = 480
+    auth_cookie_secure: bool = True
+    auth_cookie_samesite: str = "lax"
     omnidesk_base_url: str = "https://iridi.omnidesk.ru"
     omnidesk_api_key: str = ""
 
