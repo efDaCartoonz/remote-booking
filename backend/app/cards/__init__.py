@@ -1,0 +1,1 @@
+"""Remote connection card domain."""

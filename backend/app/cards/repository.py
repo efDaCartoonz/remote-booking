@@ -1,0 +1,382 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any, Protocol
+from uuid import UUID
+
+import psycopg
+from psycopg.types.json import Jsonb
+
+from app.cards.constants import ActorType, AuditAction, CardEventType, CardStatus
+
+
+@dataclass(frozen=True)
+class CardRecord:
+    id: int
+    public_id: UUID
+    number: str
+    omnidesk_ticket_number: str
+    client_id: int | None
+    status_code: int
+    criticality_code: int
+    urgency_code: int
+    planned_start_at: datetime
+    planned_duration_minutes: int
+    client_timezone_at_creation: str | None
+    timezone_source_code: int | None
+    actual_start_at: datetime | None
+    actual_end_at: datetime | None
+    l1_owner_id: int | None
+    l2_engineer_id: int | None
+    assignment_method_code: int
+    unsuccessful_cycle_count: int
+    client_contact_type_code: int | None
+    client_contact_value: str | None
+    description: str | None
+    urgent_reason: str | None
+    out_of_hours_flag: bool
+    retroactive_flag: bool
+    overdue_flag: bool
+    result_code: int | None
+    engineer_report: str | None
+    created_source_code: int
+    created_by_id: int | None
+    created_at: datetime
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
+class CreateCardData:
+    omnidesk_ticket_number: str
+    planned_start_at: datetime
+    planned_duration_minutes: int
+    created_by_id: int
+    status: CardStatus
+    client_id: int | None = None
+    criticality_code: int = 0
+    urgency_code: int = 0
+    client_timezone_at_creation: str | None = None
+    timezone_source_code: int | None = None
+    l1_owner_id: int | None = None
+    l2_engineer_id: int | None = None
+    assignment_method_code: int = 0
+    client_contact_type_code: int | None = None
+    client_contact_value: str | None = None
+    description: str | None = None
+    urgent_reason: str | None = None
+    out_of_hours_flag: bool = False
+    retroactive_flag: bool = False
+
+
+@dataclass(frozen=True)
+class StatusUpdateData:
+    status: CardStatus
+    actor_user_id: int
+    l2_engineer_id: int | None = None
+    update_l2_engineer_id: bool = False
+    actual_start_at: datetime | None = None
+    actual_end_at: datetime | None = None
+    result_code: int | None = None
+    engineer_report: str | None = None
+
+
+class CardRepository(Protocol):
+    def create_card(self, data: CreateCardData) -> CardRecord: ...
+
+    def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None: ...
+
+    def get_card_by_public_id_for_update(self, public_id: UUID) -> CardRecord | None: ...
+
+    def update_card_status(self, public_id: UUID, data: StatusUpdateData) -> CardRecord | None: ...
+
+    def add_card_event(
+        self,
+        *,
+        card_id: int,
+        event_type: CardEventType,
+        actor_user_id: int,
+        old_values: dict[str, Any] | None,
+        new_values: dict[str, Any] | None,
+        comment: str | None,
+    ) -> None: ...
+
+    def add_audit_log(
+        self,
+        *,
+        actor_user_id: int,
+        action: AuditAction,
+        entity_id: int,
+        old_values: dict[str, Any] | None,
+        new_values: dict[str, Any] | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None: ...
+
+
+class PostgresCardRepository:
+    def __init__(self, connection: psycopg.Connection) -> None:
+        self.connection = connection
+
+    def create_card(self, data: CreateCardData) -> CardRecord:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO connection_cards (
+                    number,
+                    omnidesk_ticket_number,
+                    client_id,
+                    status_code,
+                    criticality_code,
+                    urgency_code,
+                    planned_start_at,
+                    planned_duration_minutes,
+                    client_timezone_at_creation,
+                    timezone_source_code,
+                    l1_owner_id,
+                    l2_engineer_id,
+                    assignment_method_code,
+                    client_contact_type_code,
+                    client_contact_value,
+                    description,
+                    urgent_reason,
+                    out_of_hours_flag,
+                    retroactive_flag,
+                    created_source_code,
+                    created_by_id
+                )
+                VALUES (
+                    NULL,
+                    %(omnidesk_ticket_number)s,
+                    %(client_id)s,
+                    %(status_code)s,
+                    %(criticality_code)s,
+                    %(urgency_code)s,
+                    %(planned_start_at)s,
+                    %(planned_duration_minutes)s,
+                    %(client_timezone_at_creation)s,
+                    %(timezone_source_code)s,
+                    %(l1_owner_id)s,
+                    %(l2_engineer_id)s,
+                    %(assignment_method_code)s,
+                    %(client_contact_type_code)s,
+                    %(client_contact_value)s,
+                    %(description)s,
+                    %(urgent_reason)s,
+                    %(out_of_hours_flag)s,
+                    %(retroactive_flag)s,
+                    0,
+                    %(created_by_id)s
+                )
+                RETURNING *
+                """,
+                {
+                    "omnidesk_ticket_number": data.omnidesk_ticket_number,
+                    "client_id": data.client_id,
+                    "status_code": int(data.status),
+                    "criticality_code": data.criticality_code,
+                    "urgency_code": data.urgency_code,
+                    "planned_start_at": data.planned_start_at,
+                    "planned_duration_minutes": data.planned_duration_minutes,
+                    "client_timezone_at_creation": data.client_timezone_at_creation,
+                    "timezone_source_code": data.timezone_source_code,
+                    "l1_owner_id": data.l1_owner_id,
+                    "l2_engineer_id": data.l2_engineer_id,
+                    "assignment_method_code": data.assignment_method_code,
+                    "client_contact_type_code": data.client_contact_type_code,
+                    "client_contact_value": data.client_contact_value,
+                    "description": data.description,
+                    "urgent_reason": data.urgent_reason,
+                    "out_of_hours_flag": data.out_of_hours_flag,
+                    "retroactive_flag": data.retroactive_flag,
+                    "created_by_id": data.created_by_id,
+                },
+            )
+            row = cursor.fetchone()
+        return _card_from_row(row)
+
+    def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None:
+        return self._get_card(public_id, lock=False)
+
+    def get_card_by_public_id_for_update(self, public_id: UUID) -> CardRecord | None:
+        return self._get_card(public_id, lock=True)
+
+    def update_card_status(self, public_id: UUID, data: StatusUpdateData) -> CardRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE connection_cards
+                SET
+                    status_code = %(status_code)s,
+                    l2_engineer_id = CASE
+                        WHEN %(update_l2_engineer_id)s THEN %(l2_engineer_id)s
+                        ELSE l2_engineer_id
+                    END,
+                    actual_start_at = COALESCE(%(actual_start_at)s, actual_start_at),
+                    actual_end_at = COALESCE(%(actual_end_at)s, actual_end_at),
+                    result_code = COALESCE(%(result_code)s, result_code),
+                    engineer_report = COALESCE(%(engineer_report)s, engineer_report),
+                    updated_at = now()
+                WHERE public_id = %(public_id)s
+                RETURNING *
+                """,
+                {
+                    "public_id": public_id,
+                    "status_code": int(data.status),
+                    "l2_engineer_id": data.l2_engineer_id,
+                    "update_l2_engineer_id": data.update_l2_engineer_id,
+                    "actual_start_at": data.actual_start_at,
+                    "actual_end_at": data.actual_end_at,
+                    "result_code": data.result_code,
+                    "engineer_report": data.engineer_report,
+                },
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return _card_from_row(row)
+
+    def add_card_event(
+        self,
+        *,
+        card_id: int,
+        event_type: CardEventType,
+        actor_user_id: int,
+        old_values: dict[str, Any] | None,
+        new_values: dict[str, Any] | None,
+        comment: str | None,
+    ) -> None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO card_events (
+                    card_id,
+                    event_type_code,
+                    actor_user_id,
+                    actor_type_code,
+                    old_values,
+                    new_values,
+                    comment
+                )
+                VALUES (
+                    %(card_id)s,
+                    %(event_type_code)s,
+                    %(actor_user_id)s,
+                    %(actor_type_code)s,
+                    %(old_values)s,
+                    %(new_values)s,
+                    %(comment)s
+                )
+                """,
+                {
+                    "card_id": card_id,
+                    "event_type_code": int(event_type),
+                    "actor_user_id": actor_user_id,
+                    "actor_type_code": int(ActorType.INTERNAL_USER),
+                    "old_values": Jsonb(old_values) if old_values is not None else None,
+                    "new_values": Jsonb(new_values) if new_values is not None else None,
+                    "comment": comment,
+                },
+            )
+
+    def add_audit_log(
+        self,
+        *,
+        actor_user_id: int,
+        action: AuditAction,
+        entity_id: int,
+        old_values: dict[str, Any] | None,
+        new_values: dict[str, Any] | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    actor_type_code,
+                    action_code,
+                    entity_type,
+                    entity_id,
+                    ip_address,
+                    user_agent,
+                    old_values,
+                    new_values
+                )
+                VALUES (
+                    %(actor_user_id)s,
+                    %(actor_type_code)s,
+                    %(action_code)s,
+                    'connection_card',
+                    %(entity_id)s,
+                    %(ip_address)s,
+                    %(user_agent)s,
+                    %(old_values)s,
+                    %(new_values)s
+                )
+                """,
+                {
+                    "actor_user_id": actor_user_id,
+                    "actor_type_code": int(ActorType.INTERNAL_USER),
+                    "action_code": int(action),
+                    "entity_id": entity_id,
+                    "ip_address": ip_address,
+                    "user_agent": user_agent,
+                    "old_values": Jsonb(old_values) if old_values is not None else None,
+                    "new_values": Jsonb(new_values) if new_values is not None else None,
+                },
+            )
+
+    def _get_card(self, public_id: UUID, *, lock: bool) -> CardRecord | None:
+        suffix = " FOR UPDATE" if lock else ""
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT *
+                FROM connection_cards
+                WHERE public_id = %(public_id)s
+                {suffix}
+                """,
+                {"public_id": public_id},
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return _card_from_row(row)
+
+
+def _card_from_row(row: dict[str, Any]) -> CardRecord:
+    return CardRecord(
+        id=row["id"],
+        public_id=row["public_id"],
+        number=row["number"],
+        omnidesk_ticket_number=row["omnidesk_ticket_number"],
+        client_id=row["client_id"],
+        status_code=row["status_code"],
+        criticality_code=row["criticality_code"],
+        urgency_code=row["urgency_code"],
+        planned_start_at=row["planned_start_at"],
+        planned_duration_minutes=row["planned_duration_minutes"],
+        client_timezone_at_creation=row["client_timezone_at_creation"],
+        timezone_source_code=row["timezone_source_code"],
+        actual_start_at=row["actual_start_at"],
+        actual_end_at=row["actual_end_at"],
+        l1_owner_id=row["l1_owner_id"],
+        l2_engineer_id=row["l2_engineer_id"],
+        assignment_method_code=row["assignment_method_code"],
+        unsuccessful_cycle_count=row["unsuccessful_cycle_count"],
+        client_contact_type_code=row["client_contact_type_code"],
+        client_contact_value=row["client_contact_value"],
+        description=row["description"],
+        urgent_reason=row["urgent_reason"],
+        out_of_hours_flag=row["out_of_hours_flag"],
+        retroactive_flag=row["retroactive_flag"],
+        overdue_flag=row["overdue_flag"],
+        result_code=row["result_code"],
+        engineer_report=row["engineer_report"],
+        created_source_code=row["created_source_code"],
+        created_by_id=row["created_by_id"],
+        created_at=row["created_at"],
+        updated_at=row["updated_at"],
+    )
