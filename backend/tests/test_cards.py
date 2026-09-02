@@ -6,28 +6,31 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.api.cards import get_card_repository
 from app.auth.dependencies import get_auth_store, get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
-from app.cards.constants import AuditAction, CardEventType, CardStatus
+from app.cards.constants import ActorType, AuditAction, CardEventType, CardStatus
 from app.cards.repository import (
     CardRecord,
+    ClientRecord,
+    ClientSyncData,
     CreateCardData,
     StatusUpdateData,
 )
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService, InvalidCardTransitionError
 from app.main import create_app
+from fastapi.testclient import TestClient
 
 
 class FakeCardRepository:
     def __init__(self) -> None:
         self.cards: dict[UUID, CardRecord] = {}
+        self.clients: dict[str, ClientRecord] = {}
         self.events: list[dict[str, Any]] = []
         self.audit: list[dict[str, Any]] = []
         self.next_id = 1
+        self.next_client_id = 1
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         now = datetime.now(UTC)
@@ -59,7 +62,7 @@ class FakeCardRepository:
             overdue_flag=False,
             result_code=None,
             engineer_report=None,
-            created_source_code=0,
+            created_source_code=data.created_source_code,
             created_by_id=data.created_by_id,
             created_at=now,
             updated_at=now,
@@ -67,6 +70,35 @@ class FakeCardRepository:
         self.next_id += 1
         self.cards[card.public_id] = card
         return card
+
+    def get_or_create_client(self, data: ClientSyncData) -> ClientRecord:
+        client = self.clients.get(data.omnidesk_user_id)
+        if client is not None:
+            return client
+        client = ClientRecord(
+            id=self.next_client_id,
+            omnidesk_user_id=data.omnidesk_user_id,
+            omnidesk_company_id=data.omnidesk_company_id,
+            display_name=data.display_name,
+        )
+        self.next_client_id += 1
+        self.clients[data.omnidesk_user_id] = client
+        return client
+
+    def list_cards_by_ticket(self, omnidesk_ticket_number: str) -> list[CardRecord]:
+        return [
+            card
+            for card in self.cards.values()
+            if card.omnidesk_ticket_number == omnidesk_ticket_number
+        ]
+
+    def has_active_card_for_ticket(self, omnidesk_ticket_number: str) -> bool:
+        return any(
+            card.omnidesk_ticket_number == omnidesk_ticket_number
+            and CardStatus(card.status_code)
+            not in {CardStatus.COMPLETED, CardStatus.CANCELLED}
+            for card in self.cards.values()
+        )
 
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None:
         return self.cards.get(public_id)
@@ -86,11 +118,15 @@ class FakeCardRepository:
             card,
             status_code=int(data.status),
             l2_engineer_id=(
-                data.l2_engineer_id if data.update_l2_engineer_id else card.l2_engineer_id
+                data.l2_engineer_id
+                if data.update_l2_engineer_id
+                else card.l2_engineer_id
             ),
             actual_start_at=data.actual_start_at or card.actual_start_at,
             actual_end_at=data.actual_end_at or card.actual_end_at,
-            result_code=data.result_code if data.result_code is not None else card.result_code,
+            result_code=data.result_code
+            if data.result_code is not None
+            else card.result_code,
             engineer_report=data.engineer_report or card.engineer_report,
             updated_at=datetime.now(UTC),
         )
@@ -102,7 +138,8 @@ class FakeCardRepository:
         *,
         card_id: int,
         event_type: CardEventType,
-        actor_user_id: int,
+        actor_user_id: int | None,
+        actor_type: ActorType,
         old_values: dict[str, Any] | None,
         new_values: dict[str, Any] | None,
         comment: str | None,
@@ -112,6 +149,7 @@ class FakeCardRepository:
                 "card_id": card_id,
                 "event_type": event_type,
                 "actor_user_id": actor_user_id,
+                "actor_type": actor_type,
                 "old_values": old_values,
                 "new_values": new_values,
                 "comment": comment,
@@ -121,7 +159,8 @@ class FakeCardRepository:
     def add_audit_log(
         self,
         *,
-        actor_user_id: int,
+        actor_user_id: int | None,
+        actor_type: ActorType,
         action: AuditAction,
         entity_id: int,
         old_values: dict[str, Any] | None,
@@ -132,6 +171,7 @@ class FakeCardRepository:
         self.audit.append(
             {
                 "actor_user_id": actor_user_id,
+                "actor_type": actor_type,
                 "action": action,
                 "entity_id": entity_id,
                 "old_values": old_values,
@@ -169,7 +209,9 @@ def test_create_card_without_l2_starts_created_and_writes_history_and_audit() ->
 
     assert card.status_code == int(CardStatus.CREATED)
     assert card.l2_engineer_id is None
-    assert [event["event_type"] for event in repository.events] == [CardEventType.CREATED]
+    assert [event["event_type"] for event in repository.events] == [
+        CardEventType.CREATED
+    ]
     assert [event["action"] for event in repository.audit] == [AuditAction.CREATE]
     assert repository.events[0]["new_values"]["status_code"] == int(CardStatus.CREATED)
 
@@ -252,7 +294,9 @@ def test_created_card_cannot_be_cancelled_by_user_action() -> None:
         user_agent=None,
     )
 
-    with pytest.raises(InvalidCardTransitionError, match="status_transition_not_allowed"):
+    with pytest.raises(
+        InvalidCardTransitionError, match="status_transition_not_allowed"
+    ):
         service.cancel_card(
             card.public_id,
             actor_user_id=10,
@@ -275,7 +319,9 @@ def test_card_cannot_be_completed_without_in_progress_status() -> None:
         user_agent=None,
     )
 
-    with pytest.raises(InvalidCardTransitionError, match="status_transition_not_allowed"):
+    with pytest.raises(
+        InvalidCardTransitionError, match="status_transition_not_allowed"
+    ):
         service.complete_card(
             card.public_id,
             result_code=0,
@@ -366,7 +412,9 @@ def test_terminal_statuses_are_immutable_for_user_actions() -> None:
         user_agent=None,
     )
 
-    with pytest.raises(InvalidCardTransitionError, match="status_transition_not_allowed"):
+    with pytest.raises(
+        InvalidCardTransitionError, match="status_transition_not_allowed"
+    ):
         service.cancel_card(
             completed.public_id,
             actor_user_id=10,

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     auth_session_ttl_minutes: int = 480
     auth_cookie_secure: bool = True
     auth_cookie_samesite: str = "lax"
+    frame_session_ttl_minutes: int = 15
     omnidesk_base_url: str = "https://iridi.omnidesk.ru"
     omnidesk_api_key: str = ""
 

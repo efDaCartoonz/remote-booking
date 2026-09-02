@@ -6,10 +6,12 @@ from uuid import UUID
 
 from app.cards.constants import (
     ALLOWED_STATUS_TRANSITIONS,
+    ActorType,
     AssignmentMethod,
     AuditAction,
     CardEventType,
     CardStatus,
+    CreatedSource,
 )
 from app.cards.repository import (
     CardRecord,
@@ -38,11 +40,17 @@ class CardService:
         self,
         payload: CardCreateRequest,
         *,
-        actor_user_id: int,
+        actor_user_id: int | None,
         ip_address: str | None,
         user_agent: str | None,
+        actor_type: ActorType = ActorType.INTERNAL_USER,
+        created_source: CreatedSource = CreatedSource.INTERNAL,
     ) -> CardRecord:
-        status = CardStatus.ASSIGNED if payload.l2_engineer_id is not None else CardStatus.CREATED
+        status = (
+            CardStatus.ASSIGNED
+            if payload.l2_engineer_id is not None
+            else CardStatus.CREATED
+        )
         assignment_method_code = payload.assignment_method_code
         if assignment_method_code is None:
             assignment_method_code = (
@@ -72,6 +80,7 @@ class CardService:
                 urgent_reason=payload.urgent_reason,
                 out_of_hours_flag=payload.out_of_hours_flag,
                 retroactive_flag=payload.retroactive_flag,
+                created_source_code=int(created_source),
             )
         )
         snapshot = _card_snapshot(card)
@@ -79,12 +88,14 @@ class CardService:
             card_id=card.id,
             event_type=CardEventType.CREATED,
             actor_user_id=actor_user_id,
+            actor_type=actor_type,
             old_values=None,
             new_values=snapshot,
             comment=None,
         )
         self.repository.add_audit_log(
             actor_user_id=actor_user_id,
+            actor_type=actor_type,
             action=AuditAction.CREATE,
             entity_id=card.id,
             old_values=None,
@@ -269,12 +280,14 @@ class CardService:
             card_id=updated.id,
             event_type=CardEventType.STATUS_CHANGED,
             actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
             old_values=old_snapshot,
             new_values=new_snapshot,
             comment=comment,
         )
         self.repository.add_audit_log(
             actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
             action=AuditAction.UPDATE,
             entity_id=updated.id,
             old_values=old_snapshot,
@@ -296,11 +309,15 @@ def _validate_transition(
         raise InvalidCardTransitionError("status_transition_not_allowed")
 
     resulting_l2_engineer_id = new_l2_engineer_id or current_l2_engineer_id
-    if target_status in {
-        CardStatus.ASSIGNED,
-        CardStatus.CONFIRMED,
-        CardStatus.IN_PROGRESS,
-    } and resulting_l2_engineer_id is None:
+    if (
+        target_status
+        in {
+            CardStatus.ASSIGNED,
+            CardStatus.CONFIRMED,
+            CardStatus.IN_PROGRESS,
+        }
+        and resulting_l2_engineer_id is None
+    ):
         raise InvalidCardTransitionError("l2_engineer_required")
 
 

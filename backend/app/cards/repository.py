@@ -8,7 +8,14 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
-from app.cards.constants import ActorType, AuditAction, CardEventType, CardStatus
+from app.cards.constants import (
+    TERMINAL_STATUSES,
+    ActorType,
+    AuditAction,
+    CardEventType,
+    CardStatus,
+    CreatedSource,
+)
 
 
 @dataclass(frozen=True)
@@ -47,11 +54,30 @@ class CardRecord:
 
 
 @dataclass(frozen=True)
+class ClientRecord:
+    id: int
+    omnidesk_user_id: str
+    omnidesk_company_id: str | None
+    display_name: str | None
+
+
+@dataclass(frozen=True)
+class ClientSyncData:
+    omnidesk_user_id: str
+    omnidesk_company_id: str | None = None
+    display_name: str | None = None
+    preferred_contact_type_code: int | None = None
+    preferred_contact_value: str | None = None
+    last_confirmed_timezone: str | None = None
+    timezone_source_code: int | None = None
+
+
+@dataclass(frozen=True)
 class CreateCardData:
     omnidesk_ticket_number: str
     planned_start_at: datetime
     planned_duration_minutes: int
-    created_by_id: int
+    created_by_id: int | None
     status: CardStatus
     client_id: int | None = None
     criticality_code: int = 0
@@ -67,6 +93,7 @@ class CreateCardData:
     urgent_reason: str | None = None
     out_of_hours_flag: bool = False
     retroactive_flag: bool = False
+    created_source_code: int = int(CreatedSource.INTERNAL)
 
 
 @dataclass(frozen=True)
@@ -84,18 +111,29 @@ class StatusUpdateData:
 class CardRepository(Protocol):
     def create_card(self, data: CreateCardData) -> CardRecord: ...
 
+    def get_or_create_client(self, data: ClientSyncData) -> ClientRecord: ...
+
+    def list_cards_by_ticket(self, omnidesk_ticket_number: str) -> list[CardRecord]: ...
+
+    def has_active_card_for_ticket(self, omnidesk_ticket_number: str) -> bool: ...
+
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None: ...
 
-    def get_card_by_public_id_for_update(self, public_id: UUID) -> CardRecord | None: ...
+    def get_card_by_public_id_for_update(
+        self, public_id: UUID
+    ) -> CardRecord | None: ...
 
-    def update_card_status(self, public_id: UUID, data: StatusUpdateData) -> CardRecord | None: ...
+    def update_card_status(
+        self, public_id: UUID, data: StatusUpdateData
+    ) -> CardRecord | None: ...
 
     def add_card_event(
         self,
         *,
         card_id: int,
         event_type: CardEventType,
-        actor_user_id: int,
+        actor_user_id: int | None,
+        actor_type: ActorType,
         old_values: dict[str, Any] | None,
         new_values: dict[str, Any] | None,
         comment: str | None,
@@ -104,7 +142,8 @@ class CardRepository(Protocol):
     def add_audit_log(
         self,
         *,
-        actor_user_id: int,
+        actor_user_id: int | None,
+        actor_type: ActorType,
         action: AuditAction,
         entity_id: int,
         old_values: dict[str, Any] | None,
@@ -165,7 +204,7 @@ class PostgresCardRepository:
                     %(urgent_reason)s,
                     %(out_of_hours_flag)s,
                     %(retroactive_flag)s,
-                    0,
+                    %(created_source_code)s,
                     %(created_by_id)s
                 )
                 RETURNING *
@@ -189,11 +228,112 @@ class PostgresCardRepository:
                     "urgent_reason": data.urgent_reason,
                     "out_of_hours_flag": data.out_of_hours_flag,
                     "retroactive_flag": data.retroactive_flag,
+                    "created_source_code": data.created_source_code,
                     "created_by_id": data.created_by_id,
                 },
             )
             row = cursor.fetchone()
         return _card_from_row(row)
+
+    def get_or_create_client(self, data: ClientSyncData) -> ClientRecord:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO clients (
+                    omnidesk_user_id,
+                    omnidesk_company_id,
+                    display_name,
+                    preferred_contact_type_code,
+                    preferred_contact_value,
+                    last_confirmed_timezone,
+                    timezone_source_code,
+                    last_synced_at
+                )
+                VALUES (
+                    %(omnidesk_user_id)s,
+                    %(omnidesk_company_id)s,
+                    %(display_name)s,
+                    %(preferred_contact_type_code)s,
+                    %(preferred_contact_value)s,
+                    %(last_confirmed_timezone)s,
+                    %(timezone_source_code)s,
+                    now()
+                )
+                ON CONFLICT (omnidesk_user_id) DO UPDATE
+                SET
+                    omnidesk_company_id = COALESCE(
+                        EXCLUDED.omnidesk_company_id,
+                        clients.omnidesk_company_id
+                    ),
+                    display_name = COALESCE(EXCLUDED.display_name, clients.display_name),
+                    preferred_contact_type_code = COALESCE(
+                        EXCLUDED.preferred_contact_type_code,
+                        clients.preferred_contact_type_code
+                    ),
+                    preferred_contact_value = COALESCE(
+                        EXCLUDED.preferred_contact_value,
+                        clients.preferred_contact_value
+                    ),
+                    last_confirmed_timezone = COALESCE(
+                        EXCLUDED.last_confirmed_timezone,
+                        clients.last_confirmed_timezone
+                    ),
+                    timezone_source_code = COALESCE(
+                        EXCLUDED.timezone_source_code,
+                        clients.timezone_source_code
+                    ),
+                    last_synced_at = now()
+                RETURNING id, omnidesk_user_id, omnidesk_company_id, display_name
+                """,
+                {
+                    "omnidesk_user_id": data.omnidesk_user_id,
+                    "omnidesk_company_id": data.omnidesk_company_id,
+                    "display_name": data.display_name,
+                    "preferred_contact_type_code": data.preferred_contact_type_code,
+                    "preferred_contact_value": data.preferred_contact_value,
+                    "last_confirmed_timezone": data.last_confirmed_timezone,
+                    "timezone_source_code": data.timezone_source_code,
+                },
+            )
+            row = cursor.fetchone()
+        return ClientRecord(
+            id=row["id"],
+            omnidesk_user_id=row["omnidesk_user_id"],
+            omnidesk_company_id=row["omnidesk_company_id"],
+            display_name=row["display_name"],
+        )
+
+    def list_cards_by_ticket(self, omnidesk_ticket_number: str) -> list[CardRecord]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM connection_cards
+                WHERE omnidesk_ticket_number = %(omnidesk_ticket_number)s
+                ORDER BY planned_start_at DESC, id DESC
+                """,
+                {"omnidesk_ticket_number": omnidesk_ticket_number},
+            )
+            rows = cursor.fetchall()
+        return [_card_from_row(row) for row in rows]
+
+    def has_active_card_for_ticket(self, omnidesk_ticket_number: str) -> bool:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM connection_cards
+                WHERE omnidesk_ticket_number = %(omnidesk_ticket_number)s
+                  AND status_code <> ALL(%(terminal_statuses)s)
+                LIMIT 1
+                """,
+                {
+                    "omnidesk_ticket_number": omnidesk_ticket_number,
+                    "terminal_statuses": [int(status) for status in TERMINAL_STATUSES],
+                },
+            )
+            row = cursor.fetchone()
+        return row is not None
 
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None:
         return self._get_card(public_id, lock=False)
@@ -201,7 +341,9 @@ class PostgresCardRepository:
     def get_card_by_public_id_for_update(self, public_id: UUID) -> CardRecord | None:
         return self._get_card(public_id, lock=True)
 
-    def update_card_status(self, public_id: UUID, data: StatusUpdateData) -> CardRecord | None:
+    def update_card_status(
+        self, public_id: UUID, data: StatusUpdateData
+    ) -> CardRecord | None:
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -241,7 +383,8 @@ class PostgresCardRepository:
         *,
         card_id: int,
         event_type: CardEventType,
-        actor_user_id: int,
+        actor_user_id: int | None,
+        actor_type: ActorType,
         old_values: dict[str, Any] | None,
         new_values: dict[str, Any] | None,
         comment: str | None,
@@ -272,7 +415,7 @@ class PostgresCardRepository:
                     "card_id": card_id,
                     "event_type_code": int(event_type),
                     "actor_user_id": actor_user_id,
-                    "actor_type_code": int(ActorType.INTERNAL_USER),
+                    "actor_type_code": int(actor_type),
                     "old_values": Jsonb(old_values) if old_values is not None else None,
                     "new_values": Jsonb(new_values) if new_values is not None else None,
                     "comment": comment,
@@ -282,7 +425,8 @@ class PostgresCardRepository:
     def add_audit_log(
         self,
         *,
-        actor_user_id: int,
+        actor_user_id: int | None,
+        actor_type: ActorType,
         action: AuditAction,
         entity_id: int,
         old_values: dict[str, Any] | None,
@@ -318,7 +462,7 @@ class PostgresCardRepository:
                 """,
                 {
                     "actor_user_id": actor_user_id,
-                    "actor_type_code": int(ActorType.INTERNAL_USER),
+                    "actor_type_code": int(actor_type),
                     "action_code": int(action),
                     "entity_id": entity_id,
                     "ip_address": ip_address,
