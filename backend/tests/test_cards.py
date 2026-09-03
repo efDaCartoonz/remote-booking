@@ -6,10 +6,13 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi.testclient import TestClient
+
 from app.api.cards import get_card_repository
 from app.assignments.types import (
     AssignmentAttemptRecord,
     AssignmentCycleRecord,
+    L1DistributionCandidate,
     L2DistributionCandidate,
     ScheduleWindow,
     TimeInterval,
@@ -35,7 +38,6 @@ from app.cards.repository import (
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService, InvalidCardTransitionError
 from app.main import create_app
-from fastapi.testclient import TestClient
 
 DEFAULT_PLANNED_START_AT = datetime(2026, 9, 7, 10, tzinfo=UTC)
 
@@ -48,7 +50,10 @@ class FakeCardRepository:
         self.audit: list[dict[str, Any]] = []
         self.l2_candidate_schedules: dict[int, list[ScheduleWindow]] = {}
         self.l2_candidate_absences: dict[int, list[TimeInterval]] = {}
+        self.l1_candidate_schedules: dict[int, list[ScheduleWindow]] = {}
+        self.l1_candidate_absences: dict[int, list[TimeInterval]] = {}
         self.distribution_last_user_id: int | None = None
+        self.l1_distribution_last_user_id: int | None = None
         self.cycles: list[AssignmentCycleRecord] = []
         self.attempts: list[AssignmentAttemptRecord] = []
         self.next_id = 1
@@ -190,17 +195,68 @@ class FakeCardRepository:
             )
         return candidates
 
+    def list_l1_distribution_candidates(
+        self, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> list[L1DistributionCandidate]:
+        candidates = []
+        for user_id in sorted(self.l1_candidate_schedules):
+            active_cards = []
+            for card in self.cards.values():
+                card_start = card.planned_start_at
+                card_end = card_start + timedelta(minutes=card.planned_duration_minutes)
+                if (
+                    card.l1_owner_id == user_id
+                    and CardStatus(card.status_code)
+                    in {
+                        CardStatus.ASSIGNED,
+                        CardStatus.CONFIRMED,
+                        CardStatus.IN_PROGRESS,
+                    }
+                    and card_start < planned_end_at
+                    and planned_start_at < card_end
+                ):
+                    active_cards.append(
+                        TimeInterval(start_at=card_start, end_at=card_end)
+                    )
+            candidates.append(
+                L1DistributionCandidate(
+                    user_id=user_id,
+                    schedules=tuple(self.l1_candidate_schedules[user_id]),
+                    absences=tuple(self.l1_candidate_absences.get(user_id, [])),
+                    active_cards=tuple(active_cards),
+                )
+            )
+        return candidates
+
     def get_distribution_last_user_id_for_update(
         self, pool: DistributionPool
     ) -> int | None:
-        assert pool == DistributionPool.L2
-        return self.distribution_last_user_id
+        if pool == DistributionPool.L2:
+            return self.distribution_last_user_id
+        assert pool == DistributionPool.L1
+        return self.l1_distribution_last_user_id
 
     def update_distribution_state(
         self, *, pool: DistributionPool, last_user_id: int
     ) -> None:
-        assert pool == DistributionPool.L2
-        self.distribution_last_user_id = last_user_id
+        if pool == DistributionPool.L2:
+            self.distribution_last_user_id = last_user_id
+            return
+        assert pool == DistributionPool.L1
+        self.l1_distribution_last_user_id = last_user_id
+
+    def update_l1_owner(self, *, card_id: int, l1_owner_id: int) -> CardRecord | None:
+        for public_id, card in self.cards.items():
+            if card.id != card_id:
+                continue
+            if CardStatus(card.status_code) != CardStatus.REJECTED or card.l1_owner_id:
+                return None
+            updated = replace(
+                card, l1_owner_id=l1_owner_id, updated_at=datetime.now(UTC)
+            )
+            self.cards[public_id] = updated
+            return updated
+        raise AssertionError(f"Card {card_id} not found")
 
     def get_next_assignment_cycle_number(self, card_id: int) -> int:
         return (
@@ -431,6 +487,30 @@ def seed_l2_candidate(
         repository.l2_candidate_absences[user_id] = [absence]
 
 
+def seed_l1_candidate(
+    repository: FakeCardRepository,
+    user_id: int,
+    *,
+    planned_start_at: datetime | None = None,
+    schedule_start: time = time(0, 0),
+    schedule_end: time = time(23, 59, 59),
+    absence: TimeInterval | None = None,
+) -> None:
+    planned_start_at = planned_start_at or DEFAULT_PLANNED_START_AT
+    repository.l1_candidate_schedules[user_id] = [
+        ScheduleWindow(
+            weekday=planned_start_at.isoweekday(),
+            start_time=schedule_start,
+            end_time=schedule_end,
+            timezone="UTC",
+            valid_from=None,
+            valid_to=None,
+        )
+    ]
+    if absence is not None:
+        repository.l1_candidate_absences[user_id] = [absence]
+
+
 def make_service(repository: FakeCardRepository) -> CardService:
     return CardService(repository)
 
@@ -457,7 +537,9 @@ def test_create_card_without_l2_rejects_when_no_distribution_candidates() -> Non
         AuditAction.CREATE,
         AuditAction.CREATE,
         AuditAction.UPDATE,
+        AuditAction.UPDATE,
     ]
+    assert repository.audit[-1]["entity_type"] == "l1_assignment"
     assert repository.events[0]["new_values"]["status_code"] == int(CardStatus.CREATED)
     assert repository.events[-1]["comment"] == "no_available_l2_candidates"
 

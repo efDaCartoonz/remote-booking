@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from app.assignments.l1_service import L1DistributionService
 from app.assignments.repository import AssignmentRepository
 from app.assignments.types import L2DistributionCandidate, TimeInterval
 from app.cards.constants import (
@@ -14,7 +15,6 @@ from app.cards.constants import (
     CardStatus,
     DistributionPool,
 )
-from app.assignments.l1_service import L1DistributionService
 from app.cards.repository import CardRecord
 
 NO_AVAILABLE_L2_REASON = "no_available_l2_candidates"

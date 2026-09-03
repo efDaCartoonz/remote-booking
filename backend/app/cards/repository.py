@@ -11,8 +11,8 @@ from psycopg.types.json import Jsonb
 from app.assignments.types import (
     AssignmentAttemptRecord,
     AssignmentCycleRecord,
-    L2DistributionCandidate,
     L1DistributionCandidate,
+    L2DistributionCandidate,
     ScheduleWindow,
     TimeInterval,
 )
@@ -330,15 +330,26 @@ class PostgresCardRepository:
             for user_id in user_ids
         ]
 
-    def update_l1_owner(self, *, card_id: int, l1_owner_id: int | None) -> CardRecord:
+    def update_l1_owner(self, *, card_id: int, l1_owner_id: int) -> CardRecord | None:
         with self.connection.cursor() as cursor:
             cursor.execute(
-                """UPDATE connection_cards
-                   SET l1_owner_id = %(owner)s, updated_at = now()
-                   WHERE id = %(id)s RETURNING *""",
-                {"owner": l1_owner_id, "id": card_id},
+                """
+                UPDATE connection_cards
+                SET l1_owner_id = %(owner)s, updated_at = now()
+                WHERE id = %(id)s
+                  AND status_code = %(rejected_status)s
+                  AND l1_owner_id IS NULL
+                RETURNING *
+                """,
+                {
+                    "owner": l1_owner_id,
+                    "id": card_id,
+                    "rejected_status": int(CardStatus.REJECTED),
+                },
             )
             row = cursor.fetchone()
+        if row is None:
+            return None
         return _card_from_row(row)
 
     def get_distribution_last_user_id_for_update(
@@ -917,8 +928,12 @@ class PostgresCardRepository:
         )
 
     def _list_active_card_intervals(
-        self, user_id: int, *, planned_start_at: datetime, planned_end_at: datetime,
-        owner_field: str = "l2_engineer_id"
+        self,
+        user_id: int,
+        *,
+        planned_start_at: datetime,
+        planned_end_at: datetime,
+        owner_field: str = "l2_engineer_id",
     ) -> tuple[TimeInterval, ...]:
         with self.connection.cursor() as cursor:
             if owner_field not in {"l1_owner_id", "l2_engineer_id"}:

@@ -6,8 +6,8 @@ from typing import Any, Protocol
 from app.assignments.types import (
     AssignmentAttemptRecord,
     AssignmentCycleRecord,
-    L2DistributionCandidate,
     L1DistributionCandidate,
+    L2DistributionCandidate,
 )
 from app.cards.constants import (
     ActorType,
@@ -26,7 +26,10 @@ class AssignmentRepository(Protocol):
         self, *, planned_start_at: datetime, planned_end_at: datetime
     ) -> list[L1DistributionCandidate]: ...
 
-    def update_l1_owner(self, *, card_id: int, l1_owner_id: int | None) -> CardRecord: ...
+    def update_l1_owner(
+        self, *, card_id: int, l1_owner_id: int
+    ) -> CardRecord | None: ...
+
     def list_l2_distribution_candidates(
         self, *, planned_start_at: datetime, planned_end_at: datetime
     ) -> list[L2DistributionCandidate]: ...
