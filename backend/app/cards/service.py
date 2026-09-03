@@ -19,11 +19,11 @@ from app.cards.repository import (
     CardRecord,
     CardRepository,
     CreateCardData,
-    StatusUpdateData,
     L1FollowupUpdateData,
+    StatusUpdateData,
 )
-from app.notifications import NotificationService
 from app.cards.schemas import CardCreateRequest
+from app.notifications import NotificationService
 
 
 class CardServiceRepository(CardRepository, AssignmentRepository, Protocol):
@@ -41,38 +41,113 @@ class InvalidCardTransitionError(Exception):
 
 
 class CardService:
-    def __init__(self, repository: CardServiceRepository, notifications: NotificationService | None = None) -> None:
+    def __init__(
+        self,
+        repository: CardServiceRepository,
+        notifications: NotificationService | None = None,
+    ) -> None:
         self.repository = repository
-        self.l2_distribution_service = L2DistributionService(repository)
+        self.l2_distribution_service = L2DistributionService(repository, notifications)
         self.notifications = notifications
 
-    def mark_client_informed(self, public_id: UUID, *, actor_user_id: int, ip_address: str | None, user_agent: str | None) -> CardRecord:
+    def mark_client_informed(
+        self,
+        public_id: UUID,
+        *,
+        actor_user_id: int,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> CardRecord:
         card = self.repository.get_card_by_public_id_for_update(public_id)
         if card is None:
             raise CardNotFoundError
-        if CardStatus(card.status_code) != CardStatus.REJECTED or card.l1_owner_id != actor_user_id:
+        if (
+            CardStatus(card.status_code) != CardStatus.REJECTED
+            or card.l1_owner_id != actor_user_id
+        ):
             raise InvalidCardTransitionError("assigned_l1_required")
         if getattr(card, "client_informed", False):
             return card
         old = _card_snapshot(card)
-        updated = self.repository.update_l1_followup(public_id, L1FollowupUpdateData(client_informed=True))
+        updated = self.repository.update_l1_followup(
+            public_id, L1FollowupUpdateData(client_informed=True)
+        )
         if updated is None:
             raise CardNotFoundError
-        self.repository.add_card_event(card_id=updated.id, event_type=CardEventType.L1_CLIENT_INFORMED, actor_user_id=actor_user_id, actor_type=ActorType.INTERNAL_USER, old_values=old, new_values=_card_snapshot(updated), comment="client_informed")
-        self.repository.add_audit_log(actor_user_id=actor_user_id, actor_type=ActorType.INTERNAL_USER, action=AuditAction.UPDATE, entity_id=updated.id, old_values=old, new_values=_card_snapshot(updated), ip_address=ip_address, user_agent=user_agent)
+        self.repository.add_card_event(
+            card_id=updated.id,
+            event_type=CardEventType.L1_CLIENT_INFORMED,
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            old_values=old,
+            new_values=_card_snapshot(updated),
+            comment="client_informed",
+        )
+        self.repository.add_audit_log(
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.UPDATE,
+            entity_id=updated.id,
+            old_values=old,
+            new_values=_card_snapshot(updated),
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
         return updated
 
-    def update_rejected_card(self, public_id: UUID, *, actor_user_id: int, planned_start_at: datetime, planned_duration_minutes: int, description: str | None, ip_address: str | None, user_agent: str | None) -> CardRecord:
+    def update_rejected_card(
+        self,
+        public_id: UUID,
+        *,
+        actor_user_id: int,
+        planned_start_at: datetime,
+        planned_duration_minutes: int,
+        description: str | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> CardRecord:
         card = self.repository.get_card_by_public_id_for_update(public_id)
-        if card is None: raise CardNotFoundError
-        if CardStatus(card.status_code) != CardStatus.REJECTED or card.l1_owner_id != actor_user_id:
+        if card is None:
+            raise CardNotFoundError
+        if (
+            CardStatus(card.status_code) != CardStatus.REJECTED
+            or card.l1_owner_id != actor_user_id
+        ):
             raise InvalidCardTransitionError("assigned_l1_required")
         old = _card_snapshot(card)
-        updated = self.repository.update_l1_followup(public_id, L1FollowupUpdateData(planned_start_at=planned_start_at, planned_duration_minutes=planned_duration_minutes, description=description, reset_for_new_cycle=True))
-        if updated is None: raise CardNotFoundError
-        self.repository.add_card_event(card_id=updated.id, event_type=CardEventType.DETAILS_UPDATED, actor_user_id=actor_user_id, actor_type=ActorType.INTERNAL_USER, old_values=old, new_values=_card_snapshot(updated), comment="l1_rescheduled")
-        self.repository.add_audit_log(actor_user_id=actor_user_id, actor_type=ActorType.INTERNAL_USER, action=AuditAction.UPDATE, entity_id=updated.id, old_values=old, new_values=_card_snapshot(updated), ip_address=ip_address, user_agent=user_agent)
-        return self.l2_distribution_service.run_initial_distribution(updated, ip_address=ip_address, user_agent=user_agent)
+        updated = self.repository.update_l1_followup(
+            public_id,
+            L1FollowupUpdateData(
+                planned_start_at=planned_start_at,
+                planned_duration_minutes=planned_duration_minutes,
+                description=description,
+                reset_for_new_cycle=True,
+            ),
+        )
+        if updated is None:
+            raise CardNotFoundError
+        self.repository.add_card_event(
+            card_id=updated.id,
+            event_type=CardEventType.DETAILS_UPDATED,
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            old_values=old,
+            new_values=_card_snapshot(updated),
+            comment="l1_rescheduled",
+        )
+        self.repository.add_audit_log(
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.UPDATE,
+            entity_id=updated.id,
+            old_values=old,
+            new_values=_card_snapshot(updated),
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return self.l2_distribution_service.run_initial_distribution(
+            updated, ip_address=ip_address, user_agent=user_agent
+        )
 
     def create_card(
         self,

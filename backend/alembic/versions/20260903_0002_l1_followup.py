@@ -9,8 +9,17 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.execute("ALTER TABLE connection_cards ADD COLUMN client_informed boolean NOT NULL DEFAULT false")
+    op.execute(
+        "ALTER TABLE connection_cards ADD COLUMN client_informed boolean NOT NULL DEFAULT false"
+    )
+    op.execute(
+        """
+        CREATE UNIQUE INDEX ux_notifications_delivery_intent
+        ON notifications (card_id, recipient_user_id, channel_code, event_type_code)
+        """
+    )
 
 
 def downgrade() -> None:
+    op.execute("DROP INDEX ux_notifications_delivery_intent")
     op.execute("ALTER TABLE connection_cards DROP COLUMN client_informed")

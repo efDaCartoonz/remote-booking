@@ -23,6 +23,7 @@ from app.cards.schemas import (
 )
 from app.cards.service import CardNotFoundError, CardService, InvalidCardTransitionError
 from app.db import get_db
+from app.notifications import PostgresNotificationService
 
 router = APIRouter(prefix="/api/v1/cards", tags=["cards"])
 
@@ -36,7 +37,12 @@ def get_card_repository(
 def get_card_service(
     repository: Annotated[CardRepository, Depends(get_card_repository)],
 ) -> CardService:
-    return CardService(repository)
+    notifications = (
+        PostgresNotificationService(repository.connection)
+        if isinstance(repository, PostgresCardRepository)
+        else None
+    )
+    return CardService(repository, notifications)
 
 
 @router.post("", response_model=CardResponse, status_code=status.HTTP_201_CREATED)
@@ -187,15 +193,43 @@ def cancel_card(
 
 
 @router.post("/{card_id}/l1/client-informed", response_model=CardResponse)
-def mark_client_informed(card_id: UUID, request: Request, user: Annotated[UserAuthRecord, Depends(get_current_user)], service: Annotated[CardService, Depends(get_card_service)]) -> CardResponse:
+def mark_client_informed(
+    card_id: UUID,
+    request: Request,
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    service: Annotated[CardService, Depends(get_card_service)],
+) -> CardResponse:
     _require_l1_role(user)
-    return _handle_change(lambda: service.mark_client_informed(card_id, actor_user_id=user.id, ip_address=_client_ip(request), user_agent=request.headers.get("user-agent")))
+    return _handle_change(
+        lambda: service.mark_client_informed(
+            card_id,
+            actor_user_id=user.id,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+    )
 
 
 @router.post("/{card_id}/l1/reschedule", response_model=CardResponse)
-def reschedule_rejected(card_id: UUID, payload: L1RescheduleRequest, request: Request, user: Annotated[UserAuthRecord, Depends(get_current_user)], service: Annotated[CardService, Depends(get_card_service)]) -> CardResponse:
+def reschedule_rejected(
+    card_id: UUID,
+    payload: L1RescheduleRequest,
+    request: Request,
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    service: Annotated[CardService, Depends(get_card_service)],
+) -> CardResponse:
     _require_l1_role(user)
-    return _handle_change(lambda: service.update_rejected_card(card_id, actor_user_id=user.id, planned_start_at=payload.planned_start_at, planned_duration_minutes=payload.planned_duration_minutes, description=payload.description, ip_address=_client_ip(request), user_agent=request.headers.get("user-agent")))
+    return _handle_change(
+        lambda: service.update_rejected_card(
+            card_id,
+            actor_user_id=user.id,
+            planned_start_at=payload.planned_start_at,
+            planned_duration_minutes=payload.planned_duration_minutes,
+            description=payload.description,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+    )
 
 
 def _handle_change(change: Callable[[], CardRecord]) -> CardResponse:
@@ -225,7 +259,10 @@ def _require_l2_role(user: UserAuthRecord) -> None:
 
 def _require_l1_role(user: UserAuthRecord) -> None:
     if not any(role.id == int(RoleId.L1) for role in user.roles):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="l1_role_required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="l1_role_required",
+        )
 
 
 def _client_ip(request: Request) -> str | None:

@@ -82,6 +82,7 @@ class CardResponse(BaseModel):
     planned_end_at: datetime
     planned_duration_minutes: int
     l1_owner_id: int | None
+    client_informed: bool
     l2_engineer_id: int | None
     criticality_code: int
     urgency_code: int
@@ -112,6 +113,7 @@ def card_response(card: CardRecord) -> CardResponse:
         + timedelta(minutes=card.planned_duration_minutes),
         planned_duration_minutes=card.planned_duration_minutes,
         l1_owner_id=card.l1_owner_id,
+        client_informed=card.client_informed,
         l2_engineer_id=card.l2_engineer_id,
         criticality_code=card.criticality_code,
         urgency_code=card.urgency_code,

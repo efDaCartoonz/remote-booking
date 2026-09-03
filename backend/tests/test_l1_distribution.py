@@ -4,7 +4,6 @@ from dataclasses import replace
 from datetime import time, timedelta
 
 import pytest
-
 from test_cards import (
     DEFAULT_PLANNED_START_AT,
     FakeCardRepository,
@@ -16,28 +15,76 @@ from test_cards import (
 from app.assignments.l1_service import L1DistributionService
 from app.assignments.types import TimeInterval
 from app.cards.constants import AssignmentAttemptStatus, CardStatus
-from app.cards.service import CardService
-from app.cards.service import InvalidCardTransitionError
+from app.cards.service import CardService, InvalidCardTransitionError
 from app.notifications import RecordingNotificationService
 
 
 def test_assigned_l1_can_mark_informed_once_and_unauthorized_l1_is_rejected() -> None:
     repository = FakeCardRepository()
     seed_l1_candidate(repository, 10)
-    card = CardService(repository).create_card(create_payload(), actor_user_id=1, ip_address=None, user_agent=None)
+    card = CardService(repository).create_card(
+        create_payload(), actor_user_id=1, ip_address=None, user_agent=None
+    )
     service = CardService(repository)
-    informed = service.mark_client_informed(card.public_id, actor_user_id=10, ip_address=None, user_agent=None)
+    informed = service.mark_client_informed(
+        card.public_id, actor_user_id=10, ip_address=None, user_agent=None
+    )
     assert informed.client_informed is True
-    assert service.mark_client_informed(card.public_id, actor_user_id=10, ip_address=None, user_agent=None) == informed
+    assert (
+        service.mark_client_informed(
+            card.public_id, actor_user_id=10, ip_address=None, user_agent=None
+        )
+        == informed
+    )
     with pytest.raises(InvalidCardTransitionError, match="assigned_l1_required"):
-        service.mark_client_informed(card.public_id, actor_user_id=11, ip_address=None, user_agent=None)
+        service.mark_client_informed(
+            card.public_id, actor_user_id=11, ip_address=None, user_agent=None
+        )
 
 
 def test_notification_adapter_deduplicates_delivery_intent() -> None:
     adapter = RecordingNotificationService()
     for _ in range(2):
-        adapter.notify(event="l1_followup", card_id=1, recipient_user_id=10, channel="telegram")
+        adapter.notify(
+            event="l1_followup", card_id=1, recipient_user_id=10, channel="telegram"
+        )
     assert len(adapter.notifications) == 1
+
+
+def test_l1_assignment_creates_deduplicated_notification_intents() -> None:
+    repository = FakeCardRepository()
+    notifications = RecordingNotificationService()
+    seed_l1_candidate(repository, 10)
+    service = CardService(repository, notifications)
+
+    card = service.create_card(
+        create_payload(), actor_user_id=1, ip_address=None, user_agent=None
+    )
+    repeated = L1DistributionService(repository, notifications).assign(
+        replace(card, l1_owner_id=None), ip_address=None, user_agent=None
+    )
+
+    assert repeated.l1_owner_id is None
+    assert {
+        (item.event, item.recipient_user_id, item.channel)
+        for item in notifications.notifications
+    } == {
+        ("l1_followup", 10, "telegram"),
+        ("l1_followup", 10, "bitrix24"),
+    }
+
+
+def test_available_l1_creator_is_preferred_to_round_robin() -> None:
+    repository = FakeCardRepository()
+    repository.l1_distribution_last_user_id = 10
+    seed_l1_candidate(repository, 10)
+    seed_l1_candidate(repository, 20)
+
+    card = CardService(repository).create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+
+    assert card.l1_owner_id == 10
 
 
 def test_no_l2_candidate_assigns_available_l1_without_l2_attempt() -> None:

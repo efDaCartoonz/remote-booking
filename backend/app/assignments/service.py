@@ -16,6 +16,7 @@ from app.cards.constants import (
     DistributionPool,
 )
 from app.cards.repository import CardRecord
+from app.notifications import NotificationService
 
 NO_AVAILABLE_L2_REASON = "no_available_l2_candidates"
 ALL_L2_REJECTED_REASON = "all_l2_candidates_rejected"
@@ -28,9 +29,13 @@ class AssignmentDecisionError(Exception):
 
 
 class L2DistributionService:
-    def __init__(self, repository: AssignmentRepository) -> None:
+    def __init__(
+        self,
+        repository: AssignmentRepository,
+        notifications: NotificationService | None = None,
+    ) -> None:
         self.repository = repository
-        self.l1_distribution_service = L1DistributionService(repository)
+        self.l1_distribution_service = L1DistributionService(repository, notifications)
 
     def run_initial_distribution(
         self,
