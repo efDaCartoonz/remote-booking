@@ -146,32 +146,36 @@ class FrameService:
             raise FrameTicketAccessError("ticket_client_mismatch")
         return ticket
 
-    def _get_available_ticket(
-        self, case_id: str, ticket_number: str
-    ) -> OmnideskTicket:
+    def _get_available_ticket(self, case_id: str, ticket_number: str) -> OmnideskTicket:
         try:
-            ticket = self.omnidesk_client.get_ticket_by_id(case_id, ticket_number)
+            ticket = self.omnidesk_client.get_ticket_by_case_id(case_id)
         except OmnideskTicketNotFoundError as exc:
             raise FrameTicketAccessError("ticket_not_available") from exc
         except OmnideskTicketMismatchError as exc:
             raise FrameTicketAccessError(exc.detail) from exc
-        if ticket is None or ticket.deleted or ticket.spam:
+        if ticket is None:
             raise FrameTicketAccessError("ticket_not_available")
         if ticket.case_id != case_id or ticket.number != ticket_number:
             raise FrameTicketAccessError("omnidesk_ticket_id_number_mismatch")
+        if ticket.deleted or ticket.spam:
+            raise FrameTicketAccessError("ticket_not_available")
         return ticket
 
     def _ensure_ticket_open(self, ticket: OmnideskTicket) -> OmnideskTicket:
         if ticket.status != "closed":
             return ticket
-        self.omnidesk_client.reopen_ticket(ticket.case_id, ticket.number)
-        reopened = self.omnidesk_client.get_ticket_by_id(ticket.case_id, ticket.number)
-        if (
-            reopened is None
-            or reopened.deleted
-            or reopened.spam
-            or reopened.user_id != ticket.user_id
-        ):
+        self.omnidesk_client.reopen_ticket(ticket.case_id)
+        try:
+            reopened = self.omnidesk_client.get_ticket_by_case_id(ticket.case_id)
+        except OmnideskTicketNotFoundError as exc:
+            raise FrameTicketAccessError("ticket_not_available") from exc
+        except OmnideskTicketMismatchError as exc:
+            raise FrameTicketAccessError(exc.detail) from exc
+        if reopened is None:
+            raise FrameTicketAccessError("ticket_not_available")
+        if reopened.case_id != ticket.case_id or reopened.number != ticket.number:
+            raise FrameTicketAccessError("omnidesk_ticket_id_number_mismatch")
+        if reopened.deleted or reopened.spam or reopened.user_id != ticket.user_id:
             raise FrameTicketAccessError("ticket_not_available")
         if reopened.status != "open":
             raise OmnideskTicketReopenError("omnidesk_ticket_not_open_after_reopen")

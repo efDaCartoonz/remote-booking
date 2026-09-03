@@ -12,7 +12,6 @@ from app.core.config import settings
 from app.frame.omnidesk import (
     OmnideskTicket,
     OmnideskTicketClient,
-    OmnideskTicketMismatchError,
     get_omnidesk_ticket_client,
 )
 from app.frame.sessions import (
@@ -69,20 +68,15 @@ class FakeOmnideskTicketClient:
         self.reopen_calls: list[str] = []
         self.reopen_status = "open"
 
-    def get_ticket_by_id(
-        self, case_id: str, ticket_number: str
-    ) -> OmnideskTicket | None:
-        self.get_calls.append(f"{case_id}:{ticket_number}")
-        ticket = self.tickets.get(ticket_number)
-        if ticket is not None and ticket.case_id != case_id:
-            raise OmnideskTicketMismatchError
-        return self.tickets.get(ticket_number)
+    def get_ticket_by_case_id(self, case_id: str) -> OmnideskTicket | None:
+        self.get_calls.append(case_id)
+        return self.tickets.get(case_id)
 
-    def reopen_ticket(self, case_id: str, ticket_number: str) -> OmnideskTicket:
-        self.reopen_calls.append(f"{case_id}:{ticket_number}")
-        ticket = self.tickets[ticket_number]
+    def reopen_ticket(self, case_id: str) -> OmnideskTicket:
+        self.reopen_calls.append(case_id)
+        ticket = self.tickets[case_id]
         reopened = replace(ticket, status=self.reopen_status)
-        self.tickets[ticket_number] = reopened
+        self.tickets[case_id] = reopened
         return reopened
 
 
@@ -122,7 +116,7 @@ def create_frame_session(
     response = client.post(
         "/api/v1/frame/sessions",
         json={
-            "omnidesk_case_id": case_id,
+            "case_id": case_id,
             "omnidesk_ticket_number": ticket_number,
         },
         headers={"origin": "https://iridi.omnidesk.ru"},
@@ -137,7 +131,7 @@ def create_frame_session_without_origin(
     response = client.post(
         "/api/v1/frame/sessions",
         json={
-            "omnidesk_case_id": case_id,
+            "case_id": case_id,
             "omnidesk_ticket_number": ticket_number,
         },
     )
@@ -155,7 +149,7 @@ def seed_ticket(
     deleted: bool = False,
     spam: bool = False,
 ) -> None:
-    omnidesk_client.tickets[number] = OmnideskTicket(
+    omnidesk_client.tickets[case_id] = OmnideskTicket(
         number=number,
         case_id=case_id,
         user_id=user_id,
@@ -197,12 +191,35 @@ def test_redis_frame_session_uses_hashed_key_and_short_ttl() -> None:
     assert stored_session.omnidesk_user_id == "client-1"
 
 
+def test_frame_api_creates_session_and_rereads_ticket_by_case_id() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(omnidesk_client, case_id="2000", number="123-456789")
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+
+    token = create_frame_session(client, case_id="2000", ticket_number="123-456789")
+    response = client.get("/api/v1/frame/cards", headers={FRAME_TOKEN_HEADER: token})
+
+    assert response.status_code == 200
+    assert omnidesk_client.get_calls == ["2000", "2000"]
+
+
 def test_frame_api_reads_only_current_ticket_with_minimal_card_fields() -> None:
     repository = FakeCardRepository()
     session_store = FakeFrameSessionStore()
     omnidesk_client = FakeOmnideskTicketClient()
     seed_ticket(omnidesk_client)
-    seed_ticket(omnidesk_client, number="555-000001", user_id="client-2")
+    seed_ticket(
+        omnidesk_client,
+        case_id="3000",
+        number="555-000001",
+        user_id="client-2",
+    )
     client = make_client(
         repository=repository,
         session_store=session_store,
@@ -273,7 +290,7 @@ def test_frame_api_creates_card_only_for_session_ticket() -> None:
     )
 
     assert response.status_code == 201
-    assert omnidesk_client.reopen_calls == ["2000:123-456789"]
+    assert omnidesk_client.reopen_calls == ["2000"]
     body = response.json()
     assert body["status"] == "created"
     assert body["client_timezone_at_creation"] == "Asia/Yekaterinburg"
@@ -307,7 +324,7 @@ def test_frame_api_rejects_card_create_when_closed_ticket_is_not_reopened() -> N
 
     assert response.status_code == 409
     assert response.json()["detail"] == "omnidesk_ticket_not_open_after_reopen"
-    assert omnidesk_client.reopen_calls == ["2000:123-456789"]
+    assert omnidesk_client.reopen_calls == ["2000"]
     assert repository.cards == {}
 
 
@@ -331,8 +348,8 @@ def test_frame_api_rereads_ticket_after_successful_reopen_before_create() -> Non
     )
 
     assert response.status_code == 201
-    assert omnidesk_client.reopen_calls == ["2000:123-456789"]
-    assert omnidesk_client.get_calls == ["2000:123-456789", "2000:123-456789"]
+    assert omnidesk_client.reopen_calls == ["2000"]
+    assert omnidesk_client.get_calls == ["2000", "2000"]
     assert len(repository.cards) == 1
 
 
@@ -494,7 +511,7 @@ def test_frame_api_rejects_unavailable_or_client_mismatched_ticket() -> None:
     unavailable_response = client.post(
         "/api/v1/frame/sessions",
         json={
-            "omnidesk_case_id": "2000",
+            "case_id": "2000",
             "omnidesk_ticket_number": "123-456789",
         },
     )
@@ -517,7 +534,7 @@ def test_frame_api_rejects_case_id_and_ticket_number_mismatch() -> None:
     repository = FakeCardRepository()
     session_store = FakeFrameSessionStore()
     omnidesk_client = FakeOmnideskTicketClient()
-    seed_ticket(omnidesk_client, case_id="2000")
+    seed_ticket(omnidesk_client, case_id="9999", number="999-000001")
     client = make_client(
         repository=repository,
         session_store=session_store,
@@ -527,7 +544,7 @@ def test_frame_api_rejects_case_id_and_ticket_number_mismatch() -> None:
     response = client.post(
         "/api/v1/frame/sessions",
         json={
-            "omnidesk_case_id": "9999",
+            "case_id": "9999",
             "omnidesk_ticket_number": "123-456789",
         },
     )

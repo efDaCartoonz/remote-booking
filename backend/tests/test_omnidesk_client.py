@@ -57,7 +57,7 @@ def make_client(handler: httpx.MockTransport) -> HttpOmnideskTicketClient:
     )
 
 
-def test_http_omnidesk_client_reads_ticket_by_number() -> None:
+def test_http_omnidesk_client_reads_ticket_by_case_id() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "GET"
         assert request.url.path == "/api/cases/2000.json"
@@ -70,9 +70,7 @@ def test_http_omnidesk_client_reads_ticket_by_number() -> None:
             headers={"api_calls_left": "499"},
         )
 
-    ticket = make_client(httpx.MockTransport(handler)).get_ticket_by_id(
-        "2000", "123-456789"
-    )
+    ticket = make_client(httpx.MockTransport(handler)).get_ticket_by_case_id("2000")
 
     assert ticket is not None
     assert ticket.case_id == "2000"
@@ -95,17 +93,19 @@ def test_http_omnidesk_client_raises_not_found_for_missing_ticket() -> None:
     client = make_client(httpx.MockTransport(handler))
 
     with pytest.raises(OmnideskTicketNotFoundError):
-        client.get_ticket_by_id("2000", "123-456789")
+        client.get_ticket_by_case_id("2000")
 
 
-def test_http_omnidesk_client_rejects_case_id_number_mismatch() -> None:
+def test_http_omnidesk_client_rejects_case_id_mismatch() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json=make_omnidesk_case(case_number="999-000001"))
+        return httpx.Response(200, json=make_omnidesk_case(case_id=9999))
 
     client = make_client(httpx.MockTransport(handler))
 
-    with pytest.raises(OmnideskTicketMismatchError):
-        client.get_ticket_by_id("2000", "123-456789")
+    with pytest.raises(
+        OmnideskTicketMismatchError, match="omnidesk_ticket_case_id_mismatch"
+    ):
+        client.get_ticket_by_case_id("2000")
 
 
 def test_http_omnidesk_client_rejects_invalid_ticket_response() -> None:
@@ -118,7 +118,7 @@ def test_http_omnidesk_client_rejects_invalid_ticket_response() -> None:
     client = make_client(httpx.MockTransport(handler))
 
     with pytest.raises(OmnideskInvalidResponseError):
-        client.get_ticket_by_id("2000", "123-456789")
+        client.get_ticket_by_case_id("2000")
 
 
 def test_http_omnidesk_client_reports_unavailable_omnidesk() -> None:
@@ -128,7 +128,7 @@ def test_http_omnidesk_client_reports_unavailable_omnidesk() -> None:
     client = make_client(httpx.MockTransport(handler))
 
     with pytest.raises(OmnideskUnavailableError, match="omnidesk_unavailable"):
-        client.get_ticket_by_id("2000", "123-456789")
+        client.get_ticket_by_case_id("2000")
 
 
 def test_http_omnidesk_client_reopens_closed_ticket() -> None:
@@ -141,9 +141,7 @@ def test_http_omnidesk_client_reopens_closed_ticket() -> None:
         assert json.loads(request.content) == {"case": {"status": "open"}}
         return httpx.Response(200, json=make_omnidesk_case(status="open"))
 
-    ticket = make_client(httpx.MockTransport(handler)).reopen_ticket(
-        "2000", "123-456789"
-    )
+    ticket = make_client(httpx.MockTransport(handler)).reopen_ticket("2000")
 
     assert [request.method for request in requests] == ["PUT"]
     assert ticket.status == "open"
@@ -156,4 +154,4 @@ def test_http_omnidesk_client_reports_reopen_error() -> None:
     client = make_client(httpx.MockTransport(handler))
 
     with pytest.raises(OmnideskTicketReopenError):
-        client.reopen_ticket("2000", "123-456789")
+        client.reopen_ticket("2000")

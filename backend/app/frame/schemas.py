@@ -19,7 +19,7 @@ OmnideskCaseId = Annotated[str, Field(min_length=1, max_length=32, pattern=r"^\d
 class FrameSessionCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    omnidesk_case_id: OmnideskCaseId
+    case_id: OmnideskCaseId
     omnidesk_ticket_number: TicketNumber
 
 

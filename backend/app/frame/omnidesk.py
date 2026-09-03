@@ -11,10 +11,10 @@ from app.core.config import settings
 
 @dataclass(frozen=True)
 class OmnideskTicket:
+    case_id: str
     number: str
     user_id: str | None
     status: str
-    case_id: str | None = None
     deleted: bool = False
     spam: bool = False
     company_id: str | None = None
@@ -25,11 +25,9 @@ class OmnideskTicket:
 
 
 class OmnideskTicketClient(Protocol):
-    def get_ticket_by_id(
-        self, case_id: str, ticket_number: str
-    ) -> OmnideskTicket | None: ...
+    def get_ticket_by_case_id(self, case_id: str) -> OmnideskTicket | None: ...
 
-    def reopen_ticket(self, case_id: str, ticket_number: str) -> OmnideskTicket: ...
+    def reopen_ticket(self, case_id: str) -> OmnideskTicket: ...
 
 
 class OmnideskUnavailableError(Exception):
@@ -83,19 +81,17 @@ class HttpOmnideskTicketClient:
             },
         )
 
-    def get_ticket_by_id(
-        self, case_id: str, ticket_number: str
-    ) -> OmnideskTicket | None:
+    def get_ticket_by_case_id(self, case_id: str) -> OmnideskTicket | None:
         payload = self._request(
             "GET",
             f"/api/cases/{quote(case_id, safe='')}.json",
         )
         ticket = _parse_ticket(payload.get("case"))
-        if ticket.number != ticket_number:
-            raise OmnideskTicketMismatchError
+        if ticket.case_id != case_id:
+            raise OmnideskTicketMismatchError("omnidesk_ticket_case_id_mismatch")
         return ticket
 
-    def reopen_ticket(self, case_id: str, ticket_number: str) -> OmnideskTicket:
+    def reopen_ticket(self, case_id: str) -> OmnideskTicket:
         try:
             payload = self._request(
                 "PUT",
@@ -114,10 +110,6 @@ class HttpOmnideskTicketClient:
 
         if reopened.case_id != case_id:
             raise OmnideskTicketReopenError("omnidesk_reopened_ticket_id_mismatch")
-        if reopened.number != ticket_number:
-            raise OmnideskTicketReopenError("omnidesk_reopened_ticket_mismatch")
-        if reopened.status != "open":
-            raise OmnideskTicketReopenError("omnidesk_ticket_not_open_after_reopen")
         return reopened
 
     def close(self) -> None:
@@ -153,12 +145,10 @@ class HttpOmnideskTicketClient:
 
 
 class NotConfiguredOmnideskTicketClient:
-    def get_ticket_by_id(
-        self, case_id: str, ticket_number: str
-    ) -> OmnideskTicket | None:
+    def get_ticket_by_case_id(self, case_id: str) -> OmnideskTicket | None:
         raise OmnideskUnavailableError("omnidesk_client_not_configured")
 
-    def reopen_ticket(self, case_id: str, ticket_number: str) -> OmnideskTicket:
+    def reopen_ticket(self, case_id: str) -> OmnideskTicket:
         raise OmnideskUnavailableError("omnidesk_client_not_configured")
 
 

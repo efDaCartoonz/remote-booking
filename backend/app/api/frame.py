@@ -96,7 +96,7 @@ def create_frame_session(
 ) -> FrameSessionResponse:
     created_session = _handle_ticket_check(
         lambda: service.create_session(
-            omnidesk_case_id=payload.omnidesk_case_id,
+            omnidesk_case_id=payload.case_id,
             omnidesk_ticket_number=payload.omnidesk_ticket_number,
             origin=_frame_request_origin(request),
         )
