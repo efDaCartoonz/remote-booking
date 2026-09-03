@@ -43,3 +43,6 @@ class AssignmentAttemptRecord:
     card_id: int
     l2_engineer_id: int
     status_code: int
+    responded_at: datetime | None = None
+    actor_user_id: int | None = None
+    rejection_reason: str | None = None

@@ -17,6 +17,13 @@ from app.cards.constants import (
 from app.cards.repository import CardRecord
 
 NO_AVAILABLE_L2_REASON = "no_available_l2_candidates"
+ALL_L2_REJECTED_REASON = "all_l2_candidates_rejected"
+
+
+class AssignmentDecisionError(Exception):
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
 
 
 class L2DistributionService:
@@ -125,6 +132,159 @@ class L2DistributionService:
         )
         return updated
 
+    def confirm_current_assignment(
+        self,
+        card: CardRecord,
+        *,
+        actor_user_id: int,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        if card.l2_engineer_id is None:
+            raise AssignmentDecisionError("l2_engineer_required")
+
+        attempt = self.repository.get_pending_assignment_attempt_for_update(
+            card_id=card.id,
+            l2_engineer_id=card.l2_engineer_id,
+        )
+        if attempt is None:
+            raise AssignmentDecisionError("assignment_attempt_not_pending")
+
+        updated_attempt = self.repository.update_assignment_attempt_response(
+            attempt_id=attempt.id,
+            status=AssignmentAttemptStatus.CONFIRMED,
+            actor_user_id=actor_user_id,
+            rejection_reason=None,
+        )
+        if updated_attempt is None:
+            raise AssignmentDecisionError("assignment_attempt_not_pending")
+
+        self._record_assignment_attempt_update(
+            old_attempt=attempt,
+            updated_attempt=updated_attempt,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    def reject_current_assignment(
+        self,
+        card: CardRecord,
+        *,
+        actor_user_id: int,
+        rejection_reason: str,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> CardRecord:
+        if card.l2_engineer_id is None:
+            raise AssignmentDecisionError("l2_engineer_required")
+
+        cycle = self.repository.get_current_assignment_cycle_for_update(card.id)
+        if cycle is None:
+            raise AssignmentDecisionError("assignment_cycle_not_active")
+
+        attempt = self.repository.get_pending_assignment_attempt_for_update(
+            card_id=card.id,
+            l2_engineer_id=card.l2_engineer_id,
+        )
+        if attempt is None or attempt.cycle_id != cycle.id:
+            raise AssignmentDecisionError("assignment_attempt_not_pending")
+
+        updated_attempt = self.repository.update_assignment_attempt_response(
+            attempt_id=attempt.id,
+            status=AssignmentAttemptStatus.REJECTED,
+            actor_user_id=actor_user_id,
+            rejection_reason=rejection_reason,
+        )
+        if updated_attempt is None:
+            raise AssignmentDecisionError("assignment_attempt_not_pending")
+
+        self._record_assignment_attempt_update(
+            old_attempt=attempt,
+            updated_attempt=updated_attempt,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+        planned_end_at = card.planned_start_at + timedelta(
+            minutes=card.planned_duration_minutes
+        )
+        attempted_l2_ids = self.repository.list_attempted_l2_engineer_ids(cycle.id)
+        candidates = [
+            candidate
+            for candidate in self.repository.list_l2_distribution_candidates(
+                planned_start_at=card.planned_start_at,
+                planned_end_at=planned_end_at,
+            )
+            if candidate.user_id not in attempted_l2_ids
+            and _candidate_is_available(
+                candidate,
+                planned_start_at=card.planned_start_at,
+                planned_end_at=planned_end_at,
+            )
+        ]
+        last_user_id = self.repository.get_distribution_last_user_id_for_update(
+            DistributionPool.L2
+        )
+        selected_l2_id = _choose_round_robin_candidate(candidates, last_user_id)
+        if selected_l2_id is None:
+            self.repository.update_assignment_cycle_status(
+                cycle_id=cycle.id, status=AssignmentCycleStatus.ALL_REJECTED
+            )
+            updated = self.repository.update_card_distribution_result(
+                card_id=card.id,
+                status=CardStatus.REJECTED,
+                l2_engineer_id=None,
+                increment_unsuccessful_cycle_count=True,
+            )
+            self._record_card_update(
+                old_card=card,
+                updated_card=updated,
+                event_type=CardEventType.STATUS_CHANGED,
+                comment=f"{ALL_L2_REJECTED_REASON}: {rejection_reason}",
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            return updated
+
+        next_attempt = self.repository.create_assignment_attempt(
+            cycle_id=cycle.id,
+            card_id=card.id,
+            l2_engineer_id=selected_l2_id,
+            status=AssignmentAttemptStatus.PENDING,
+        )
+        self.repository.add_audit_log(
+            actor_user_id=None,
+            actor_type=ActorType.SYSTEM,
+            action=AuditAction.CREATE,
+            entity_type="assignment_attempt",
+            entity_id=next_attempt.id,
+            old_values=None,
+            new_values=_assignment_attempt_snapshot(next_attempt),
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        self.repository.update_assignment_cycle_status(
+            cycle_id=cycle.id, status=AssignmentCycleStatus.ASSIGNED
+        )
+        self.repository.update_distribution_state(
+            pool=DistributionPool.L2, last_user_id=selected_l2_id
+        )
+        updated = self.repository.update_card_distribution_result(
+            card_id=card.id,
+            status=CardStatus.ASSIGNED,
+            l2_engineer_id=selected_l2_id,
+            increment_unsuccessful_cycle_count=False,
+        )
+        self._record_card_update(
+            old_card=card,
+            updated_card=updated,
+            event_type=CardEventType.ENGINEER_ASSIGNED,
+            comment=rejection_reason,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return updated
+
     def _reject_without_candidates(
         self,
         card: CardRecord,
@@ -181,6 +341,26 @@ class L2DistributionService:
             entity_id=updated_card.id,
             old_values=old_snapshot,
             new_values=new_snapshot,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    def _record_assignment_attempt_update(
+        self,
+        *,
+        old_attempt,
+        updated_attempt,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        self.repository.add_audit_log(
+            actor_user_id=updated_attempt.actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.UPDATE,
+            entity_type="assignment_attempt",
+            entity_id=updated_attempt.id,
+            old_values=_assignment_attempt_snapshot(old_attempt),
+            new_values=_assignment_attempt_snapshot(updated_attempt),
             ip_address=ip_address,
             user_agent=user_agent,
         )
@@ -263,4 +443,21 @@ def _card_distribution_snapshot(card: CardRecord) -> dict[str, object]:
         "status_code": card.status_code,
         "l2_engineer_id": card.l2_engineer_id,
         "unsuccessful_cycle_count": card.unsuccessful_cycle_count,
+    }
+
+
+def _assignment_attempt_snapshot(attempt) -> dict[str, object]:
+    return {
+        "id": attempt.id,
+        "cycle_id": attempt.cycle_id,
+        "card_id": attempt.card_id,
+        "l2_engineer_id": attempt.l2_engineer_id,
+        "status_code": attempt.status_code,
+        "responded_at": (
+            attempt.responded_at.isoformat()
+            if attempt.responded_at is not None
+            else None
+        ),
+        "actor_user_id": attempt.actor_user_id,
+        "rejection_reason": attempt.rejection_reason,
     }

@@ -384,6 +384,36 @@ class PostgresCardRepository:
                 {"cycle_id": cycle_id, "status_code": int(status)},
             )
 
+    def get_current_assignment_cycle_for_update(
+        self, card_id: int
+    ) -> AssignmentCycleRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, card_id, cycle_number, status_code
+                FROM assignment_cycles
+                WHERE card_id = %(card_id)s
+                  AND status_code IN (%(in_progress_status)s, %(assigned_status)s)
+                ORDER BY cycle_number DESC, id DESC
+                LIMIT 1
+                FOR UPDATE
+                """,
+                {
+                    "card_id": card_id,
+                    "in_progress_status": int(AssignmentCycleStatus.IN_PROGRESS),
+                    "assigned_status": int(AssignmentCycleStatus.ASSIGNED),
+                },
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return AssignmentCycleRecord(
+            id=row["id"],
+            card_id=row["card_id"],
+            cycle_number=row["cycle_number"],
+            status_code=row["status_code"],
+        )
+
     def create_assignment_attempt(
         self,
         *,
@@ -424,6 +454,94 @@ class PostgresCardRepository:
             l2_engineer_id=row["l2_engineer_id"],
             status_code=row["status_code"],
         )
+
+    def get_pending_assignment_attempt_for_update(
+        self, *, card_id: int, l2_engineer_id: int
+    ) -> AssignmentAttemptRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT
+                    id,
+                    cycle_id,
+                    card_id,
+                    l2_engineer_id,
+                    status_code,
+                    responded_at,
+                    actor_user_id,
+                    rejection_reason
+                FROM assignment_attempts
+                WHERE card_id = %(card_id)s
+                  AND l2_engineer_id = %(l2_engineer_id)s
+                  AND status_code = %(pending_status)s
+                ORDER BY id DESC
+                LIMIT 1
+                FOR UPDATE
+                """,
+                {
+                    "card_id": card_id,
+                    "l2_engineer_id": l2_engineer_id,
+                    "pending_status": int(AssignmentAttemptStatus.PENDING),
+                },
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return _assignment_attempt_from_row(row)
+
+    def list_attempted_l2_engineer_ids(self, cycle_id: int) -> set[int]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT l2_engineer_id
+                FROM assignment_attempts
+                WHERE cycle_id = %(cycle_id)s
+                """,
+                {"cycle_id": cycle_id},
+            )
+            rows = cursor.fetchall()
+        return {row["l2_engineer_id"] for row in rows}
+
+    def update_assignment_attempt_response(
+        self,
+        *,
+        attempt_id: int,
+        status: AssignmentAttemptStatus,
+        actor_user_id: int,
+        rejection_reason: str | None,
+    ) -> AssignmentAttemptRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE assignment_attempts
+                SET status_code = %(status_code)s,
+                    responded_at = now(),
+                    actor_user_id = %(actor_user_id)s,
+                    rejection_reason = %(rejection_reason)s
+                WHERE id = %(attempt_id)s
+                  AND status_code = %(pending_status)s
+                RETURNING
+                    id,
+                    cycle_id,
+                    card_id,
+                    l2_engineer_id,
+                    status_code,
+                    responded_at,
+                    actor_user_id,
+                    rejection_reason
+                """,
+                {
+                    "attempt_id": attempt_id,
+                    "status_code": int(status),
+                    "actor_user_id": actor_user_id,
+                    "rejection_reason": rejection_reason,
+                    "pending_status": int(AssignmentAttemptStatus.PENDING),
+                },
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return _assignment_attempt_from_row(row)
 
     def update_card_distribution_result(
         self,
@@ -828,4 +946,17 @@ def _card_from_row(row: dict[str, Any]) -> CardRecord:
         created_by_id=row["created_by_id"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+    )
+
+
+def _assignment_attempt_from_row(row: dict[str, Any]) -> AssignmentAttemptRecord:
+    return AssignmentAttemptRecord(
+        id=row["id"],
+        cycle_id=row["cycle_id"],
+        card_id=row["card_id"],
+        l2_engineer_id=row["l2_engineer_id"],
+        status_code=row["status_code"],
+        responded_at=row["responded_at"],
+        actor_user_id=row["actor_user_id"],
+        rejection_reason=row["rejection_reason"],
     )

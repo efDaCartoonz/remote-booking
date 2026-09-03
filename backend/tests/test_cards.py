@@ -240,6 +240,22 @@ class FakeCardRepository:
             for cycle in self.cycles
         ]
 
+    def get_current_assignment_cycle_for_update(
+        self, card_id: int
+    ) -> AssignmentCycleRecord | None:
+        active_statuses = {
+            int(AssignmentCycleStatus.IN_PROGRESS),
+            int(AssignmentCycleStatus.ASSIGNED),
+        }
+        candidates = [
+            cycle
+            for cycle in self.cycles
+            if cycle.card_id == card_id and cycle.status_code in active_statuses
+        ]
+        return max(
+            candidates, key=lambda cycle: (cycle.cycle_number, cycle.id), default=None
+        )
+
     def create_assignment_attempt(
         self,
         *,
@@ -258,6 +274,49 @@ class FakeCardRepository:
         self.next_attempt_id += 1
         self.attempts.append(attempt)
         return attempt
+
+    def get_pending_assignment_attempt_for_update(
+        self, *, card_id: int, l2_engineer_id: int
+    ) -> AssignmentAttemptRecord | None:
+        for attempt in reversed(self.attempts):
+            if (
+                attempt.card_id == card_id
+                and attempt.l2_engineer_id == l2_engineer_id
+                and attempt.status_code == int(AssignmentAttemptStatus.PENDING)
+            ):
+                return attempt
+        return None
+
+    def list_attempted_l2_engineer_ids(self, cycle_id: int) -> set[int]:
+        return {
+            attempt.l2_engineer_id
+            for attempt in self.attempts
+            if attempt.cycle_id == cycle_id
+        }
+
+    def update_assignment_attempt_response(
+        self,
+        *,
+        attempt_id: int,
+        status: AssignmentAttemptStatus,
+        actor_user_id: int,
+        rejection_reason: str | None,
+    ) -> AssignmentAttemptRecord | None:
+        for index, attempt in enumerate(self.attempts):
+            if attempt.id != attempt_id:
+                continue
+            if attempt.status_code != int(AssignmentAttemptStatus.PENDING):
+                return None
+            updated = replace(
+                attempt,
+                status_code=int(status),
+                responded_at=datetime.now(UTC),
+                actor_user_id=actor_user_id,
+                rejection_reason=rejection_reason,
+            )
+            self.attempts[index] = updated
+            return updated
+        return None
 
     def update_card_distribution_result(
         self,
@@ -420,9 +479,10 @@ def test_create_card_with_l2_starts_assigned() -> None:
 
 def test_allowed_lifecycle_path_writes_status_history_and_audit() -> None:
     repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
     service = make_service(repository)
     card = service.create_card(
-        create_payload(l2_engineer_id=20),
+        create_payload(),
         actor_user_id=10,
         ip_address=None,
         user_agent=None,
@@ -459,12 +519,17 @@ def test_allowed_lifecycle_path_writes_status_history_and_audit() -> None:
     ]
     assert [event["event_type"] for event in repository.events] == [
         CardEventType.CREATED,
+        CardEventType.ENGINEER_ASSIGNED,
         CardEventType.STATUS_CHANGED,
         CardEventType.STATUS_CHANGED,
         CardEventType.STATUS_CHANGED,
     ]
     assert [event["action"] for event in repository.audit] == [
         AuditAction.CREATE,
+        AuditAction.CREATE,
+        AuditAction.CREATE,
+        AuditAction.UPDATE,
+        AuditAction.UPDATE,
         AuditAction.UPDATE,
         AuditAction.UPDATE,
         AuditAction.UPDATE,
@@ -523,11 +588,105 @@ def test_card_cannot_be_completed_without_in_progress_status() -> None:
         )
 
 
-def test_reject_assigned_card_clears_current_l2() -> None:
+def test_assigned_l2_confirms_card_and_assignment_attempt() -> None:
     repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
     service = make_service(repository)
     card = service.create_card(
-        create_payload(l2_engineer_id=20),
+        create_payload(),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    confirmed = service.confirm_card(
+        card.public_id,
+        actor_user_id=20,
+        comment="Подтверждаю",
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert confirmed.status_code == int(CardStatus.CONFIRMED)
+    assert confirmed.l2_engineer_id == 20
+    assert repository.attempts[0].status_code == int(AssignmentAttemptStatus.CONFIRMED)
+    assert repository.attempts[0].responded_at is not None
+    assert repository.attempts[0].actor_user_id == 20
+    assert repository.events[-1]["old_values"]["status_code"] == int(
+        CardStatus.ASSIGNED
+    )
+    assert repository.events[-1]["new_values"]["status_code"] == int(
+        CardStatus.CONFIRMED
+    )
+    assert repository.audit[-2]["entity_type"] == "assignment_attempt"
+    assert repository.audit[-1]["entity_type"] == "connection_card"
+
+
+def test_reject_requires_reason() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    with pytest.raises(InvalidCardTransitionError, match="rejection_reason_required"):
+        service.reject_card(
+            card.public_id,
+            actor_user_id=20,
+            rejection_reason="   ",
+            ip_address=None,
+            user_agent=None,
+        )
+
+    assert repository.attempts[0].status_code == int(AssignmentAttemptStatus.PENDING)
+    assert repository.cards[card.public_id].status_code == int(CardStatus.ASSIGNED)
+
+
+def test_reject_reassigns_next_l2_in_current_cycle() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    reassigned = service.reject_card(
+        card.public_id,
+        actor_user_id=20,
+        rejection_reason="Занят на аварии",
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert reassigned.status_code == int(CardStatus.ASSIGNED)
+    assert reassigned.l2_engineer_id == 30
+    assert reassigned.unsuccessful_cycle_count == 0
+    assert [attempt.l2_engineer_id for attempt in repository.attempts] == [20, 30]
+    assert [attempt.status_code for attempt in repository.attempts] == [
+        int(AssignmentAttemptStatus.REJECTED),
+        int(AssignmentAttemptStatus.PENDING),
+    ]
+    assert repository.attempts[0].rejection_reason == "Занят на аварии"
+    assert repository.cycles[0].status_code == int(AssignmentCycleStatus.ASSIGNED)
+    assert repository.distribution_last_user_id == 30
+    assert repository.events[-1]["event_type"] == CardEventType.ENGINEER_ASSIGNED
+    assert repository.events[-1]["comment"] == "Занят на аварии"
+
+
+def test_reject_exhausts_candidates_and_rejects_card() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(),
         actor_user_id=10,
         ip_address=None,
         user_agent=None,
@@ -535,16 +694,79 @@ def test_reject_assigned_card_clears_current_l2() -> None:
 
     rejected = service.reject_card(
         card.public_id,
-        actor_user_id=10,
-        comment="Все инженеры отказались",
+        actor_user_id=20,
+        rejection_reason="Нет доступа к стенду",
         ip_address=None,
         user_agent=None,
     )
 
     assert rejected.status_code == int(CardStatus.REJECTED)
     assert rejected.l2_engineer_id is None
-    assert repository.events[-1]["old_values"]["l2_engineer_id"] == 20
-    assert repository.events[-1]["new_values"]["l2_engineer_id"] is None
+    assert rejected.unsuccessful_cycle_count == 1
+    assert repository.attempts[0].status_code == int(AssignmentAttemptStatus.REJECTED)
+    assert repository.attempts[0].rejection_reason == "Нет доступа к стенду"
+    assert repository.cycles[0].status_code == int(AssignmentCycleStatus.ALL_REJECTED)
+    assert repository.events[-1]["comment"] == (
+        "all_l2_candidates_rejected: Нет доступа к стенду"
+    )
+
+
+def test_foreign_l2_cannot_confirm_or_reject_assigned_card() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    with pytest.raises(InvalidCardTransitionError, match="assigned_l2_required"):
+        service.confirm_card(
+            card.public_id,
+            actor_user_id=30,
+            comment=None,
+            ip_address=None,
+            user_agent=None,
+        )
+
+    with pytest.raises(InvalidCardTransitionError, match="assigned_l2_required"):
+        service.reject_card(
+            card.public_id,
+            actor_user_id=30,
+            rejection_reason="Не мой слот",
+            ip_address=None,
+            user_agent=None,
+        )
+
+    assert repository.attempts[0].status_code == int(AssignmentAttemptStatus.PENDING)
+
+
+def test_l2_decision_requires_assigned_status() -> None:
+    repository = FakeCardRepository()
+    service = make_service(repository)
+    card = repository.create_card(
+        CreateCardData(
+            omnidesk_ticket_number="123-456789",
+            planned_start_at=datetime.now(UTC) + timedelta(hours=3),
+            planned_duration_minutes=60,
+            created_by_id=10,
+            status=CardStatus.CREATED,
+            l2_engineer_id=20,
+        )
+    )
+
+    with pytest.raises(
+        InvalidCardTransitionError, match="status_transition_not_allowed"
+    ):
+        service.confirm_card(
+            card.public_id,
+            actor_user_id=20,
+            comment=None,
+            ip_address=None,
+            user_agent=None,
+        )
 
 
 def test_complete_requires_engineer_report() -> None:

@@ -47,6 +47,10 @@ class AssignmentRepository(Protocol):
         self, *, cycle_id: int, status: AssignmentCycleStatus
     ) -> None: ...
 
+    def get_current_assignment_cycle_for_update(
+        self, card_id: int
+    ) -> AssignmentCycleRecord | None: ...
+
     def create_assignment_attempt(
         self,
         *,
@@ -55,6 +59,21 @@ class AssignmentRepository(Protocol):
         l2_engineer_id: int,
         status: AssignmentAttemptStatus,
     ) -> AssignmentAttemptRecord: ...
+
+    def get_pending_assignment_attempt_for_update(
+        self, *, card_id: int, l2_engineer_id: int
+    ) -> AssignmentAttemptRecord | None: ...
+
+    def list_attempted_l2_engineer_ids(self, cycle_id: int) -> set[int]: ...
+
+    def update_assignment_attempt_response(
+        self,
+        *,
+        attempt_id: int,
+        status: AssignmentAttemptStatus,
+        actor_user_id: int,
+        rejection_reason: str | None,
+    ) -> AssignmentAttemptRecord | None: ...
 
     def update_card_distribution_result(
         self,

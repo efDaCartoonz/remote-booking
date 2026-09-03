@@ -48,6 +48,10 @@ class CardStatusChangeRequest(BaseModel):
     comment: str | None = None
 
 
+class CardRejectRequest(BaseModel):
+    rejection_reason: str = Field(min_length=1)
+
+
 class CardCompleteRequest(BaseModel):
     result_code: int = Field(ge=0)
     engineer_report: str = Field(min_length=1)
@@ -91,7 +95,8 @@ def card_response(card: CardRecord) -> CardResponse:
         status_code=int(card_status),
         status_label=status_label(card_status),
         planned_start_at=card.planned_start_at,
-        planned_end_at=card.planned_start_at + timedelta(minutes=card.planned_duration_minutes),
+        planned_end_at=card.planned_start_at
+        + timedelta(minutes=card.planned_duration_minutes),
         planned_duration_minutes=card.planned_duration_minutes,
         l1_owner_id=card.l1_owner_id,
         l2_engineer_id=card.l2_engineer_id,

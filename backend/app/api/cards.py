@@ -9,11 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from app.auth.dependencies import get_current_user
 from app.auth.store import UserAuthRecord
+from app.cards.constants import RoleId
 from app.cards.repository import CardRecord, CardRepository, PostgresCardRepository
 from app.cards.schemas import (
     CardAssignRequest,
     CardCompleteRequest,
     CardCreateRequest,
+    CardRejectRequest,
     CardResponse,
     CardStatusChangeRequest,
     card_response,
@@ -24,7 +26,9 @@ from app.db import get_db
 router = APIRouter(prefix="/api/v1/cards", tags=["cards"])
 
 
-def get_card_repository(connection: Annotated[object, Depends(get_db)]) -> CardRepository:
+def get_card_repository(
+    connection: Annotated[object, Depends(get_db)],
+) -> CardRepository:
     return PostgresCardRepository(connection)
 
 
@@ -90,6 +94,7 @@ def confirm_card(
     user: Annotated[UserAuthRecord, Depends(get_current_user)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
+    _require_l2_role(user)
     return _handle_change(
         lambda: service.confirm_card(
             card_id,
@@ -104,16 +109,17 @@ def confirm_card(
 @router.post("/{card_id}/reject", response_model=CardResponse)
 def reject_card(
     card_id: UUID,
-    payload: CardStatusChangeRequest,
+    payload: CardRejectRequest,
     request: Request,
     user: Annotated[UserAuthRecord, Depends(get_current_user)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
+    _require_l2_role(user)
     return _handle_change(
         lambda: service.reject_card(
             card_id,
             actor_user_id=user.id,
-            comment=payload.comment,
+            rejection_reason=payload.rejection_reason,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         )
@@ -194,6 +200,14 @@ def _handle_change(change: Callable[[], CardRecord]) -> CardResponse:
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="card_not_found")
+
+
+def _require_l2_role(user: UserAuthRecord) -> None:
+    if not any(role.id == int(RoleId.L2) for role in user.roles):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="l2_role_required",
+        )
 
 
 def _client_ip(request: Request) -> str | None:

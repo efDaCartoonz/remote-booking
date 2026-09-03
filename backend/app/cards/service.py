@@ -5,7 +5,7 @@ from typing import Any, Protocol
 from uuid import UUID
 
 from app.assignments.repository import AssignmentRepository
-from app.assignments.service import L2DistributionService
+from app.assignments.service import AssignmentDecisionError, L2DistributionService
 from app.cards.constants import (
     ALLOWED_STATUS_TRANSITIONS,
     ActorType,
@@ -153,32 +153,70 @@ class CardService:
         ip_address: str | None,
         user_agent: str | None,
     ) -> CardRecord:
-        return self._change_status(
+        card = self.repository.get_card_by_public_id_for_update(public_id)
+        if card is None:
+            raise CardNotFoundError
+        _validate_l2_assignment_decision(card, actor_user_id=actor_user_id)
+
+        try:
+            self.l2_distribution_service.confirm_current_assignment(
+                card,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        except AssignmentDecisionError as exc:
+            raise InvalidCardTransitionError(exc.detail) from exc
+
+        old_snapshot = _card_snapshot(card)
+        updated = self.repository.update_card_status(
             public_id,
-            target_status=CardStatus.CONFIRMED,
+            StatusUpdateData(
+                status=CardStatus.CONFIRMED,
+                actor_user_id=actor_user_id,
+            ),
+        )
+        if updated is None:
+            raise CardNotFoundError
+
+        self._record_user_card_update(
+            old_snapshot=old_snapshot,
+            updated=updated,
             actor_user_id=actor_user_id,
             comment=comment,
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        return updated
 
     def reject_card(
         self,
         public_id: UUID,
         *,
         actor_user_id: int,
-        comment: str | None,
+        rejection_reason: str,
         ip_address: str | None,
         user_agent: str | None,
     ) -> CardRecord:
-        return self._change_status(
-            public_id,
-            target_status=CardStatus.REJECTED,
-            actor_user_id=actor_user_id,
-            comment=comment,
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
+        rejection_reason = rejection_reason.strip()
+        if not rejection_reason:
+            raise InvalidCardTransitionError("rejection_reason_required")
+
+        card = self.repository.get_card_by_public_id_for_update(public_id)
+        if card is None:
+            raise CardNotFoundError
+        _validate_l2_assignment_decision(card, actor_user_id=actor_user_id)
+
+        try:
+            return self.l2_distribution_service.reject_current_assignment(
+                card,
+                actor_user_id=actor_user_id,
+                rejection_reason=rejection_reason,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        except AssignmentDecisionError as exc:
+            raise InvalidCardTransitionError(exc.detail) from exc
 
     def start_card(
         self,
@@ -310,6 +348,37 @@ class CardService:
         )
         return updated
 
+    def _record_user_card_update(
+        self,
+        *,
+        old_snapshot: dict[str, Any],
+        updated: CardRecord,
+        actor_user_id: int,
+        comment: str | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        new_snapshot = _card_snapshot(updated)
+        self.repository.add_card_event(
+            card_id=updated.id,
+            event_type=CardEventType.STATUS_CHANGED,
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            old_values=old_snapshot,
+            new_values=new_snapshot,
+            comment=comment,
+        )
+        self.repository.add_audit_log(
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.UPDATE,
+            entity_id=updated.id,
+            old_values=old_snapshot,
+            new_values=new_snapshot,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
 
 def _validate_transition(
     *,
@@ -332,6 +401,15 @@ def _validate_transition(
         and resulting_l2_engineer_id is None
     ):
         raise InvalidCardTransitionError("l2_engineer_required")
+
+
+def _validate_l2_assignment_decision(card: CardRecord, *, actor_user_id: int) -> None:
+    if CardStatus(card.status_code) != CardStatus.ASSIGNED:
+        raise InvalidCardTransitionError("status_transition_not_allowed")
+    if card.l2_engineer_id is None:
+        raise InvalidCardTransitionError("l2_engineer_required")
+    if card.l2_engineer_id != actor_user_id:
+        raise InvalidCardTransitionError("assigned_l2_required")
 
 
 def _card_snapshot(card: CardRecord) -> dict[str, Any]:
