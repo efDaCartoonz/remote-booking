@@ -7,6 +7,7 @@ from app.assignments.types import (
     AssignmentAttemptRecord,
     AssignmentCycleRecord,
     L2DistributionCandidate,
+    L1DistributionCandidate,
 )
 from app.cards.constants import (
     ActorType,
@@ -21,6 +22,11 @@ from app.cards.repository import CardRecord
 
 
 class AssignmentRepository(Protocol):
+    def list_l1_distribution_candidates(
+        self, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> list[L1DistributionCandidate]: ...
+
+    def update_l1_owner(self, *, card_id: int, l1_owner_id: int | None) -> CardRecord: ...
     def list_l2_distribution_candidates(
         self, *, planned_start_at: datetime, planned_end_at: datetime
     ) -> list[L2DistributionCandidate]: ...

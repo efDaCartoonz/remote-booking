@@ -12,6 +12,7 @@ from app.assignments.types import (
     AssignmentAttemptRecord,
     AssignmentCycleRecord,
     L2DistributionCandidate,
+    L1DistributionCandidate,
     ScheduleWindow,
     TimeInterval,
 )
@@ -289,6 +290,56 @@ class PostgresCardRepository:
             )
             for user_id in user_ids
         ]
+
+    def list_l1_distribution_candidates(
+        self, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> list[L1DistributionCandidate]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT u.id FROM users u
+                JOIN user_roles ur ON ur.user_id = u.id
+                JOIN distribution_members dm ON dm.user_id = u.id
+                WHERE u.is_active AND ur.role_id = %(role_id)s
+                  AND dm.pool_code = %(pool_code)s AND dm.is_enabled
+                ORDER BY u.id
+                """,
+                {"role_id": int(RoleId.L1), "pool_code": int(DistributionPool.L1)},
+            )
+            user_ids = [row["id"] for row in cursor.fetchall()]
+        return [
+            L1DistributionCandidate(
+                user_id=user_id,
+                schedules=tuple(self._list_schedule_windows(user_id)),
+                absences=tuple(
+                    self._list_absence_intervals(
+                        user_id,
+                        planned_start_at=planned_start_at,
+                        planned_end_at=planned_end_at,
+                    )
+                ),
+                active_cards=tuple(
+                    self._list_active_card_intervals(
+                        user_id,
+                        planned_start_at=planned_start_at,
+                        planned_end_at=planned_end_at,
+                        owner_field="l1_owner_id",
+                    )
+                ),
+            )
+            for user_id in user_ids
+        ]
+
+    def update_l1_owner(self, *, card_id: int, l1_owner_id: int | None) -> CardRecord:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """UPDATE connection_cards
+                   SET l1_owner_id = %(owner)s, updated_at = now()
+                   WHERE id = %(id)s RETURNING *""",
+                {"owner": l1_owner_id, "id": card_id},
+            )
+            row = cursor.fetchone()
+        return _card_from_row(row)
 
     def get_distribution_last_user_id_for_update(
         self, pool: DistributionPool
@@ -866,16 +917,19 @@ class PostgresCardRepository:
         )
 
     def _list_active_card_intervals(
-        self, user_id: int, *, planned_start_at: datetime, planned_end_at: datetime
+        self, user_id: int, *, planned_start_at: datetime, planned_end_at: datetime,
+        owner_field: str = "l2_engineer_id"
     ) -> tuple[TimeInterval, ...]:
         with self.connection.cursor() as cursor:
+            if owner_field not in {"l1_owner_id", "l2_engineer_id"}:
+                raise ValueError("invalid assignment owner field")
             cursor.execute(
-                """
+                f"""
                 SELECT planned_start_at,
                        planned_start_at
                          + planned_duration_minutes * interval '1 minute' AS end_at
                 FROM connection_cards
-                WHERE l2_engineer_id = %(user_id)s
+                WHERE {owner_field} = %(user_id)s
                   AND status_code IN (1, 2, 3)
                   AND planned_start_at < %(planned_end_at)s
                   AND %(planned_start_at)s < (

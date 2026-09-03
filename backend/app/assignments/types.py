@@ -29,6 +29,14 @@ class L2DistributionCandidate:
 
 
 @dataclass(frozen=True)
+class L1DistributionCandidate:
+    user_id: int
+    schedules: tuple[ScheduleWindow, ...]
+    absences: tuple[TimeInterval, ...]
+    active_cards: tuple[TimeInterval, ...]
+
+
+@dataclass(frozen=True)
 class AssignmentCycleRecord:
     id: int
     card_id: int

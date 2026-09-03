@@ -14,6 +14,7 @@ from app.cards.constants import (
     CardStatus,
     DistributionPool,
 )
+from app.assignments.l1_service import L1DistributionService
 from app.cards.repository import CardRecord
 
 NO_AVAILABLE_L2_REASON = "no_available_l2_candidates"
@@ -29,6 +30,7 @@ class AssignmentDecisionError(Exception):
 class L2DistributionService:
     def __init__(self, repository: AssignmentRepository) -> None:
         self.repository = repository
+        self.l1_distribution_service = L1DistributionService(repository)
 
     def run_initial_distribution(
         self,
@@ -81,11 +83,14 @@ class L2DistributionService:
         ]
         selected_l2_id = _choose_round_robin_candidate(candidates, last_user_id)
         if selected_l2_id is None:
-            return self._reject_without_candidates(
+            rejected = self._reject_without_candidates(
                 card,
                 cycle_id=cycle.id,
                 ip_address=ip_address,
                 user_agent=user_agent,
+            )
+            return self.l1_distribution_service.assign(
+                rejected, ip_address=ip_address, user_agent=user_agent
             )
 
         attempt = self.repository.create_assignment_attempt(
@@ -244,7 +249,9 @@ class L2DistributionService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
-            return updated
+            return self.l1_distribution_service.assign(
+                updated, ip_address=ip_address, user_agent=user_agent
+            )
 
         next_attempt = self.repository.create_assignment_attempt(
             cycle_id=cycle.id,
