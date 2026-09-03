@@ -63,6 +63,7 @@ class CardRecord:
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime
+    client_informed: bool = False
 
 
 @dataclass(frozen=True)
@@ -120,6 +121,15 @@ class StatusUpdateData:
     engineer_report: str | None = None
 
 
+@dataclass(frozen=True)
+class L1FollowupUpdateData:
+    planned_start_at: datetime | None = None
+    planned_duration_minutes: int | None = None
+    description: str | None = None
+    client_informed: bool | None = None
+    reset_for_new_cycle: bool = False
+
+
 class CardRepository(Protocol):
     def create_card(self, data: CreateCardData) -> CardRecord: ...
 
@@ -138,6 +148,8 @@ class CardRepository(Protocol):
     def update_card_status(
         self, public_id: UUID, data: StatusUpdateData
     ) -> CardRecord | None: ...
+
+    def update_l1_followup(self, public_id: UUID, data: L1FollowupUpdateData) -> CardRecord | None: ...
 
     def add_card_event(
         self,
@@ -247,6 +259,28 @@ class PostgresCardRepository:
             )
             row = cursor.fetchone()
         return _card_from_row(row)
+
+    def update_l1_followup(self, public_id: UUID, data: L1FollowupUpdateData) -> CardRecord | None:
+        fields = ["updated_at = now()"]
+        params: dict[str, Any] = {"public_id": public_id}
+        if data.planned_start_at is not None:
+            fields.append("planned_start_at = %(start)s")
+            params["start"] = data.planned_start_at
+        if data.planned_duration_minutes is not None:
+            fields.append("planned_duration_minutes = %(duration)s")
+            params["duration"] = data.planned_duration_minutes
+        if data.description is not None:
+            fields.append("description = %(description)s")
+            params["description"] = data.description
+        if data.client_informed is not None:
+            fields.append("client_informed = %(client_informed)s")
+            params["client_informed"] = data.client_informed
+        if data.reset_for_new_cycle:
+            fields.extend(["status_code = 0", "l1_owner_id = NULL", "client_informed = false"])
+        with self.connection.cursor() as cursor:
+            cursor.execute(f"UPDATE connection_cards SET {', '.join(fields)} WHERE public_id = %(public_id)s AND status_code = 4 AND l1_owner_id IS NOT NULL RETURNING *", params)
+            row = cursor.fetchone()
+        return _card_from_row(row) if row is not None else None
 
     def list_l2_distribution_candidates(
         self, *, planned_start_at: datetime, planned_end_at: datetime

@@ -33,6 +33,7 @@ from app.cards.repository import (
     ClientRecord,
     ClientSyncData,
     CreateCardData,
+    L1FollowupUpdateData,
     StatusUpdateData,
 )
 from app.cards.schemas import CardCreateRequest
@@ -159,6 +160,14 @@ class FakeCardRepository:
             engineer_report=data.engineer_report or card.engineer_report,
             updated_at=datetime.now(UTC),
         )
+        self.cards[public_id] = updated
+        return updated
+
+    def update_l1_followup(self, public_id: UUID, data: L1FollowupUpdateData) -> CardRecord | None:
+        card = self.cards.get(public_id)
+        if card is None or CardStatus(card.status_code) != CardStatus.REJECTED or card.l1_owner_id is None:
+            return None
+        updated = replace(card, planned_start_at=data.planned_start_at or card.planned_start_at, planned_duration_minutes=data.planned_duration_minutes or card.planned_duration_minutes, description=data.description if data.description is not None else card.description, client_informed=data.client_informed if data.client_informed is not None else card.client_informed, status_code=0 if data.reset_for_new_cycle else card.status_code, l1_owner_id=None if data.reset_for_new_cycle else card.l1_owner_id, updated_at=datetime.now(UTC))
         self.cards[public_id] = updated
         return updated
 

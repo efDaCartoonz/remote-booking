@@ -48,6 +48,19 @@ class CardStatusChangeRequest(BaseModel):
     comment: str | None = None
 
 
+class L1RescheduleRequest(BaseModel):
+    planned_start_at: datetime
+    planned_duration_minutes: int = Field(ge=30, le=720)
+    description: str | None = None
+
+    @field_validator("planned_start_at")
+    @classmethod
+    def timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("planned_start_at_must_be_timezone_aware")
+        return value
+
+
 class CardRejectRequest(BaseModel):
     rejection_reason: str = Field(min_length=1)
 

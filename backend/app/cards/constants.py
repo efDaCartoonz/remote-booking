@@ -74,6 +74,8 @@ class CardEventType(IntEnum):
     CREATED = 0
     STATUS_CHANGED = 1
     ENGINEER_ASSIGNED = 2
+    L1_CLIENT_INFORMED = 3
+    DETAILS_UPDATED = 4
 
 
 class AuditAction(IntEnum):
