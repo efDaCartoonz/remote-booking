@@ -1,15 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
 from app.api.cards import get_card_repository
+from app.assignments.types import (
+    AssignmentAttemptRecord,
+    AssignmentCycleRecord,
+    L2DistributionCandidate,
+    ScheduleWindow,
+    TimeInterval,
+)
 from app.auth.dependencies import get_auth_store, get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
-from app.cards.constants import ActorType, AuditAction, CardEventType, CardStatus
+from app.cards.constants import (
+    ActorType,
+    AssignmentAttemptStatus,
+    AssignmentCycleStatus,
+    AuditAction,
+    CardEventType,
+    CardStatus,
+    DistributionPool,
+)
 from app.cards.repository import (
     CardRecord,
     ClientRecord,
@@ -22,6 +37,8 @@ from app.cards.service import CardService, InvalidCardTransitionError
 from app.main import create_app
 from fastapi.testclient import TestClient
 
+DEFAULT_PLANNED_START_AT = datetime(2026, 9, 7, 10, tzinfo=UTC)
+
 
 class FakeCardRepository:
     def __init__(self) -> None:
@@ -29,8 +46,15 @@ class FakeCardRepository:
         self.clients: dict[str, ClientRecord] = {}
         self.events: list[dict[str, Any]] = []
         self.audit: list[dict[str, Any]] = []
+        self.l2_candidate_schedules: dict[int, list[ScheduleWindow]] = {}
+        self.l2_candidate_absences: dict[int, list[TimeInterval]] = {}
+        self.distribution_last_user_id: int | None = None
+        self.cycles: list[AssignmentCycleRecord] = []
+        self.attempts: list[AssignmentAttemptRecord] = []
         self.next_id = 1
         self.next_client_id = 1
+        self.next_cycle_id = 1
+        self.next_attempt_id = 1
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         now = datetime.now(UTC)
@@ -133,6 +157,131 @@ class FakeCardRepository:
         self.cards[public_id] = updated
         return updated
 
+    def list_l2_distribution_candidates(
+        self, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> list[L2DistributionCandidate]:
+        candidates = []
+        for user_id in sorted(self.l2_candidate_schedules):
+            active_cards = []
+            for card in self.cards.values():
+                card_start = card.planned_start_at
+                card_end = card_start + timedelta(minutes=card.planned_duration_minutes)
+                if (
+                    card.l2_engineer_id == user_id
+                    and CardStatus(card.status_code)
+                    in {
+                        CardStatus.ASSIGNED,
+                        CardStatus.CONFIRMED,
+                        CardStatus.IN_PROGRESS,
+                    }
+                    and card_start < planned_end_at
+                    and planned_start_at < card_end
+                ):
+                    active_cards.append(
+                        TimeInterval(start_at=card_start, end_at=card_end)
+                    )
+            candidates.append(
+                L2DistributionCandidate(
+                    user_id=user_id,
+                    schedules=tuple(self.l2_candidate_schedules[user_id]),
+                    absences=tuple(self.l2_candidate_absences.get(user_id, [])),
+                    active_cards=tuple(active_cards),
+                )
+            )
+        return candidates
+
+    def get_distribution_last_user_id_for_update(
+        self, pool: DistributionPool
+    ) -> int | None:
+        assert pool == DistributionPool.L2
+        return self.distribution_last_user_id
+
+    def update_distribution_state(
+        self, *, pool: DistributionPool, last_user_id: int
+    ) -> None:
+        assert pool == DistributionPool.L2
+        self.distribution_last_user_id = last_user_id
+
+    def get_next_assignment_cycle_number(self, card_id: int) -> int:
+        return (
+            max(
+                (
+                    cycle.cycle_number
+                    for cycle in self.cycles
+                    if cycle.card_id == card_id
+                ),
+                default=0,
+            )
+            + 1
+        )
+
+    def create_assignment_cycle(
+        self,
+        *,
+        card_id: int,
+        cycle_number: int,
+        status: AssignmentCycleStatus,
+    ) -> AssignmentCycleRecord:
+        cycle = AssignmentCycleRecord(
+            id=self.next_cycle_id,
+            card_id=card_id,
+            cycle_number=cycle_number,
+            status_code=int(status),
+        )
+        self.next_cycle_id += 1
+        self.cycles.append(cycle)
+        return cycle
+
+    def update_assignment_cycle_status(
+        self, *, cycle_id: int, status: AssignmentCycleStatus
+    ) -> None:
+        self.cycles = [
+            replace(cycle, status_code=int(status)) if cycle.id == cycle_id else cycle
+            for cycle in self.cycles
+        ]
+
+    def create_assignment_attempt(
+        self,
+        *,
+        cycle_id: int,
+        card_id: int,
+        l2_engineer_id: int,
+        status: AssignmentAttemptStatus,
+    ) -> AssignmentAttemptRecord:
+        attempt = AssignmentAttemptRecord(
+            id=self.next_attempt_id,
+            cycle_id=cycle_id,
+            card_id=card_id,
+            l2_engineer_id=l2_engineer_id,
+            status_code=int(status),
+        )
+        self.next_attempt_id += 1
+        self.attempts.append(attempt)
+        return attempt
+
+    def update_card_distribution_result(
+        self,
+        *,
+        card_id: int,
+        status: CardStatus,
+        l2_engineer_id: int | None,
+        increment_unsuccessful_cycle_count: bool,
+    ) -> CardRecord:
+        for public_id, card in self.cards.items():
+            if card.id != card_id:
+                continue
+            updated = replace(
+                card,
+                status_code=int(status),
+                l2_engineer_id=l2_engineer_id,
+                unsuccessful_cycle_count=card.unsuccessful_cycle_count
+                + int(increment_unsuccessful_cycle_count),
+                updated_at=datetime.now(UTC),
+            )
+            self.cards[public_id] = updated
+            return updated
+        raise AssertionError(f"Card {card_id} not found")
+
     def add_card_event(
         self,
         *,
@@ -167,12 +316,14 @@ class FakeCardRepository:
         new_values: dict[str, Any] | None,
         ip_address: str | None,
         user_agent: str | None,
+        entity_type: str = "connection_card",
     ) -> None:
         self.audit.append(
             {
                 "actor_user_id": actor_user_id,
                 "actor_type": actor_type,
                 "action": action,
+                "entity_type": entity_type,
                 "entity_id": entity_id,
                 "old_values": old_values,
                 "new_values": new_values,
@@ -182,21 +333,50 @@ class FakeCardRepository:
         )
 
 
-def create_payload(*, l2_engineer_id: int | None = None) -> CardCreateRequest:
+def create_payload(
+    *,
+    l2_engineer_id: int | None = None,
+    omnidesk_ticket_number: str = "123-456789",
+    planned_start_at: datetime | None = None,
+) -> CardCreateRequest:
     return CardCreateRequest(
-        omnidesk_ticket_number="123-456789",
-        planned_start_at=datetime.now(UTC) + timedelta(hours=3),
+        omnidesk_ticket_number=omnidesk_ticket_number,
+        planned_start_at=planned_start_at or DEFAULT_PLANNED_START_AT,
         planned_duration_minutes=60,
         l2_engineer_id=l2_engineer_id,
         description="Проверить удаленный доступ",
     )
 
 
+def seed_l2_candidate(
+    repository: FakeCardRepository,
+    user_id: int,
+    *,
+    planned_start_at: datetime | None = None,
+    schedule_start: time = time(0, 0),
+    schedule_end: time = time(23, 59, 59),
+    absence: TimeInterval | None = None,
+) -> None:
+    planned_start_at = planned_start_at or DEFAULT_PLANNED_START_AT
+    repository.l2_candidate_schedules[user_id] = [
+        ScheduleWindow(
+            weekday=planned_start_at.isoweekday(),
+            start_time=schedule_start,
+            end_time=schedule_end,
+            timezone="UTC",
+            valid_from=None,
+            valid_to=None,
+        )
+    ]
+    if absence is not None:
+        repository.l2_candidate_absences[user_id] = [absence]
+
+
 def make_service(repository: FakeCardRepository) -> CardService:
     return CardService(repository)
 
 
-def test_create_card_without_l2_starts_created_and_writes_history_and_audit() -> None:
+def test_create_card_without_l2_rejects_when_no_distribution_candidates() -> None:
     repository = FakeCardRepository()
     service = make_service(repository)
 
@@ -207,13 +387,20 @@ def test_create_card_without_l2_starts_created_and_writes_history_and_audit() ->
         user_agent="pytest",
     )
 
-    assert card.status_code == int(CardStatus.CREATED)
+    assert card.status_code == int(CardStatus.REJECTED)
     assert card.l2_engineer_id is None
+    assert card.unsuccessful_cycle_count == 1
     assert [event["event_type"] for event in repository.events] == [
-        CardEventType.CREATED
+        CardEventType.CREATED,
+        CardEventType.STATUS_CHANGED,
     ]
-    assert [event["action"] for event in repository.audit] == [AuditAction.CREATE]
+    assert [event["action"] for event in repository.audit] == [
+        AuditAction.CREATE,
+        AuditAction.CREATE,
+        AuditAction.UPDATE,
+    ]
     assert repository.events[0]["new_values"]["status_code"] == int(CardStatus.CREATED)
+    assert repository.events[-1]["comment"] == "no_available_l2_candidates"
 
 
 def test_create_card_with_l2_starts_assigned() -> None:
@@ -287,11 +474,14 @@ def test_allowed_lifecycle_path_writes_status_history_and_audit() -> None:
 def test_created_card_cannot_be_cancelled_by_user_action() -> None:
     repository = FakeCardRepository()
     service = make_service(repository)
-    card = service.create_card(
-        create_payload(),
-        actor_user_id=10,
-        ip_address=None,
-        user_agent=None,
+    card = repository.create_card(
+        CreateCardData(
+            omnidesk_ticket_number="123-456789",
+            planned_start_at=datetime.now(UTC) + timedelta(hours=3),
+            planned_duration_minutes=60,
+            created_by_id=10,
+            status=CardStatus.CREATED,
+        )
     )
 
     with pytest.raises(
@@ -305,8 +495,8 @@ def test_created_card_cannot_be_cancelled_by_user_action() -> None:
             user_agent=None,
         )
 
-    assert len(repository.events) == 1
-    assert len(repository.audit) == 1
+    assert len(repository.events) == 0
+    assert len(repository.audit) == 0
 
 
 def test_card_cannot_be_completed_without_in_progress_status() -> None:
@@ -492,13 +682,16 @@ def test_cards_api_returns_conflict_for_forbidden_transition() -> None:
     )
     client = TestClient(app, base_url="https://testserver")
     card = CardService(repository).create_card(
-        create_payload(),
+        create_payload(l2_engineer_id=20),
         actor_user_id=10,
         ip_address=None,
         user_agent=None,
     )
 
-    response = client.post(f"/api/v1/cards/{card.public_id}/cancel", json={})
+    response = client.post(
+        f"/api/v1/cards/{card.public_id}/complete",
+        json={"result_code": 0, "engineer_report": "Готово"},
+    )
 
     assert response.status_code == 409
     assert response.json()["detail"] == "status_transition_not_allowed"

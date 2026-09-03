@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 from uuid import UUID
 
+from app.assignments.repository import AssignmentRepository
+from app.assignments.service import L2DistributionService
 from app.cards.constants import (
     ALLOWED_STATUS_TRANSITIONS,
     ActorType,
@@ -22,6 +24,10 @@ from app.cards.repository import (
 from app.cards.schemas import CardCreateRequest
 
 
+class CardServiceRepository(CardRepository, AssignmentRepository, Protocol):
+    pass
+
+
 class CardNotFoundError(Exception):
     pass
 
@@ -33,8 +39,9 @@ class InvalidCardTransitionError(Exception):
 
 
 class CardService:
-    def __init__(self, repository: CardRepository) -> None:
+    def __init__(self, repository: CardServiceRepository) -> None:
         self.repository = repository
+        self.l2_distribution_service = L2DistributionService(repository)
 
     def create_card(
         self,
@@ -103,6 +110,12 @@ class CardService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        if status == CardStatus.CREATED:
+            card = self.l2_distribution_service.run_initial_distribution(
+                card,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
         return card
 
     def get_card(self, public_id: UUID) -> CardRecord:

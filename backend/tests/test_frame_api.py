@@ -292,15 +292,15 @@ def test_frame_api_creates_card_only_for_session_ticket() -> None:
     assert response.status_code == 201
     assert omnidesk_client.reopen_calls == ["2000"]
     body = response.json()
-    assert body["status"] == "created"
+    assert body["status"] == "rejected"
     assert body["client_timezone_at_creation"] == "Asia/Yekaterinburg"
     stored = next(iter(repository.cards.values()))
     assert stored.omnidesk_ticket_number == "123-456789"
     assert stored.created_by_id is None
     assert stored.created_source_code == int(CreatedSource.FRAME)
     assert stored.client_id == 1
-    assert repository.events[-1]["actor_type"] == ActorType.FRAME_CLIENT
-    assert repository.audit[-1]["actor_type"] == ActorType.FRAME_CLIENT
+    assert repository.events[0]["actor_type"] == ActorType.FRAME_CLIENT
+    assert repository.audit[0]["actor_type"] == ActorType.FRAME_CLIENT
 
 
 def test_frame_api_rejects_card_create_when_closed_ticket_is_not_reopened() -> None:

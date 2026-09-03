@@ -17,10 +17,14 @@ def ready() -> dict[str, str]:
     checks: dict[str, str] = {}
 
     try:
-        with psycopg.connect(settings.psycopg_database_url, connect_timeout=3) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute("SELECT 1")
-                cursor.fetchone()
+        with (
+            psycopg.connect(
+                settings.psycopg_database_url, connect_timeout=3
+            ) as connection,
+            connection.cursor() as cursor,
+        ):
+            cursor.execute("SELECT 1")
+            cursor.fetchone()
         checks["postgres"] = "ok"
     except Exception as exc:
         checks["postgres"] = "failed"
@@ -30,7 +34,9 @@ def ready() -> dict[str, str]:
         ) from exc
 
     try:
-        redis_client = redis.Redis.from_url(settings.redis_url, socket_connect_timeout=3)
+        redis_client = redis.Redis.from_url(
+            settings.redis_url, socket_connect_timeout=3
+        )
         redis_client.ping()
         checks["redis"] = "ok"
     except Exception as exc:

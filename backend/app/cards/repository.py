@@ -8,13 +8,24 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
+from app.assignments.types import (
+    AssignmentAttemptRecord,
+    AssignmentCycleRecord,
+    L2DistributionCandidate,
+    ScheduleWindow,
+    TimeInterval,
+)
 from app.cards.constants import (
     TERMINAL_STATUSES,
     ActorType,
+    AssignmentAttemptStatus,
+    AssignmentCycleStatus,
     AuditAction,
     CardEventType,
     CardStatus,
     CreatedSource,
+    DistributionPool,
+    RoleId,
 )
 
 
@@ -150,6 +161,7 @@ class CardRepository(Protocol):
         new_values: dict[str, Any] | None,
         ip_address: str | None,
         user_agent: str | None,
+        entity_type: str = "connection_card",
     ) -> None: ...
 
 
@@ -230,6 +242,218 @@ class PostgresCardRepository:
                     "retroactive_flag": data.retroactive_flag,
                     "created_source_code": data.created_source_code,
                     "created_by_id": data.created_by_id,
+                },
+            )
+            row = cursor.fetchone()
+        return _card_from_row(row)
+
+    def list_l2_distribution_candidates(
+        self, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> list[L2DistributionCandidate]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT u.id
+                FROM users u
+                JOIN user_roles ur ON ur.user_id = u.id
+                JOIN distribution_members dm ON dm.user_id = u.id
+                WHERE u.is_active
+                  AND ur.role_id = %(l2_role_id)s
+                  AND dm.pool_code = %(l2_pool_code)s
+                  AND dm.is_enabled
+                ORDER BY u.id
+                """,
+                {
+                    "l2_role_id": int(RoleId.L2),
+                    "l2_pool_code": int(DistributionPool.L2),
+                },
+            )
+            user_ids = [row["id"] for row in cursor.fetchall()]
+        if not user_ids:
+            return []
+
+        return [
+            L2DistributionCandidate(
+                user_id=user_id,
+                schedules=self._list_schedule_windows(user_id),
+                absences=self._list_absence_intervals(
+                    user_id,
+                    planned_start_at=planned_start_at,
+                    planned_end_at=planned_end_at,
+                ),
+                active_cards=self._list_active_card_intervals(
+                    user_id,
+                    planned_start_at=planned_start_at,
+                    planned_end_at=planned_end_at,
+                ),
+            )
+            for user_id in user_ids
+        ]
+
+    def get_distribution_last_user_id_for_update(
+        self, pool: DistributionPool
+    ) -> int | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO distribution_state (pool_code, last_user_id)
+                VALUES (%(pool_code)s, NULL)
+                ON CONFLICT (pool_code) DO NOTHING
+                """,
+                {"pool_code": int(pool)},
+            )
+            cursor.execute(
+                """
+                SELECT last_user_id
+                FROM distribution_state
+                WHERE pool_code = %(pool_code)s
+                FOR UPDATE
+                """,
+                {"pool_code": int(pool)},
+            )
+            row = cursor.fetchone()
+        return row["last_user_id"] if row is not None else None
+
+    def update_distribution_state(
+        self, *, pool: DistributionPool, last_user_id: int
+    ) -> None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO distribution_state (pool_code, last_user_id, updated_at)
+                VALUES (%(pool_code)s, %(last_user_id)s, now())
+                ON CONFLICT (pool_code) DO UPDATE
+                SET last_user_id = EXCLUDED.last_user_id,
+                    updated_at = now()
+                """,
+                {"pool_code": int(pool), "last_user_id": last_user_id},
+            )
+
+    def get_next_assignment_cycle_number(self, card_id: int) -> int:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COALESCE(MAX(cycle_number), 0) + 1 AS next_cycle_number
+                FROM assignment_cycles
+                WHERE card_id = %(card_id)s
+                """,
+                {"card_id": card_id},
+            )
+            row = cursor.fetchone()
+        return row["next_cycle_number"]
+
+    def create_assignment_cycle(
+        self,
+        *,
+        card_id: int,
+        cycle_number: int,
+        status: AssignmentCycleStatus,
+    ) -> AssignmentCycleRecord:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO assignment_cycles (card_id, cycle_number, status_code)
+                VALUES (%(card_id)s, %(cycle_number)s, %(status_code)s)
+                RETURNING id, card_id, cycle_number, status_code
+                """,
+                {
+                    "card_id": card_id,
+                    "cycle_number": cycle_number,
+                    "status_code": int(status),
+                },
+            )
+            row = cursor.fetchone()
+        return AssignmentCycleRecord(
+            id=row["id"],
+            card_id=row["card_id"],
+            cycle_number=row["cycle_number"],
+            status_code=row["status_code"],
+        )
+
+    def update_assignment_cycle_status(
+        self, *, cycle_id: int, status: AssignmentCycleStatus
+    ) -> None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE assignment_cycles
+                SET status_code = %(status_code)s,
+                    completed_at = now()
+                WHERE id = %(cycle_id)s
+                """,
+                {"cycle_id": cycle_id, "status_code": int(status)},
+            )
+
+    def create_assignment_attempt(
+        self,
+        *,
+        cycle_id: int,
+        card_id: int,
+        l2_engineer_id: int,
+        status: AssignmentAttemptStatus,
+    ) -> AssignmentAttemptRecord:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO assignment_attempts (
+                    cycle_id,
+                    card_id,
+                    l2_engineer_id,
+                    status_code
+                )
+                VALUES (
+                    %(cycle_id)s,
+                    %(card_id)s,
+                    %(l2_engineer_id)s,
+                    %(status_code)s
+                )
+                RETURNING id, cycle_id, card_id, l2_engineer_id, status_code
+                """,
+                {
+                    "cycle_id": cycle_id,
+                    "card_id": card_id,
+                    "l2_engineer_id": l2_engineer_id,
+                    "status_code": int(status),
+                },
+            )
+            row = cursor.fetchone()
+        return AssignmentAttemptRecord(
+            id=row["id"],
+            cycle_id=row["cycle_id"],
+            card_id=row["card_id"],
+            l2_engineer_id=row["l2_engineer_id"],
+            status_code=row["status_code"],
+        )
+
+    def update_card_distribution_result(
+        self,
+        *,
+        card_id: int,
+        status: CardStatus,
+        l2_engineer_id: int | None,
+        increment_unsuccessful_cycle_count: bool,
+    ) -> CardRecord:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE connection_cards
+                SET status_code = %(status_code)s,
+                    l2_engineer_id = %(l2_engineer_id)s,
+                    unsuccessful_cycle_count = unsuccessful_cycle_count + CASE
+                        WHEN %(increment_unsuccessful_cycle_count)s THEN 1
+                        ELSE 0
+                    END,
+                    updated_at = now()
+                WHERE id = %(card_id)s
+                RETURNING *
+                """,
+                {
+                    "card_id": card_id,
+                    "status_code": int(status),
+                    "l2_engineer_id": l2_engineer_id,
+                    "increment_unsuccessful_cycle_count": (
+                        increment_unsuccessful_cycle_count
+                    ),
                 },
             )
             row = cursor.fetchone()
@@ -433,6 +657,7 @@ class PostgresCardRepository:
         new_values: dict[str, Any] | None,
         ip_address: str | None,
         user_agent: str | None,
+        entity_type: str = "connection_card",
     ) -> None:
         with self.connection.cursor() as cursor:
             cursor.execute(
@@ -452,7 +677,7 @@ class PostgresCardRepository:
                     %(actor_user_id)s,
                     %(actor_type_code)s,
                     %(action_code)s,
-                    'connection_card',
+                    %(entity_type)s,
                     %(entity_id)s,
                     %(ip_address)s,
                     %(user_agent)s,
@@ -464,6 +689,7 @@ class PostgresCardRepository:
                     "actor_user_id": actor_user_id,
                     "actor_type_code": int(actor_type),
                     "action_code": int(action),
+                    "entity_type": entity_type,
                     "entity_id": entity_id,
                     "ip_address": ip_address,
                     "user_agent": user_agent,
@@ -471,6 +697,85 @@ class PostgresCardRepository:
                     "new_values": Jsonb(new_values) if new_values is not None else None,
                 },
             )
+
+    def _list_schedule_windows(self, user_id: int) -> tuple[ScheduleWindow, ...]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT weekday, start_time, end_time, timezone, valid_from, valid_to
+                FROM schedules
+                WHERE user_id = %(user_id)s
+                  AND is_active
+                ORDER BY weekday, start_time, id
+                """,
+                {"user_id": user_id},
+            )
+            rows = cursor.fetchall()
+        return tuple(
+            ScheduleWindow(
+                weekday=row["weekday"],
+                start_time=row["start_time"],
+                end_time=row["end_time"],
+                timezone=row["timezone"],
+                valid_from=row["valid_from"],
+                valid_to=row["valid_to"],
+            )
+            for row in rows
+        )
+
+    def _list_absence_intervals(
+        self, user_id: int, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> tuple[TimeInterval, ...]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT start_at, end_at
+                FROM absences
+                WHERE user_id = %(user_id)s
+                  AND start_at < %(planned_end_at)s
+                  AND %(planned_start_at)s < end_at
+                ORDER BY start_at, id
+                """,
+                {
+                    "user_id": user_id,
+                    "planned_start_at": planned_start_at,
+                    "planned_end_at": planned_end_at,
+                },
+            )
+            rows = cursor.fetchall()
+        return tuple(
+            TimeInterval(start_at=row["start_at"], end_at=row["end_at"]) for row in rows
+        )
+
+    def _list_active_card_intervals(
+        self, user_id: int, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> tuple[TimeInterval, ...]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT planned_start_at,
+                       planned_start_at
+                         + planned_duration_minutes * interval '1 minute' AS end_at
+                FROM connection_cards
+                WHERE l2_engineer_id = %(user_id)s
+                  AND status_code IN (1, 2, 3)
+                  AND planned_start_at < %(planned_end_at)s
+                  AND %(planned_start_at)s < (
+                    planned_start_at + planned_duration_minutes * interval '1 minute'
+                  )
+                ORDER BY planned_start_at, id
+                """,
+                {
+                    "user_id": user_id,
+                    "planned_start_at": planned_start_at,
+                    "planned_end_at": planned_end_at,
+                },
+            )
+            rows = cursor.fetchall()
+        return tuple(
+            TimeInterval(start_at=row["planned_start_at"], end_at=row["end_at"])
+            for row in rows
+        )
 
     def _get_card(self, public_id: UUID, *, lock: bool) -> CardRecord | None:
         suffix = " FOR UPDATE" if lock else ""
