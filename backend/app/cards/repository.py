@@ -149,7 +149,9 @@ class CardRepository(Protocol):
         self, public_id: UUID, data: StatusUpdateData
     ) -> CardRecord | None: ...
 
-    def update_l1_followup(self, public_id: UUID, data: L1FollowupUpdateData) -> CardRecord | None: ...
+    def update_l1_followup(
+        self, public_id: UUID, data: L1FollowupUpdateData
+    ) -> CardRecord | None: ...
 
     def add_card_event(
         self,
@@ -260,7 +262,9 @@ class PostgresCardRepository:
             row = cursor.fetchone()
         return _card_from_row(row)
 
-    def update_l1_followup(self, public_id: UUID, data: L1FollowupUpdateData) -> CardRecord | None:
+    def update_l1_followup(
+        self, public_id: UUID, data: L1FollowupUpdateData
+    ) -> CardRecord | None:
         fields = ["updated_at = now()"]
         params: dict[str, Any] = {"public_id": public_id}
         if data.planned_start_at is not None:
@@ -276,9 +280,14 @@ class PostgresCardRepository:
             fields.append("client_informed = %(client_informed)s")
             params["client_informed"] = data.client_informed
         if data.reset_for_new_cycle:
-            fields.extend(["status_code = 0", "l1_owner_id = NULL", "client_informed = false"])
+            fields.extend(
+                ["status_code = 0", "l1_owner_id = NULL", "client_informed = false"]
+            )
         with self.connection.cursor() as cursor:
-            cursor.execute(f"UPDATE connection_cards SET {', '.join(fields)} WHERE public_id = %(public_id)s AND status_code = 4 AND l1_owner_id IS NOT NULL RETURNING *", params)
+            cursor.execute(
+                f"UPDATE connection_cards SET {', '.join(fields)} WHERE public_id = %(public_id)s AND status_code = 4 AND l1_owner_id IS NOT NULL RETURNING *",
+                params,
+            )
             row = cursor.fetchone()
         return _card_from_row(row) if row is not None else None
 
@@ -1049,6 +1058,7 @@ def _card_from_row(row: dict[str, Any]) -> CardRecord:
         created_by_id=row["created_by_id"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        client_informed=row["client_informed"],
     )
 
 

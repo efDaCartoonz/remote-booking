@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, time, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -35,6 +35,7 @@ from app.cards.repository import (
     CreateCardData,
     L1FollowupUpdateData,
     StatusUpdateData,
+    _card_from_row,
 )
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService, InvalidCardTransitionError
@@ -542,6 +543,23 @@ def seed_l1_candidate(
 
 def make_service(repository: FakeCardRepository) -> CardService:
     return CardService(repository)
+
+
+def test_card_row_mapping_preserves_client_informed_marker() -> None:
+    repository = FakeCardRepository()
+    card = repository.create_card(
+        CreateCardData(
+            omnidesk_ticket_number="999-000001",
+            planned_start_at=DEFAULT_PLANNED_START_AT,
+            planned_duration_minutes=60,
+            created_by_id=None,
+            status=CardStatus.CREATED,
+        )
+    )
+    row = asdict(card)
+    row["client_informed"] = True
+
+    assert _card_from_row(row).client_informed is True
 
 
 def test_create_card_without_l2_rejects_when_no_distribution_candidates() -> None:
