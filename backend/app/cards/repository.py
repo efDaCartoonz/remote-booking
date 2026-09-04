@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -192,7 +192,7 @@ class PostgresCardRepository:
         threshold = settings.reminder_l1_escalation_after_count if kind == "l1_reminder" else settings.reminder_l2_escalation_after_count
         snapshot = {"interval_seconds": interval, "escalation_after_count": threshold, "manager_repeat_seconds": settings.reminder_l1_manager_repeat_seconds if kind == "l1_reminder" else None, "kind": kind, "anchor_at": anchor_at.isoformat(), "owner_id": owner_id, "cycle_id": cycle_id, "attempt_id": attempt_id}
         with self.connection.cursor() as cursor:
-            cursor.execute("INSERT INTO reminder_schedules (card_id, kind, cycle_id, attempt_id, owner_id, anchor_at, interval_seconds, escalation_after_count, next_due_at, settings_snapshot) VALUES (%(card_id)s, %(kind)s, %(cycle_id)s, %(attempt_id)s, %(owner_id)s, %(anchor_at)s, %(interval)s, %(threshold)s, %(next_due)s, %(snapshot)s) ON CONFLICT DO NOTHING", {"card_id": card_id, "kind": kind, "cycle_id": cycle_id, "attempt_id": attempt_id, "owner_id": owner_id, "anchor_at": anchor_at, "interval": interval, "threshold": threshold, "next_due": anchor_at + __import__("datetime").timedelta(seconds=interval), "snapshot": Jsonb(snapshot)})
+            cursor.execute("INSERT INTO reminder_schedules (card_id, kind, cycle_id, attempt_id, owner_id, anchor_at, interval_seconds, escalation_after_count, next_due_at, settings_snapshot) VALUES (%(card_id)s, %(kind)s, %(cycle_id)s, %(attempt_id)s, %(owner_id)s, %(anchor_at)s, %(interval)s, %(threshold)s, %(next_due)s, %(snapshot)s) ON CONFLICT DO NOTHING", {"card_id": card_id, "kind": kind, "cycle_id": cycle_id, "attempt_id": attempt_id, "owner_id": owner_id, "anchor_at": anchor_at, "interval": interval, "threshold": threshold, "next_due": anchor_at + timedelta(seconds=interval), "snapshot": Jsonb(snapshot)})
 
     def close_reminder_schedules(self, *, card_id: int, kind: str | None = None) -> None:
         with self.connection.cursor() as cursor:

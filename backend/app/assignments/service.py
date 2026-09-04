@@ -51,6 +51,9 @@ class L2DistributionService:
         if CardStatus(card.status_code) != CardStatus.CREATED:
             return card
 
+        if hasattr(self.repository, "close_reminder_schedules"):
+            self.repository.close_reminder_schedules(card_id=card.id)
+
         planned_end_at = card.planned_start_at + timedelta(
             minutes=card.planned_duration_minutes
         )
@@ -175,6 +178,9 @@ class L2DistributionService:
         if updated_attempt is None:
             raise AssignmentDecisionError("assignment_attempt_not_pending")
 
+        if hasattr(self.repository, "close_reminder_schedules"):
+            self.repository.close_reminder_schedules(card_id=card.id, kind="l2_reminder")
+
         self._record_assignment_attempt_update(
             old_attempt=attempt,
             updated_attempt=updated_attempt,
@@ -213,6 +219,9 @@ class L2DistributionService:
         )
         if updated_attempt is None:
             raise AssignmentDecisionError("assignment_attempt_not_pending")
+
+        if hasattr(self.repository, "close_reminder_schedules"):
+            self.repository.close_reminder_schedules(card_id=card.id, kind="l2_reminder")
 
         self._record_assignment_attempt_update(
             old_attempt=attempt,
