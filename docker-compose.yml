@@ -1,6 +1,7 @@
 services:
   postgres:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-rdm}
       POSTGRES_USER: ${POSTGRES_USER:-rdm}
@@ -17,6 +18,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis-data:/data
@@ -31,6 +33,7 @@ services:
   backend:
     build:
       context: ./backend
+    restart: unless-stopped
     env_file:
       - .env
     depends_on:
@@ -45,6 +48,7 @@ services:
   worker:
     build:
       context: ./backend
+    restart: unless-stopped
     env_file:
       - .env
     depends_on:
@@ -57,6 +61,7 @@ services:
   beat:
     build:
       context: ./backend
+    restart: unless-stopped
     env_file:
       - .env
     depends_on:
@@ -69,6 +74,7 @@ services:
   frontend:
     build:
       context: ./frontend
+    restart: unless-stopped
     depends_on:
       - backend
     ports:
