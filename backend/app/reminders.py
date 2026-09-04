@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from app.notifications import NotificationService
+from psycopg.types.json import Jsonb
 
 
 @dataclass(frozen=True)
@@ -54,3 +55,40 @@ class ReminderService:
                         created += 1
             self.repository.advance(reminder_id=reminder.id, next_due_at=reminder.anchor_at + timedelta(seconds=(count + 1) * reminder.interval_seconds), count=count, escalation_sent=reminder.escalation_sent or escalate)
         return created
+
+
+class PostgresReminderRepository:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def claim_due(self, *, now: datetime, limit: int) -> list[DueReminder]:
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT id, card_id, kind, owner_id, anchor_at, interval_seconds, escalation_after_count, last_count, escalation_sent FROM reminder_schedules WHERE closed_at IS NULL AND next_due_at <= %(now)s ORDER BY next_due_at, id LIMIT %(limit)s FOR UPDATE SKIP LOCKED", {"now": now, "limit": min(max(limit, 1), 500)})
+            return [DueReminder(**dict(row)) for row in cursor.fetchall()]
+
+    def current(self, reminder: DueReminder) -> bool:
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT EXISTS (SELECT 1 FROM connection_cards c WHERE c.id = %(card)s AND c.status_code IN (1, 4) AND ((%(kind)s = 'l2_reminder' AND c.l2_engineer_id = %(owner)s) OR (%(kind)s = 'l1_reminder' AND c.l1_owner_id = %(owner)s))) AS active", {"card": reminder.card_id, "kind": reminder.kind, "owner": reminder.owner_id})
+            return bool(cursor.fetchone()["active"])
+
+    def record_timer_event(self, *, card_id: int, kind: str, count: int) -> int:
+        with self.connection.cursor() as cursor:
+            cursor.execute("INSERT INTO card_events (card_id, event_type_code, actor_type_code, new_values, comment) VALUES (%(card)s, 4, 2, %(values)s, %(comment)s) RETURNING id", {"card": card_id, "values": Jsonb({"timer": kind, "count": count}), "comment": "timer_reminder"})
+            event_id = int(cursor.fetchone()["id"])
+            cursor.execute("INSERT INTO audit_log (actor_type_code, action_code, entity_type, entity_id, new_values) VALUES (2, 1, 'reminder_schedule', %(card)s, %(values)s)", {"card": card_id, "values": Jsonb({"kind": kind, "count": count, "event_id": event_id})})
+            return event_id
+
+    def recipients(self, *, user_id: int) -> list[tuple[str, str]]:
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT telegram_chat_id, bitrix24_user_id FROM user_settings WHERE user_id = %(id)s", {"id": user_id})
+            row = cursor.fetchone()
+        return [(channel, value) for channel, value in (("telegram", row["telegram_chat_id"]), ("bitrix24", row["bitrix24_user_id"])) if value] if row else []
+
+    def managers(self) -> list[tuple[int, str, str]]:
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT u.id, us.telegram_chat_id, us.bitrix24_user_id FROM users u JOIN user_roles ur ON ur.user_id=u.id AND ur.role_id=3 LEFT JOIN user_settings us ON us.user_id=u.id WHERE u.is_active ORDER BY u.id")
+            return [(r["id"], channel, value) for r in cursor.fetchall() for channel, value in (("telegram", r["telegram_chat_id"]), ("bitrix24", r["bitrix24_user_id"])) if value]
+
+    def advance(self, *, reminder_id: int, next_due_at: datetime, count: int, escalation_sent: bool, close: bool = False) -> None:
+        with self.connection.cursor() as cursor:
+            cursor.execute("UPDATE reminder_schedules SET next_due_at=%(due)s, last_count=%(count)s, escalation_sent=%(sent)s, closed_at=CASE WHEN %(close)s THEN now() ELSE closed_at END WHERE id=%(id)s AND closed_at IS NULL", {"id": reminder_id, "due": next_due_at, "count": count, "sent": escalation_sent, "close": close})

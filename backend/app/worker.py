@@ -5,9 +5,11 @@ from app.db import get_db
 from app.notifications import (
     Bitrix24Adapter,
     PostgresNotificationRuntimeRepository,
+    PostgresNotificationService,
     TelegramAdapter,
     deliver_pending_notifications,
 )
+from app.reminders import PostgresReminderRepository, ReminderService
 
 celery_app = Celery(
     "rdm",
@@ -30,7 +32,15 @@ def deliver_notifications() -> int:
 
 @celery_app.task(name="app.worker.scan_reminders", queue="notifications")
 def scan_reminders() -> int:
-    return 0
+    with next(get_db()) as connection:
+        service = ReminderService(
+            PostgresReminderRepository(connection),
+            PostgresNotificationService(connection),
+        )
+        return service.scan(
+            now=__import__("datetime").datetime.now(__import__("datetime").UTC),
+            batch_size=settings.reminder_batch_limit,
+        )
 
 
 celery_app.conf.beat_schedule = {

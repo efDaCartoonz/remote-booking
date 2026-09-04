@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 from app.assignments.manager_escalation import ManagerEscalationService
 from app.cards.constants import (
@@ -124,6 +124,8 @@ class L1DistributionService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        if hasattr(self.repository, "create_reminder_schedule"):
+            self.repository.create_reminder_schedule(card_id=updated.id, kind="l1_reminder", owner_id=selected, anchor_at=datetime.now(UTC))
         if self.notifications is not None:
             for channel in ("telegram", "bitrix24"):
                 self.notifications.notify(

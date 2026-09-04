@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.assignments.l1_service import L1DistributionService
@@ -144,6 +144,8 @@ class L2DistributionService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        if hasattr(self.repository, "create_reminder_schedule"):
+            self.repository.create_reminder_schedule(card_id=updated.id, kind="l2_reminder", owner_id=selected_l2_id, anchor_at=datetime.now(UTC), cycle_id=attempt.cycle_id, attempt_id=attempt.id)
         return updated
 
     def confirm_current_assignment(
