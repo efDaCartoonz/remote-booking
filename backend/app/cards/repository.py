@@ -204,6 +204,21 @@ class PostgresCardRepository:
                 for r in cursor.fetchall()
             ]
 
+    def has_manager_escalation_audit(self, *, source_event_id: int) -> bool:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT EXISTS (
+                    SELECT 1
+                    FROM audit_log
+                    WHERE entity_type = 'manager_escalation'
+                      AND new_values @> %(source_event)s::jsonb
+                ) AS exists
+                """,
+                {"source_event": Jsonb({"source_event_id": source_event_id})},
+            )
+            return bool(cursor.fetchone()["exists"])
+
     def create_card(self, data: CreateCardData) -> CardRecord:
         with self.connection.cursor() as cursor:
             cursor.execute(

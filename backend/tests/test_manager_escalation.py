@@ -20,6 +20,12 @@ class Repo:
     def add_audit_log(self, **kwargs):
         self.audit.append(kwargs)
 
+    def has_manager_escalation_audit(self, *, source_event_id):
+        return any(
+            item["new_values"]["source_event_id"] == source_event_id
+            for item in self.audit
+        )
+
 
 def card():
     return SimpleNamespace(id=7, status_code=int(CardStatus.REJECTED))
@@ -61,7 +67,7 @@ def test_manager_recipient_and_channel_selection(recipients, channels):
     assert len(notifications.notifications) == channels
 
 
-def test_repeated_source_event_is_deduplicated_and_audited_once_per_call():
+def test_repeated_source_event_is_deduplicated_and_audited_once():
     repo = Repo([ManagerRecipient(1, "tg", "bx")])
     notifications = RecordingNotificationService()
     service = ManagerEscalationService(repo, notifications)
@@ -79,7 +85,13 @@ def test_repeated_source_event_is_deduplicated_and_audited_once_per_call():
     assert second.created_intents == 0
     assert second.deduplicated_intents == 2
     assert len(notifications.notifications) == 2
-    assert len(repo.audit) == 2
+    assert len(repo.audit) == 1
+
+
+def test_manager_escalation_uses_existing_escalation_event_type() -> None:
+    from app.notifications import NOTIFICATION_EVENT_CODES
+
+    assert NOTIFICATION_EVENT_CODES["manager_escalation"] == 2
 
 
 def test_no_recipients_and_no_channels_have_distinct_safe_reasons():

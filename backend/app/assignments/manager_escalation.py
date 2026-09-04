@@ -27,6 +27,9 @@ class ManagerEscalationResult:
 
 class ManagerEscalationRepository(Protocol):
     def list_active_manager_recipients(self) -> list[ManagerRecipient]: ...
+
+    def has_manager_escalation_audit(self, *, source_event_id: int) -> bool: ...
+
     def add_audit_log(self, **kwargs) -> None: ...
 
 
@@ -68,41 +71,52 @@ class ManagerEscalationService:
         channels = sum(
             bool(r.telegram_chat_id) + bool(r.bitrix24_user_id) for r in recipients
         )
+        has_audit = getattr(self.repository, "has_manager_escalation_audit", None)
+        already_audited = (
+            bool(has_audit(source_event_id=source_event_id)) if has_audit else False
+        )
         if not recipients:
             outcome = "manager_escalation_no_recipients"
         elif not channels:
             outcome = "manager_escalation_no_deliverable_recipients"
         else:
             outcome = reason
-        self.repository.add_audit_log(
-            actor_user_id=None,
-            actor_type=ActorType.SYSTEM,
-            action=AuditAction.UPDATE,
-            entity_type="manager_escalation",
-            entity_id=card.id,
-            old_values=None,
-            new_values={"reason": outcome, "source_event_id": source_event_id},
-            ip_address=ip_address,
-            user_agent=user_agent,
-        )
         if self.notifications is None or not channels:
-            return ManagerEscalationResult(len(recipients), channels, 0, 0)
-        created = 0
-        for recipient in recipients:
-            for channel, value in (
-                ("telegram", recipient.telegram_chat_id),
-                ("bitrix24", recipient.bitrix24_user_id),
-            ):
-                if value and self.notifications.notify(
-                    event="manager_escalation",
-                    card_id=card.id,
-                    source_event_id=source_event_id,
-                    source_event_type=int(source_event_type),
-                    recipient_user_id=recipient.user_id,
-                    channel=channel,
-                    payload={"card_id": card.id, "assignment": "manager_escalation"},
+            result = ManagerEscalationResult(len(recipients), channels, 0, 0)
+        else:
+            created = 0
+            for recipient in recipients:
+                for channel, value in (
+                    ("telegram", recipient.telegram_chat_id),
+                    ("bitrix24", recipient.bitrix24_user_id),
                 ):
-                    created += 1
-        return ManagerEscalationResult(
-            len(recipients), channels, created, channels - created
-        )
+                    if value and self.notifications.notify(
+                        event="manager_escalation",
+                        card_id=card.id,
+                        source_event_id=source_event_id,
+                        source_event_type=int(source_event_type),
+                        recipient_user_id=recipient.user_id,
+                        channel=channel,
+                        payload={
+                            "card_id": card.id,
+                            "assignment": "manager_escalation",
+                        },
+                    ):
+                        created += 1
+            result = ManagerEscalationResult(
+                len(recipients), channels, created, channels - created
+            )
+
+        if not already_audited and (not channels or result.created_intents):
+            self.repository.add_audit_log(
+                actor_user_id=None,
+                actor_type=ActorType.SYSTEM,
+                action=AuditAction.UPDATE,
+                entity_type="manager_escalation",
+                entity_id=card.id,
+                old_values=None,
+                new_values={"reason": outcome, "source_event_id": source_event_id},
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        return result
