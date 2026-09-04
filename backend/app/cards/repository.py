@@ -28,6 +28,7 @@ from app.cards.constants import (
     DistributionPool,
     RoleId,
 )
+from app.assignments.manager_escalation import ManagerRecipient
 
 
 @dataclass(frozen=True)
@@ -131,6 +132,7 @@ class L1FollowupUpdateData:
 
 
 class CardRepository(Protocol):
+    def list_active_manager_recipients(self) -> list[ManagerRecipient]: ...
     def create_card(self, data: CreateCardData) -> CardRecord: ...
 
     def get_or_create_client(self, data: ClientSyncData) -> ClientRecord: ...
@@ -183,6 +185,20 @@ class CardRepository(Protocol):
 class PostgresCardRepository:
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
+
+    def list_active_manager_recipients(self) -> list[ManagerRecipient]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT u.id, us.telegram_chat_id, us.bitrix24_user_id
+                FROM users u
+                JOIN user_roles ur ON ur.user_id = u.id AND ur.role_id = %(role)s
+                LEFT JOIN user_settings us ON us.user_id = u.id
+                WHERE u.is_active
+                ORDER BY u.id
+                """, {"role": int(RoleId.MANAGER)},
+            )
+            return [ManagerRecipient(r["id"], r["telegram_chat_id"], r["bitrix24_user_id"]) for r in cursor.fetchall()]
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         with self.connection.cursor() as cursor:

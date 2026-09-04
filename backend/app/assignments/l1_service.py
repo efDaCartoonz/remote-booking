@@ -11,6 +11,7 @@ from app.cards.constants import (
 )
 from app.cards.repository import CardRecord
 from app.notifications import NotificationService
+from app.assignments.manager_escalation import ManagerEscalationService
 
 
 class L1DistributionService:
@@ -21,6 +22,7 @@ class L1DistributionService:
     ) -> None:
         self.repository = repository
         self.notifications = notifications
+        self.manager_escalation_service = ManagerEscalationService(repository, notifications)
 
     def assign(
         self,
@@ -57,6 +59,14 @@ class L1DistributionService:
             else _choose_round_robin_candidate(candidates, last)
         )
         if selected is None:
+            source_event_id = None
+            if hasattr(self.repository, "list_active_manager_recipients"):
+                source_event_id = self.repository.add_card_event(
+                    card_id=card.id, event_type=CardEventType.STATUS_CHANGED,
+                    actor_user_id=None, actor_type=ActorType.SYSTEM,
+                    old_values={"l1_owner_id": card.l1_owner_id},
+                    new_values={"l1_owner_id": None}, comment="no_available_l1_candidates",
+                )
             self.repository.add_audit_log(
                 actor_user_id=None,
                 actor_type=ActorType.SYSTEM,
@@ -71,6 +81,15 @@ class L1DistributionService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
+            if source_event_id is not None:
+                self.manager_escalation_service.escalate(
+                    card=card,
+                    source_event_id=source_event_id,
+                    source_event_type=CardEventType.STATUS_CHANGED,
+                    reason="no_available_l1_candidates",
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
             return card
 
         updated = self.repository.update_l1_owner(card_id=card.id, l1_owner_id=selected)

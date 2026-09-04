@@ -16,7 +16,7 @@ SENT = 1
 FAILED = 2
 CANCELLED = 3
 
-NOTIFICATION_EVENT_CODES = {"l1_followup": 3}
+NOTIFICATION_EVENT_CODES = {"l1_followup": 3, "manager_escalation": 4}
 NOTIFICATION_CHANNEL_CODES = {"telegram": 0, "bitrix24": 1}
 SAFE_NOTIFICATION_PAYLOAD_KEYS = frozenset({"card_id", "assignment"})
 
@@ -181,7 +181,7 @@ def _safe_notification_payload(payload: dict, *, card_id: int) -> dict:
     if payload.get("card_id") != card_id:
         raise ValueError("notification payload card_id must match the card")
     assignment = payload.get("assignment")
-    if assignment not in {"l1", "l2"}:
+    if assignment not in {"l1", "l2", "manager_escalation"}:
         raise ValueError("notification payload assignment is invalid")
     return {"card_id": card_id, "assignment": assignment}
 

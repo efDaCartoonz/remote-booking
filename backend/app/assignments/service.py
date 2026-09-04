@@ -17,6 +17,7 @@ from app.cards.constants import (
 )
 from app.cards.repository import CardRecord
 from app.notifications import NotificationService
+from app.assignments.manager_escalation import ManagerEscalationService
 
 NO_AVAILABLE_L2_REASON = "no_available_l2_candidates"
 ALL_L2_REJECTED_REASON = "all_l2_candidates_rejected"
@@ -36,6 +37,7 @@ class L2DistributionService:
     ) -> None:
         self.repository = repository
         self.l1_distribution_service = L1DistributionService(repository, notifications)
+        self.manager_escalation_service = ManagerEscalationService(repository, notifications)
 
     def run_initial_distribution(
         self,
@@ -246,11 +248,23 @@ class L2DistributionService:
                 l2_engineer_id=None,
                 increment_unsuccessful_cycle_count=True,
             )
-            self._record_card_update(
+            event_id = self._record_card_update(
                 old_card=card,
                 updated_card=updated,
                 event_type=CardEventType.STATUS_CHANGED,
                 comment=f"{ALL_L2_REJECTED_REASON}: {rejection_reason}",
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            self.manager_escalation_service.escalate(
+                card=updated,
+                source_event_id=event_id,
+                source_event_type=CardEventType.STATUS_CHANGED,
+                reason=(
+                    ALL_L2_REJECTED_REASON
+                    if card.unsuccessful_cycle_count == 0
+                    else "repeated_unsuccessful_l2_cycle"
+                ),
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
@@ -287,7 +301,7 @@ class L2DistributionService:
             l2_engineer_id=selected_l2_id,
             increment_unsuccessful_cycle_count=False,
         )
-        self._record_card_update(
+        event_id = self._record_card_update(
             old_card=card,
             updated_card=updated,
             event_type=CardEventType.ENGINEER_ASSIGNED,
@@ -314,7 +328,7 @@ class L2DistributionService:
             l2_engineer_id=None,
             increment_unsuccessful_cycle_count=True,
         )
-        self._record_card_update(
+        event_id = self._record_card_update(
             old_card=card,
             updated_card=updated,
             event_type=CardEventType.STATUS_CHANGED,
@@ -322,6 +336,7 @@ class L2DistributionService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        self.manager_escalation_service.escalate(card=updated, source_event_id=event_id, source_event_type=CardEventType.STATUS_CHANGED, reason=NO_AVAILABLE_L2_REASON, ip_address=ip_address, user_agent=user_agent)
         return updated
 
     def _record_card_update(
@@ -333,10 +348,10 @@ class L2DistributionService:
         comment: str | None,
         ip_address: str | None,
         user_agent: str | None,
-    ) -> None:
+    ) -> int:
         old_snapshot = _card_distribution_snapshot(old_card)
         new_snapshot = _card_distribution_snapshot(updated_card)
-        self.repository.add_card_event(
+        event_id = self.repository.add_card_event(
             card_id=updated_card.id,
             event_type=event_type,
             actor_user_id=None,
@@ -356,6 +371,7 @@ class L2DistributionService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        return event_id
 
     def _record_assignment_attempt_update(
         self,
