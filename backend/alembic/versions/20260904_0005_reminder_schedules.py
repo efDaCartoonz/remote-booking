@@ -24,7 +24,7 @@ def upgrade() -> None:
         last_escalated_at timestamptz,
         closed_at timestamptz,
         settings_snapshot jsonb NOT NULL,
-        created_at timestamptz NOT NULL DEFAULT now(),
+        created_at timestamptz NOT NULL DEFAULT now()
     )
     """)
     op.execute("ALTER TABLE connection_cards ADD COLUMN overdue_at timestamptz")
