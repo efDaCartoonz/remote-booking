@@ -13,9 +13,7 @@ def upgrade() -> None:
         "ALTER TABLE notifications ADD COLUMN source_event_id bigint "
         "REFERENCES card_events(id) ON DELETE CASCADE"
     )
-    op.execute(
-        "ALTER TABLE notifications ADD COLUMN source_event_type_code integer"
-    )
+    op.execute("ALTER TABLE notifications ADD COLUMN source_event_type_code integer")
     op.execute("ALTER TABLE notifications ADD COLUMN dedupe_key varchar(255)")
     op.execute(
         "CREATE UNIQUE INDEX ux_notifications_dedupe_key "

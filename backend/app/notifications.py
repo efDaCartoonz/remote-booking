@@ -18,6 +18,7 @@ CANCELLED = 3
 
 NOTIFICATION_EVENT_CODES = {"l1_followup": 3}
 NOTIFICATION_CHANNEL_CODES = {"telegram": 0, "bitrix24": 1}
+SAFE_NOTIFICATION_PAYLOAD_KEYS = frozenset({"card_id", "assignment"})
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,6 @@ class NotificationService(Protocol):
         recipient_user_id: int,
         channel: str,
         payload: dict,
-        dedupe_key: str,
     ) -> None: ...
 
 
@@ -61,10 +61,17 @@ class RecordingNotificationService:
         card_id: int,
         recipient_user_id: int,
         channel: str,
-        source_event_id: int = 0, source_event_type: int = 0,
-        payload: dict | None = None, dedupe_key: str = ""
+        source_event_id: int,
+        source_event_type: int,
+        payload: dict,
     ) -> None:
-        key = dedupe_key or f"{event}:{card_id}:{recipient_user_id}:{channel}"
+        key = _notification_dedupe_key(
+            event=event,
+            source_event_id=source_event_id,
+            recipient_user_id=recipient_user_id,
+            channel=channel,
+        )
+        safe_payload = _safe_notification_payload(payload, card_id=card_id)
         if key not in self._keys:
             self._keys.add(key)
             self.notifications.append(
@@ -75,7 +82,7 @@ class RecordingNotificationService:
                     channel,
                     source_event_id,
                     source_event_type,
-                    payload,
+                    safe_payload,
                     key,
                 )
             )
@@ -97,10 +104,16 @@ class PostgresNotificationService:
         recipient_user_id: int,
         channel: str,
         payload: dict,
-        dedupe_key: str,
     ) -> None:
         event_code = NOTIFICATION_EVENT_CODES[event]
         channel_code = NOTIFICATION_CHANNEL_CODES[channel]
+        dedupe_key = _notification_dedupe_key(
+            event=event,
+            source_event_id=source_event_id,
+            recipient_user_id=recipient_user_id,
+            channel=channel,
+        )
+        safe_payload = _safe_notification_payload(payload, card_id=card_id)
         setting_column = {
             "telegram": "notify_telegram",
             "bitrix24": "notify_bitrix24",
@@ -138,10 +151,39 @@ class PostgresNotificationService:
                     "event_code": event_code,
                     "source_event_id": source_event_id,
                     "source_event_type": source_event_type,
-                    "payload": Jsonb(payload),
+                    "payload": Jsonb(safe_payload),
                     "dedupe_key": dedupe_key,
                 },
             )
+
+
+def _notification_dedupe_key(
+    *,
+    event: str,
+    source_event_id: int,
+    recipient_user_id: int,
+    channel: str,
+) -> str:
+    if source_event_id <= 0:
+        raise ValueError("source_event_id must be a persisted card event")
+    if recipient_user_id <= 0:
+        raise ValueError("recipient_user_id must be positive")
+    if event not in NOTIFICATION_EVENT_CODES:
+        raise ValueError("unsupported notification event")
+    if channel not in NOTIFICATION_CHANNEL_CODES:
+        raise ValueError("unsupported notification channel")
+    return f"notification:{event}:{source_event_id}:{recipient_user_id}:{channel}"
+
+
+def _safe_notification_payload(payload: dict, *, card_id: int) -> dict:
+    if set(payload) - SAFE_NOTIFICATION_PAYLOAD_KEYS:
+        raise ValueError("notification payload contains unsupported fields")
+    if payload.get("card_id") != card_id:
+        raise ValueError("notification payload card_id must match the card")
+    assignment = payload.get("assignment")
+    if assignment not in {"l1", "l2"}:
+        raise ValueError("notification payload assignment is invalid")
+    return {"card_id": card_id, "assignment": assignment}
 
 
 class TemporaryDeliveryError(Exception):

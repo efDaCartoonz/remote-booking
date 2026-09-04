@@ -4,6 +4,11 @@ from dataclasses import replace
 from datetime import time, timedelta
 
 import pytest
+from app.assignments.l1_service import L1DistributionService
+from app.assignments.types import TimeInterval
+from app.cards.constants import AssignmentAttemptStatus, CardStatus
+from app.cards.service import CardService, InvalidCardTransitionError
+from app.notifications import RecordingNotificationService
 from test_cards import (
     DEFAULT_PLANNED_START_AT,
     FakeCardRepository,
@@ -11,12 +16,6 @@ from test_cards import (
     seed_l1_candidate,
     seed_l2_candidate,
 )
-
-from app.assignments.l1_service import L1DistributionService
-from app.assignments.types import TimeInterval
-from app.cards.constants import AssignmentAttemptStatus, CardStatus
-from app.cards.service import CardService, InvalidCardTransitionError
-from app.notifications import RecordingNotificationService
 
 
 def test_assigned_l1_can_mark_informed_once_and_unauthorized_l1_is_rejected() -> None:
@@ -46,7 +45,13 @@ def test_notification_adapter_deduplicates_delivery_intent() -> None:
     adapter = RecordingNotificationService()
     for _ in range(2):
         adapter.notify(
-            event="l1_followup", card_id=1, recipient_user_id=10, channel="telegram"
+            event="l1_followup",
+            card_id=1,
+            source_event_id=42,
+            source_event_type=3,
+            recipient_user_id=10,
+            channel="telegram",
+            payload={"card_id": 1, "assignment": "l1"},
         )
     assert len(adapter.notifications) == 1
 
@@ -61,14 +66,28 @@ def test_notification_adapter_keeps_source_and_safe_payload_in_intent() -> None:
         recipient_user_id=11,
         channel="telegram",
         payload={"card_id": 7, "assignment": "l1"},
-        dedupe_key="manager_escalation:l1_followup:42:11:telegram",
     )
 
     item = adapter.notifications[0]
     assert item.source_event_id == 42
     assert item.source_event_type == 3
     assert item.payload == {"card_id": 7, "assignment": "l1"}
-    assert item.dedupe_key.endswith(":telegram")
+    assert item.dedupe_key == "notification:l1_followup:42:11:telegram"
+
+
+def test_notification_adapter_rejects_unsafe_payload() -> None:
+    adapter = RecordingNotificationService()
+
+    with pytest.raises(ValueError, match="unsupported fields"):
+        adapter.notify(
+            event="l1_followup",
+            card_id=7,
+            source_event_id=42,
+            source_event_type=3,
+            recipient_user_id=11,
+            channel="telegram",
+            payload={"card_id": 7, "assignment": "l1", "recipient": "untrusted"},
+        )
 
 
 def test_l1_assignment_creates_deduplicated_notification_intents() -> None:

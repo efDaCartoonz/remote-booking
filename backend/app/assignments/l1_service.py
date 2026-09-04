@@ -110,6 +110,5 @@ class L1DistributionService:
                     recipient_user_id=selected,
                     channel=channel,
                     payload={"card_id": updated.id, "assignment": "l1"},
-                    dedupe_key=f"manager_escalation:l1_followup:{source_event_id}:{selected}:{channel}",
                 )
         return updated

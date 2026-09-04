@@ -26,6 +26,7 @@ from app.cards.constants import (
     CardStatus,
     CreatedSource,
     DistributionPool,
+    RoleId,
 )
 
 
@@ -182,7 +183,6 @@ class CardRepository(Protocol):
 class PostgresCardRepository:
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
-
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         with self.connection.cursor() as cursor:

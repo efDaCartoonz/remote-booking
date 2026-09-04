@@ -40,7 +40,7 @@ class AssignmentRepository(Protocol):
 
     def update_distribution_state(
         self, *, pool: DistributionPool, last_user_id: int
-    ) -> int: ...
+    ) -> None: ...
 
     def get_next_assignment_cycle_number(self, card_id: int) -> int: ...
 
@@ -103,7 +103,7 @@ class AssignmentRepository(Protocol):
         old_values: dict[str, Any] | None,
         new_values: dict[str, Any] | None,
         comment: str | None,
-    ) -> None: ...
+    ) -> int: ...
 
     def add_audit_log(
         self,
