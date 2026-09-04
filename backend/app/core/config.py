@@ -23,9 +23,11 @@ class Settings(BaseSettings):
     omnidesk_timeout_seconds: float = 5.0
     notification_max_attempts: int = 3
     notification_retry_seconds: int = 60
+    notification_lock_seconds: int = 300
+    notification_http_timeout_seconds: float = 5.0
     telegram_bot_token: str = ""
     telegram_api_url: str = "https://api.telegram.org"
-    bitrix24_webhook_url: str = ""
+    bitrix24_bot_webhook_url: str = ""
     notification_card_base_url: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
