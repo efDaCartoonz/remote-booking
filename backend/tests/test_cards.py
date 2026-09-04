@@ -6,8 +6,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
-from fastapi.testclient import TestClient
-
 from app.api.cards import get_card_repository
 from app.assignments.types import (
     AssignmentAttemptRecord,
@@ -40,6 +38,7 @@ from app.cards.repository import (
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService, InvalidCardTransitionError
 from app.main import create_app
+from fastapi.testclient import TestClient
 
 DEFAULT_PLANNED_START_AT = datetime(2026, 9, 7, 10, tzinfo=UTC)
 
