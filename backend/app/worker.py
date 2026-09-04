@@ -28,10 +28,20 @@ def deliver_notifications() -> int:
         )
 
 
+@celery_app.task(name="app.worker.scan_reminders", queue="notifications")
+def scan_reminders() -> int:
+    return 0
+
+
 celery_app.conf.beat_schedule = {
     "deliver-notifications": {
         "task": "app.worker.deliver_notifications",
         "schedule": 10.0,
         "options": {"queue": "notifications"},
-    }
+    },
+    "scan-reminders": {
+        "task": "app.worker.scan_reminders",
+        "schedule": settings.reminder_scan_interval_seconds,
+        "options": {"queue": "notifications"},
+    },
 }

@@ -25,6 +25,14 @@ class Settings(BaseSettings):
     notification_retry_seconds: int = 60
     notification_lock_seconds: int = 300
     notification_http_timeout_seconds: float = 5.0
+    reminder_l2_interval_seconds: int = 600
+    reminder_l2_escalation_after_count: int = 2
+    reminder_l1_interval_seconds: int = 600
+    reminder_l1_escalation_after_count: int = 2
+    reminder_l1_manager_repeat_seconds: int = 1800
+    reminder_l1_informed_interval_seconds: int = 1800
+    reminder_scan_interval_seconds: int = 60
+    reminder_batch_size: int = 100
     telegram_bot_token: str = ""
     telegram_api_url: str = "https://api.telegram.org"
     bitrix24_bot_webhook_url: str = ""
@@ -43,6 +51,10 @@ class Settings(BaseSettings):
     @cached_property
     def psycopg_database_url(self) -> str:
         return self.database_url.replace("postgresql+psycopg://", "postgresql://", 1)
+
+    @property
+    def reminder_batch_limit(self) -> int:
+        return min(max(self.reminder_batch_size, 1), 500)
 
 
 settings = Settings()

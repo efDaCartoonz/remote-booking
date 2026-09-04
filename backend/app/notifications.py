@@ -16,7 +16,7 @@ SENT = 1
 FAILED = 2
 CANCELLED = 3
 
-NOTIFICATION_EVENT_CODES = {"l1_followup": 3, "manager_escalation": 2}
+NOTIFICATION_EVENT_CODES = {"l1_followup": 3, "manager_escalation": 2, "l2_reminder": 4, "l1_reminder": 5}
 NOTIFICATION_CHANNEL_CODES = {"telegram": 0, "bitrix24": 1}
 SAFE_NOTIFICATION_PAYLOAD_KEYS = frozenset({"card_id", "assignment"})
 
