@@ -9,6 +9,7 @@ depends_on = None
 
 
 def upgrade() -> None:
+    op.execute("DROP INDEX ux_notifications_delivery_intent")
     op.execute(
         "ALTER TABLE notifications ADD COLUMN source_event_id bigint "
         "REFERENCES card_events(id) ON DELETE CASCADE"
@@ -26,4 +27,8 @@ def downgrade() -> None:
     op.execute(
         "ALTER TABLE notifications DROP COLUMN dedupe_key, "
         "DROP COLUMN source_event_type_code, DROP COLUMN source_event_id"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX ux_notifications_delivery_intent "
+        "ON notifications (card_id, recipient_user_id, channel_code, event_type_code)"
     )
