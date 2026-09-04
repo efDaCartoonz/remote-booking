@@ -19,6 +19,10 @@ celery_app = Celery(
 
 celery_app.conf.timezone = "Europe/Moscow"
 celery_app.conf.enable_utc = True
+celery_app.conf.task_routes = {
+    "app.worker.deliver_notifications": {"queue": "notifications"},
+    "app.worker.scan_reminders": {"queue": "notifications"},
+}
 
 
 @celery_app.task(name="app.worker.deliver_notifications", queue="notifications")

@@ -56,7 +56,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=INFO"]
+    command: ["celery", "-A", "app.worker.celery_app", "worker", "--queues=notifications", "--loglevel=INFO"]
 
   beat:
     build:

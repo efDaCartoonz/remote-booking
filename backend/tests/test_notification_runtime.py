@@ -235,6 +235,12 @@ def test_worker_registers_notification_task_and_periodic_schedule() -> None:
     assert "deliver-notifications" not in celery_app.conf.beat_schedule
 
 
+def test_notification_tasks_route_to_notifications_queue() -> None:
+    routes = celery_app.conf.task_routes
+    assert routes["app.worker.deliver_notifications"]["queue"] == "notifications"
+    assert routes["app.worker.scan_reminders"]["queue"] == "notifications"
+
+
 def test_message_is_minimal_and_contains_card_link() -> None:
     repository = FakeRuntimeRepository([make_intent()])
     adapter = RecordingAdapter()
