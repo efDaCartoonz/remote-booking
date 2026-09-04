@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     reminder_l1_informed_interval_seconds: int = 1800
     reminder_scan_interval_seconds: int = 60
     reminder_batch_size: int = 100
+    reminder_scanner_enabled: bool = False
     telegram_bot_token: str = ""
     telegram_api_url: str = "https://api.telegram.org"
     bitrix24_bot_webhook_url: str = ""

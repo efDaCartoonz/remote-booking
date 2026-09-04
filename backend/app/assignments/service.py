@@ -148,7 +148,14 @@ class L2DistributionService:
             user_agent=user_agent,
         )
         if hasattr(self.repository, "create_reminder_schedule"):
-            self.repository.create_reminder_schedule(card_id=updated.id, kind="l2_reminder", owner_id=selected_l2_id, anchor_at=datetime.now(UTC), cycle_id=attempt.cycle_id, attempt_id=attempt.id)
+            self.repository.create_reminder_schedule(
+                card_id=updated.id,
+                kind="l2_reminder",
+                owner_id=selected_l2_id,
+                anchor_at=datetime.now(UTC),
+                cycle_id=attempt.cycle_id,
+                attempt_id=attempt.id,
+            )
         return updated
 
     def confirm_current_assignment(
@@ -179,7 +186,9 @@ class L2DistributionService:
             raise AssignmentDecisionError("assignment_attempt_not_pending")
 
         if hasattr(self.repository, "close_reminder_schedules"):
-            self.repository.close_reminder_schedules(card_id=card.id, kind="l2_reminder")
+            self.repository.close_reminder_schedules(
+                card_id=card.id, kind="l2_reminder"
+            )
 
         self._record_assignment_attempt_update(
             old_attempt=attempt,
@@ -221,7 +230,9 @@ class L2DistributionService:
             raise AssignmentDecisionError("assignment_attempt_not_pending")
 
         if hasattr(self.repository, "close_reminder_schedules"):
-            self.repository.close_reminder_schedules(card_id=card.id, kind="l2_reminder")
+            self.repository.close_reminder_schedules(
+                card_id=card.id, kind="l2_reminder"
+            )
 
         self._record_assignment_attempt_update(
             old_attempt=attempt,

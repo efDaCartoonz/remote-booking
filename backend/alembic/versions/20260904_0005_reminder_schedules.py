@@ -25,14 +25,19 @@ def upgrade() -> None:
         closed_at timestamptz,
         settings_snapshot jsonb NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now(),
-        UNIQUE (card_id, kind, cycle_id, attempt_id, owner_id)
     )
     """)
     op.execute("ALTER TABLE connection_cards ADD COLUMN overdue_at timestamptz")
-    op.execute("CREATE INDEX ix_reminder_schedules_due ON reminder_schedules (next_due_at, id) WHERE closed_at IS NULL")
+    op.execute(
+        "CREATE INDEX ix_reminder_schedules_due ON reminder_schedules (next_due_at, id) WHERE closed_at IS NULL"
+    )
+    op.execute(
+        "CREATE UNIQUE INDEX ux_reminder_schedules_one_active_per_kind ON reminder_schedules (card_id, kind) WHERE closed_at IS NULL"
+    )
 
 
 def downgrade() -> None:
+    op.execute("DROP INDEX ux_reminder_schedules_one_active_per_kind")
     op.execute("DROP INDEX ix_reminder_schedules_due")
     op.execute("DROP TABLE reminder_schedules")
     op.execute("ALTER TABLE connection_cards DROP COLUMN overdue_at")

@@ -32,6 +32,8 @@ def deliver_notifications() -> int:
 
 @celery_app.task(name="app.worker.scan_reminders", queue="notifications")
 def scan_reminders() -> int:
+    if not settings.reminder_scanner_enabled:
+        return 0
     with next(get_db()) as connection:
         service = ReminderService(
             PostgresReminderRepository(connection),
@@ -49,9 +51,11 @@ celery_app.conf.beat_schedule = {
         "schedule": 10.0,
         "options": {"queue": "notifications"},
     },
-    "scan-reminders": {
+}
+
+if settings.reminder_scanner_enabled:
+    celery_app.conf.beat_schedule["scan-reminders"] = {
         "task": "app.worker.scan_reminders",
         "schedule": settings.reminder_scan_interval_seconds,
         "options": {"queue": "notifications"},
-    },
-}
+    }

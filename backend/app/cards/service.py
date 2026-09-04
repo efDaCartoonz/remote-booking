@@ -94,8 +94,16 @@ class CardService:
             user_agent=user_agent,
         )
         if hasattr(self.repository, "close_reminder_schedules"):
-            self.repository.close_reminder_schedules(card_id=updated.id, kind="l1_reminder")
-            self.repository.create_reminder_schedule(card_id=updated.id, kind="l1_reminder", owner_id=actor_user_id, anchor_at=datetime.now(UTC), informed=True)
+            self.repository.close_reminder_schedules(
+                card_id=updated.id, kind="l1_reminder"
+            )
+            self.repository.create_reminder_schedule(
+                card_id=updated.id,
+                kind="l1_reminder",
+                owner_id=actor_user_id,
+                anchor_at=datetime.now(UTC),
+                informed=True,
+            )
         return updated
 
     def update_rejected_card(
@@ -299,7 +307,9 @@ class CardService:
             user_agent=user_agent,
         )
         if hasattr(self.repository, "close_reminder_schedules"):
-            self.repository.close_reminder_schedules(card_id=updated.id, kind="l2_reminder")
+            self.repository.close_reminder_schedules(
+                card_id=updated.id, kind="l2_reminder"
+            )
         return updated
 
     def reject_card(
@@ -459,7 +469,9 @@ class CardService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        if target_status in {CardStatus.CANCELLED, CardStatus.COMPLETED} and hasattr(self.repository, "close_reminder_schedules"):
+        if target_status in {CardStatus.CANCELLED, CardStatus.COMPLETED} and hasattr(
+            self.repository, "close_reminder_schedules"
+        ):
             self.repository.close_reminder_schedules(card_id=updated.id)
         return updated
 

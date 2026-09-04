@@ -125,7 +125,12 @@ class L1DistributionService:
             user_agent=user_agent,
         )
         if hasattr(self.repository, "create_reminder_schedule"):
-            self.repository.create_reminder_schedule(card_id=updated.id, kind="l1_reminder", owner_id=selected, anchor_at=datetime.now(UTC))
+            self.repository.create_reminder_schedule(
+                card_id=updated.id,
+                kind="l1_reminder",
+                owner_id=selected,
+                anchor_at=datetime.now(UTC),
+            )
         if self.notifications is not None:
             for channel in ("telegram", "bitrix24"):
                 self.notifications.notify(

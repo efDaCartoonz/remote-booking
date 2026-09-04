@@ -187,16 +187,69 @@ class PostgresCardRepository:
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
 
-    def create_reminder_schedule(self, *, card_id: int, kind: str, owner_id: int, anchor_at: datetime, cycle_id: int | None = None, attempt_id: int | None = None, informed: bool = False) -> None:
-        interval = settings.reminder_l1_informed_interval_seconds if informed else (settings.reminder_l1_interval_seconds if kind == "l1_reminder" else settings.reminder_l2_interval_seconds)
-        threshold = settings.reminder_l1_escalation_after_count if kind == "l1_reminder" else settings.reminder_l2_escalation_after_count
-        snapshot = {"interval_seconds": interval, "escalation_after_count": threshold, "manager_repeat_seconds": settings.reminder_l1_manager_repeat_seconds if kind == "l1_reminder" else None, "kind": kind, "anchor_at": anchor_at.isoformat(), "owner_id": owner_id, "cycle_id": cycle_id, "attempt_id": attempt_id}
+    def create_reminder_schedule(
+        self,
+        *,
+        card_id: int,
+        kind: str,
+        owner_id: int,
+        anchor_at: datetime,
+        cycle_id: int | None = None,
+        attempt_id: int | None = None,
+        informed: bool = False,
+    ) -> None:
+        interval = (
+            settings.reminder_l1_informed_interval_seconds
+            if informed
+            else (
+                settings.reminder_l1_interval_seconds
+                if kind == "l1_reminder"
+                else settings.reminder_l2_interval_seconds
+            )
+        )
+        threshold = (
+            settings.reminder_l1_escalation_after_count
+            if kind == "l1_reminder"
+            else settings.reminder_l2_escalation_after_count
+        )
+        snapshot = {
+            "interval_seconds": interval,
+            "escalation_after_count": threshold,
+            "manager_repeat_seconds": settings.reminder_l1_manager_repeat_seconds
+            if kind == "l1_reminder"
+            else None,
+            "kind": kind,
+            "anchor_at": anchor_at.isoformat(),
+            "owner_id": owner_id,
+            "cycle_id": cycle_id,
+            "attempt_id": attempt_id,
+        }
         with self.connection.cursor() as cursor:
-            cursor.execute("INSERT INTO reminder_schedules (card_id, kind, cycle_id, attempt_id, owner_id, anchor_at, interval_seconds, escalation_after_count, next_due_at, settings_snapshot) VALUES (%(card_id)s, %(kind)s, %(cycle_id)s, %(attempt_id)s, %(owner_id)s, %(anchor_at)s, %(interval)s, %(threshold)s, %(next_due)s, %(snapshot)s) ON CONFLICT DO NOTHING", {"card_id": card_id, "kind": kind, "cycle_id": cycle_id, "attempt_id": attempt_id, "owner_id": owner_id, "anchor_at": anchor_at, "interval": interval, "threshold": threshold, "next_due": anchor_at + timedelta(seconds=interval), "snapshot": Jsonb(snapshot)})
+            cursor.execute(
+                "INSERT INTO reminder_schedules (card_id, kind, cycle_id, attempt_id, owner_id, anchor_at, interval_seconds, escalation_after_count, next_due_at, settings_snapshot) VALUES (%(card_id)s, %(kind)s, %(cycle_id)s, %(attempt_id)s, %(owner_id)s, %(anchor_at)s, %(interval)s, %(threshold)s, %(next_due)s, %(snapshot)s) ON CONFLICT DO NOTHING",
+                {
+                    "card_id": card_id,
+                    "kind": kind,
+                    "cycle_id": cycle_id,
+                    "attempt_id": attempt_id,
+                    "owner_id": owner_id,
+                    "anchor_at": anchor_at,
+                    "interval": interval,
+                    "threshold": threshold,
+                    "next_due": anchor_at + timedelta(seconds=interval),
+                    "snapshot": Jsonb(snapshot),
+                },
+            )
 
-    def close_reminder_schedules(self, *, card_id: int, kind: str | None = None) -> None:
+    def close_reminder_schedules(
+        self, *, card_id: int, kind: str | None = None
+    ) -> None:
         with self.connection.cursor() as cursor:
-            cursor.execute("UPDATE reminder_schedules SET closed_at = now() WHERE card_id = %(card_id)s AND closed_at IS NULL" + (" AND kind = %(kind)s" if kind else ""), {"card_id": card_id, "kind": kind})
+            cursor.execute(
+                "UPDATE reminder_schedules SET closed_at = now() WHERE card_id = %(card_id)s AND closed_at IS NULL"
+                + (" AND kind = %(kind)s" if kind else ""),
+                {"card_id": card_id, "kind": kind},
+            )
 
     def list_active_manager_recipients(self) -> list[ManagerRecipient]:
         with self.connection.cursor() as cursor:

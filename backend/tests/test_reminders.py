@@ -1,6 +1,8 @@
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 from app.reminders import DueReminder, ReminderService
+from app.worker import celery_app, scan_reminders
 
 
 class FakeNotifications:
@@ -57,44 +59,101 @@ def test_catch_up_creates_one_current_reminder_and_l2_escalates_once():
 
 def test_l1_escalation_repeats_only_after_snapshot_interval():
     anchor = datetime(2026, 9, 4, 10, 0, tzinfo=UTC)
-    reminder = DueReminder(1, 10, "l1_reminder", 20, anchor, 600, 2, 2, True, anchor + timedelta(minutes=20), 1800)
+    reminder = DueReminder(
+        1,
+        10,
+        "l1_reminder",
+        20,
+        anchor,
+        600,
+        2,
+        2,
+        True,
+        anchor + timedelta(minutes=20),
+        1800,
+    )
     repo = FakeRepository(reminder)
     notifications = FakeNotifications()
-    ReminderService(repo, notifications).scan(now=anchor + timedelta(minutes=49), batch_size=100)
+    ReminderService(repo, notifications).scan(
+        now=anchor + timedelta(minutes=49), batch_size=100
+    )
     assert [item["event"] for item in notifications.items] == ["l1_reminder"]
-    ReminderService(repo, notifications).scan(now=anchor + timedelta(minutes=50), batch_size=100)
-    assert [item["event"] for item in notifications.items].count("manager_escalation") == 1
+    ReminderService(repo, notifications).scan(
+        now=anchor + timedelta(minutes=50), batch_size=100
+    )
+    assert [item["event"] for item in notifications.items].count(
+        "manager_escalation"
+    ) == 1
 
 
 def test_stale_schedule_is_closed_without_notification():
-    reminder = DueReminder(1, 10, "l2_reminder", 20, datetime(2026, 9, 4, 10, tzinfo=UTC), 600, 2, 0, False)
+    reminder = DueReminder(
+        1, 10, "l2_reminder", 20, datetime(2026, 9, 4, 10, tzinfo=UTC), 600, 2, 0, False
+    )
     repo = FakeRepository(reminder)
     repo.current = lambda _: False
     notifications = FakeNotifications()
-    assert ReminderService(repo, notifications).scan(now=datetime(2026, 9, 4, 10, 10, tzinfo=UTC), batch_size=100) == 0
+    assert (
+        ReminderService(repo, notifications).scan(
+            now=datetime(2026, 9, 4, 10, 10, tzinfo=UTC), batch_size=100
+        )
+        == 0
+    )
     assert not notifications.items
     assert repo.advanced[0]["close"] is True
 
 
 def test_batch_limit_is_clamped_to_500():
-    reminder = DueReminder(1, 10, "l2_reminder", 20, datetime(2026, 9, 4, 10, tzinfo=UTC), 600, 2, 0, False)
+    reminder = DueReminder(
+        1, 10, "l2_reminder", 20, datetime(2026, 9, 4, 10, tzinfo=UTC), 600, 2, 0, False
+    )
     repo = FakeRepository(reminder)
     seen = []
     original = repo.claim_due
+
     def claim_due(**kwargs):
         seen.append(kwargs["limit"])
         return original(**kwargs)
+
     repo.claim_due = claim_due
-    ReminderService(repo, FakeNotifications()).scan(now=datetime(2026, 9, 4, 10, 10, tzinfo=UTC), batch_size=999)
+    ReminderService(repo, FakeNotifications()).scan(
+        now=datetime(2026, 9, 4, 10, 10, tzinfo=UTC), batch_size=999
+    )
     assert seen == [500]
 
 
 def test_one_error_does_not_stop_following_reminder():
-    first = DueReminder(1, 10, "l2_reminder", 20, datetime(2026, 9, 4, 10, tzinfo=UTC), 600, 2, 0, False)
-    second = DueReminder(2, 11, "l2_reminder", 21, datetime(2026, 9, 4, 10, tzinfo=UTC), 600, 2, 0, False)
+    first = DueReminder(
+        1, 10, "l2_reminder", 20, datetime(2026, 9, 4, 10, tzinfo=UTC), 600, 2, 0, False
+    )
+    second = DueReminder(
+        2, 11, "l2_reminder", 21, datetime(2026, 9, 4, 10, tzinfo=UTC), 600, 2, 0, False
+    )
     repo = FakeRepository(first)
     repo.claim_due = lambda **_: [first, second]
     repo.current = lambda item: item.id == 2
     notifications = FakeNotifications()
-    ReminderService(repo, notifications).scan(now=datetime(2026, 9, 4, 10, 10, tzinfo=UTC), batch_size=100)
+    ReminderService(repo, notifications).scan(
+        now=datetime(2026, 9, 4, 10, 10, tzinfo=UTC), batch_size=100
+    )
     assert notifications.items
+
+
+def test_disabled_scanner_does_not_open_database(monkeypatch):
+    monkeypatch.setattr("app.worker.settings.reminder_scanner_enabled", False)
+    monkeypatch.setattr(
+        "app.worker.get_db", lambda: (_ for _ in ()).throw(AssertionError())
+    )
+
+    assert scan_reminders() == 0
+    assert "scan-reminders" not in celery_app.conf.beat_schedule
+
+
+def test_reminder_migration_uses_one_active_schedule_index():
+    migration = (
+        Path(__file__).parents[1]
+        / "alembic/versions/20260904_0005_reminder_schedules.py"
+    ).read_text()
+
+    assert "ux_reminder_schedules_one_active_per_kind" in migration
+    assert "WHERE closed_at IS NULL" in migration
