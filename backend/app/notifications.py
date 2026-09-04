@@ -161,6 +161,7 @@ class NotificationIntent:
     card_number: str | None
     card_public_id: str | None
     omnidesk_ticket_number: str | None
+    client_display_name: str | None
     planned_start_at: datetime | None
     planned_duration_minutes: int | None
     recipient_timezone: str | None
@@ -268,11 +269,13 @@ class PostgresNotificationRuntimeRepository:
                     c.number,
                     c.public_id::text AS public_id,
                     c.omnidesk_ticket_number,
+                    clients.display_name AS client_display_name,
                     c.planned_start_at,
                     c.planned_duration_minutes
                 FROM notifications n
                 LEFT JOIN user_settings us ON us.user_id = n.recipient_user_id
                 LEFT JOIN connection_cards c ON c.id = n.card_id
+                LEFT JOIN clients ON clients.id = c.client_id
                 WHERE n.id = %(intent_id)s
                 """,
                 {"intent_id": row["id"]},
@@ -301,6 +304,7 @@ class PostgresNotificationRuntimeRepository:
             omnidesk_ticket_number=(
                 details["omnidesk_ticket_number"] if details else None
             ),
+            client_display_name=(details["client_display_name"] if details else None),
             planned_start_at=details["planned_start_at"] if details else None,
             planned_duration_minutes=(
                 details["planned_duration_minutes"] if details else None
@@ -446,7 +450,13 @@ def _render_message(intent: NotificationIntent) -> str:
     ticket = intent.omnidesk_ticket_number or "не указан"
     card_number = intent.card_number or f"RDM-{intent.id}"
     url = f"{settings.notification_card_base_url.rstrip('/')}/cards/{intent.card_public_id}"
-    return f"Карточка {card_number}; тикет {ticket}; {timestamp}; {duration} мин. {url}"
+    client = (
+        f"; клиент {intent.client_display_name}" if intent.client_display_name else ""
+    )
+    return (
+        f"Карточка {card_number}{client}; тикет {ticket}; {timestamp}; "
+        f"{duration} мин. {url}"
+    )
 
 
 def _status_name(status: int) -> str:

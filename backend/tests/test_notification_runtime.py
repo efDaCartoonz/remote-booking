@@ -101,6 +101,7 @@ def make_intent(
         card_number="RDM-000010",
         card_public_id="00000000-0000-0000-0000-000000000010",
         omnidesk_ticket_number="999-000010",
+        client_display_name="Test Client",
         planned_start_at=NOW,
         planned_duration_minutes=60,
         recipient_timezone="UTC",
@@ -247,5 +248,6 @@ def test_message_is_minimal_and_contains_card_link() -> None:
     _, message, _ = adapter.calls[0]
     assert "RDM-000010" in message
     assert "999-000010" in message
+    assert "Test Client" in message
     assert "https://rdm.example/cards/" in message
     assert "recipient-1" not in message
