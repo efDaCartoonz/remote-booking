@@ -437,7 +437,8 @@ class FakeCardRepository:
         old_values: dict[str, Any] | None,
         new_values: dict[str, Any] | None,
         comment: str | None,
-    ) -> None:
+    ) -> int:
+        event_id = len(self.events) + 1
         self.events.append(
             {
                 "card_id": card_id,
@@ -449,6 +450,7 @@ class FakeCardRepository:
                 "comment": comment,
             }
         )
+        return event_id
 
     def add_audit_log(
         self,

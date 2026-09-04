@@ -26,11 +26,24 @@ class Notification:
     card_id: int
     recipient_user_id: int
     channel: str
+    source_event_id: int = 0
+    source_event_type: int = 0
+    payload: dict | None = None
+    dedupe_key: str = ""
 
 
 class NotificationService(Protocol):
     def notify(
-        self, *, event: str, card_id: int, recipient_user_id: int, channel: str
+        self,
+        *,
+        event: str,
+        card_id: int,
+        source_event_id: int,
+        source_event_type: int,
+        recipient_user_id: int,
+        channel: str,
+        payload: dict,
+        dedupe_key: str,
     ) -> None: ...
 
 
@@ -39,16 +52,32 @@ class RecordingNotificationService:
 
     def __init__(self) -> None:
         self.notifications: list[Notification] = []
-        self._keys: set[tuple[str, int, int, str]] = set()
+        self._keys: set[str] = set()
 
     def notify(
-        self, *, event: str, card_id: int, recipient_user_id: int, channel: str
+        self,
+        *,
+        event: str,
+        card_id: int,
+        recipient_user_id: int,
+        channel: str,
+        source_event_id: int = 0, source_event_type: int = 0,
+        payload: dict | None = None, dedupe_key: str = ""
     ) -> None:
-        key = (event, card_id, recipient_user_id, channel)
+        key = dedupe_key or f"{event}:{card_id}:{recipient_user_id}:{channel}"
         if key not in self._keys:
             self._keys.add(key)
             self.notifications.append(
-                Notification(event, card_id, recipient_user_id, channel)
+                Notification(
+                    event,
+                    card_id,
+                    recipient_user_id,
+                    channel,
+                    source_event_id,
+                    source_event_type,
+                    payload,
+                    key,
+                )
             )
 
 
@@ -59,7 +88,16 @@ class PostgresNotificationService:
         self.connection = connection
 
     def notify(
-        self, *, event: str, card_id: int, recipient_user_id: int, channel: str
+        self,
+        *,
+        event: str,
+        card_id: int,
+        source_event_id: int,
+        source_event_type: int,
+        recipient_user_id: int,
+        channel: str,
+        payload: dict,
+        dedupe_key: str,
     ) -> None:
         event_code = NOTIFICATION_EVENT_CODES[event]
         channel_code = NOTIFICATION_CHANNEL_CODES[channel]
@@ -74,9 +112,14 @@ class PostgresNotificationService:
                     card_id,
                     recipient_user_id,
                     channel_code,
-                    event_type_code
+                    event_type_code,
+                    source_event_id,
+                    source_event_type_code,
+                    payload,
+                    dedupe_key
                 )
-                SELECT %(card_id)s, %(recipient_user_id)s, %(channel_code)s, %(event_code)s
+                SELECT %(card_id)s, %(recipient_user_id)s, %(channel_code)s, %(event_code)s,
+                       %(source_event_id)s, %(source_event_type)s, %(payload)s, %(dedupe_key)s
                 WHERE COALESCE(
                     (
                         SELECT {setting_column}
@@ -85,7 +128,7 @@ class PostgresNotificationService:
                     ),
                     true
                 )
-                ON CONFLICT (card_id, recipient_user_id, channel_code, event_type_code)
+                ON CONFLICT (dedupe_key) WHERE dedupe_key IS NOT NULL
                 DO NOTHING
                 """,
                 {
@@ -93,6 +136,10 @@ class PostgresNotificationService:
                     "recipient_user_id": recipient_user_id,
                     "channel_code": channel_code,
                     "event_code": event_code,
+                    "source_event_id": source_event_id,
+                    "source_event_type": source_event_type,
+                    "payload": Jsonb(payload),
+                    "dedupe_key": dedupe_key,
                 },
             )
 

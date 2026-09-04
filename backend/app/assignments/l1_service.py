@@ -80,7 +80,7 @@ class L1DistributionService:
         self.repository.update_distribution_state(
             pool=DistributionPool.L1, last_user_id=selected
         )
-        self.repository.add_card_event(
+        source_event_id = self.repository.add_card_event(
             card_id=card.id,
             event_type=CardEventType.ENGINEER_ASSIGNED,
             actor_user_id=None,
@@ -105,7 +105,11 @@ class L1DistributionService:
                 self.notifications.notify(
                     event="l1_followup",
                     card_id=updated.id,
+                    source_event_id=source_event_id,
+                    source_event_type=int(CardEventType.ENGINEER_ASSIGNED),
                     recipient_user_id=selected,
                     channel=channel,
+                    payload={"card_id": updated.id, "assignment": "l1"},
+                    dedupe_key=f"manager_escalation:l1_followup:{source_event_id}:{selected}:{channel}",
                 )
         return updated

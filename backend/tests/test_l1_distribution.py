@@ -51,6 +51,26 @@ def test_notification_adapter_deduplicates_delivery_intent() -> None:
     assert len(adapter.notifications) == 1
 
 
+def test_notification_adapter_keeps_source_and_safe_payload_in_intent() -> None:
+    adapter = RecordingNotificationService()
+    adapter.notify(
+        event="l1_followup",
+        card_id=7,
+        source_event_id=42,
+        source_event_type=3,
+        recipient_user_id=11,
+        channel="telegram",
+        payload={"card_id": 7, "assignment": "l1"},
+        dedupe_key="manager_escalation:l1_followup:42:11:telegram",
+    )
+
+    item = adapter.notifications[0]
+    assert item.source_event_id == 42
+    assert item.source_event_type == 3
+    assert item.payload == {"card_id": 7, "assignment": "l1"}
+    assert item.dedupe_key.endswith(":telegram")
+
+
 def test_l1_assignment_creates_deduplicated_notification_intents() -> None:
     repository = FakeCardRepository()
     notifications = RecordingNotificationService()

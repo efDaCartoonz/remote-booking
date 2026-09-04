@@ -26,7 +26,6 @@ from app.cards.constants import (
     CardStatus,
     CreatedSource,
     DistributionPool,
-    RoleId,
 )
 
 
@@ -163,7 +162,7 @@ class CardRepository(Protocol):
         old_values: dict[str, Any] | None,
         new_values: dict[str, Any] | None,
         comment: str | None,
-    ) -> None: ...
+    ) -> int: ...
 
     def add_audit_log(
         self,
@@ -183,6 +182,7 @@ class CardRepository(Protocol):
 class PostgresCardRepository:
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
+
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         with self.connection.cursor() as cursor:
@@ -835,7 +835,7 @@ class PostgresCardRepository:
         old_values: dict[str, Any] | None,
         new_values: dict[str, Any] | None,
         comment: str | None,
-    ) -> None:
+    ) -> int:
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
@@ -857,6 +857,7 @@ class PostgresCardRepository:
                     %(new_values)s,
                     %(comment)s
                 )
+                RETURNING id
                 """,
                 {
                     "card_id": card_id,
@@ -868,6 +869,7 @@ class PostgresCardRepository:
                     "comment": comment,
                 },
             )
+            return int(cursor.fetchone()["id"])
 
     def add_audit_log(
         self,
