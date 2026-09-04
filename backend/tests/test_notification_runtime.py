@@ -231,11 +231,8 @@ def test_missing_channel_configuration_is_permanent(notification_settings) -> No
 
 
 def test_worker_registers_notification_task_and_periodic_schedule() -> None:
-    entry = celery_app.conf.beat_schedule["deliver-notifications"]
-
-    assert entry["task"] == "app.worker.deliver_notifications"
-    assert entry["options"]["queue"] == "notifications"
     assert celery_app.tasks["app.worker.deliver_notifications"]
+    assert "deliver-notifications" not in celery_app.conf.beat_schedule
 
 
 def test_message_is_minimal_and_contains_card_link() -> None:

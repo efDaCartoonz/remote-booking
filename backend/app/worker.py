@@ -1,7 +1,7 @@
 from celery import Celery
 
 from app.core.config import settings
-from app.db import get_db
+from app.db import db_connection
 from app.notifications import (
     Bitrix24Adapter,
     PostgresNotificationRuntimeRepository,
@@ -23,7 +23,9 @@ celery_app.conf.enable_utc = True
 
 @celery_app.task(name="app.worker.deliver_notifications", queue="notifications")
 def deliver_notifications() -> int:
-    with next(get_db()) as connection:
+    if not settings.notification_delivery_enabled:
+        return 0
+    with db_connection() as connection:
         return deliver_pending_notifications(
             PostgresNotificationRuntimeRepository(connection),
             {0: TelegramAdapter(), 1: Bitrix24Adapter()},
@@ -34,7 +36,7 @@ def deliver_notifications() -> int:
 def scan_reminders() -> int:
     if not settings.reminder_scanner_enabled:
         return 0
-    with next(get_db()) as connection:
+    with db_connection() as connection:
         service = ReminderService(
             PostgresReminderRepository(connection),
             PostgresNotificationService(connection),
@@ -45,13 +47,14 @@ def scan_reminders() -> int:
         )
 
 
-celery_app.conf.beat_schedule = {
-    "deliver-notifications": {
+celery_app.conf.beat_schedule = {}
+
+if settings.notification_delivery_enabled:
+    celery_app.conf.beat_schedule["deliver-notifications"] = {
         "task": "app.worker.deliver_notifications",
         "schedule": 10.0,
         "options": {"queue": "notifications"},
-    },
-}
+    }
 
 if settings.reminder_scanner_enabled:
     celery_app.conf.beat_schedule["scan-reminders"] = {

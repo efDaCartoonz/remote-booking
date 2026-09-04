@@ -142,7 +142,7 @@ def test_one_error_does_not_stop_following_reminder():
 def test_disabled_scanner_does_not_open_database(monkeypatch):
     monkeypatch.setattr("app.worker.settings.reminder_scanner_enabled", False)
     monkeypatch.setattr(
-        "app.worker.get_db", lambda: (_ for _ in ()).throw(AssertionError())
+        "app.worker.db_connection", lambda: (_ for _ in ()).throw(AssertionError())
     )
 
     assert scan_reminders() == 0
