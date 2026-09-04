@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+from app.assignments.manager_escalation import ManagerEscalationService
 from app.cards.constants import (
     ActorType,
     AuditAction,
@@ -11,7 +12,6 @@ from app.cards.constants import (
 )
 from app.cards.repository import CardRecord
 from app.notifications import NotificationService
-from app.assignments.manager_escalation import ManagerEscalationService
 
 
 class L1DistributionService:
@@ -22,7 +22,9 @@ class L1DistributionService:
     ) -> None:
         self.repository = repository
         self.notifications = notifications
-        self.manager_escalation_service = ManagerEscalationService(repository, notifications)
+        self.manager_escalation_service = ManagerEscalationService(
+            repository, notifications
+        )
 
     def assign(
         self,
@@ -62,10 +64,13 @@ class L1DistributionService:
             source_event_id = None
             if hasattr(self.repository, "list_active_manager_recipients"):
                 source_event_id = self.repository.add_card_event(
-                    card_id=card.id, event_type=CardEventType.STATUS_CHANGED,
-                    actor_user_id=None, actor_type=ActorType.SYSTEM,
+                    card_id=card.id,
+                    event_type=CardEventType.STATUS_CHANGED,
+                    actor_user_id=None,
+                    actor_type=ActorType.SYSTEM,
                     old_values={"l1_owner_id": card.l1_owner_id},
-                    new_values={"l1_owner_id": None}, comment="no_available_l1_candidates",
+                    new_values={"l1_owner_id": None},
+                    comment="no_available_l1_candidates",
                 )
             self.repository.add_audit_log(
                 actor_user_id=None,

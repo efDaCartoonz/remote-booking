@@ -44,7 +44,7 @@ class NotificationService(Protocol):
         recipient_user_id: int,
         channel: str,
         payload: dict,
-    ) -> None: ...
+    ) -> bool: ...
 
 
 class RecordingNotificationService:
@@ -64,7 +64,7 @@ class RecordingNotificationService:
         source_event_id: int,
         source_event_type: int,
         payload: dict,
-    ) -> None:
+    ) -> bool:
         key = _notification_dedupe_key(
             event=event,
             source_event_id=source_event_id,
@@ -86,6 +86,8 @@ class RecordingNotificationService:
                     key,
                 )
             )
+            return True
+        return False
 
 
 class PostgresNotificationService:
@@ -104,7 +106,7 @@ class PostgresNotificationService:
         recipient_user_id: int,
         channel: str,
         payload: dict,
-    ) -> None:
+    ) -> bool:
         event_code = NOTIFICATION_EVENT_CODES[event]
         channel_code = NOTIFICATION_CHANNEL_CODES[channel]
         dedupe_key = _notification_dedupe_key(
@@ -155,6 +157,7 @@ class PostgresNotificationService:
                     "dedupe_key": dedupe_key,
                 },
             )
+            return cursor.rowcount == 1
 
 
 def _notification_dedupe_key(

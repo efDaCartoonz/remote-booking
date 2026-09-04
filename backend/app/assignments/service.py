@@ -4,6 +4,7 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.assignments.l1_service import L1DistributionService
+from app.assignments.manager_escalation import ManagerEscalationService
 from app.assignments.repository import AssignmentRepository
 from app.assignments.types import L2DistributionCandidate, TimeInterval
 from app.cards.constants import (
@@ -17,7 +18,6 @@ from app.cards.constants import (
 )
 from app.cards.repository import CardRecord
 from app.notifications import NotificationService
-from app.assignments.manager_escalation import ManagerEscalationService
 
 NO_AVAILABLE_L2_REASON = "no_available_l2_candidates"
 ALL_L2_REJECTED_REASON = "all_l2_candidates_rejected"
@@ -37,7 +37,9 @@ class L2DistributionService:
     ) -> None:
         self.repository = repository
         self.l1_distribution_service = L1DistributionService(repository, notifications)
-        self.manager_escalation_service = ManagerEscalationService(repository, notifications)
+        self.manager_escalation_service = ManagerEscalationService(
+            repository, notifications
+        )
 
     def run_initial_distribution(
         self,
@@ -336,7 +338,14 @@ class L2DistributionService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        self.manager_escalation_service.escalate(card=updated, source_event_id=event_id, source_event_type=CardEventType.STATUS_CHANGED, reason=NO_AVAILABLE_L2_REASON, ip_address=ip_address, user_agent=user_agent)
+        self.manager_escalation_service.escalate(
+            card=updated,
+            source_event_id=event_id,
+            source_event_type=CardEventType.STATUS_CHANGED,
+            reason=NO_AVAILABLE_L2_REASON,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
         return updated
 
     def _record_card_update(

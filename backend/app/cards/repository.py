@@ -8,6 +8,7 @@ from uuid import UUID
 import psycopg
 from psycopg.types.json import Jsonb
 
+from app.assignments.manager_escalation import ManagerRecipient
 from app.assignments.types import (
     AssignmentAttemptRecord,
     AssignmentCycleRecord,
@@ -28,7 +29,6 @@ from app.cards.constants import (
     DistributionPool,
     RoleId,
 )
-from app.assignments.manager_escalation import ManagerRecipient
 
 
 @dataclass(frozen=True)
@@ -196,9 +196,13 @@ class PostgresCardRepository:
                 LEFT JOIN user_settings us ON us.user_id = u.id
                 WHERE u.is_active
                 ORDER BY u.id
-                """, {"role": int(RoleId.MANAGER)},
+                """,
+                {"role": int(RoleId.MANAGER)},
             )
-            return [ManagerRecipient(r["id"], r["telegram_chat_id"], r["bitrix24_user_id"]) for r in cursor.fetchall()]
+            return [
+                ManagerRecipient(r["id"], r["telegram_chat_id"], r["bitrix24_user_id"])
+                for r in cursor.fetchall()
+            ]
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         with self.connection.cursor() as cursor:
