@@ -149,7 +149,8 @@ def test_orchestration_stops_background_workers_between_phases() -> None:
     )
     assert 'compose(project, env, "stop", "worker", "beat")' in source
     assert (
-        '"--start",\n            str(max(2, start)),\n            "--end",\n            str(end),' in source
+        '"--start",\n            str(max(2, start)),\n            "--end",\n            str(end),'
+        in source
     )
 
 

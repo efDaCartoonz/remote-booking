@@ -7,6 +7,7 @@ import json
 import time
 import urllib.request
 from datetime import UTC, datetime, timedelta
+
 from app.cards.constants import ActorType
 from app.cards.repository import PostgresCardRepository
 from app.cards.schemas import CardCreateRequest
@@ -107,8 +108,7 @@ def trigger_selectivity_preflight(bad_card_id: int, good_card_id: int) -> None:
         except RuntimeError:
             pass
         try:
-            with connection.transaction():
-                with connection.cursor() as cur:
+            with connection.transaction(), connection.cursor() as cur:
                     cur.execute(
                         "INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_bad')",
                         (bad_card_id,),
