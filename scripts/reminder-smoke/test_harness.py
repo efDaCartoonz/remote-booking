@@ -137,8 +137,8 @@ def test_scenarios_forbid_false_pass_shortcuts() -> None:
     assert "UPDATE reminder_schedules SET closed_at" not in source
     assert "FOR UPDATE" in source
     assert "reminder_smoke_fail_trigger" in source
-    assert "status_code == 1" in source and "attempts == 2" in source
-    assert "status_code == 2" in source and "codes == [400]" in source
+    assert 'row["status_code"] == 1' in source and 'row["attempts"] == 2' in source
+    assert 'row["status_code"] == 2' in source and "codes == [400]" in source
     assert len(source.split("def scenario_")) - 1 == 8
 
 
