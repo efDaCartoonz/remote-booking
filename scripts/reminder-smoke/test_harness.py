@@ -178,6 +178,14 @@ def test_fixture_availability_covers_all_weekdays() -> None:
     assert "range(1, 8)" in source
 
 
+def test_delivery_isolates_foreign_pending_intents_and_tracks_target_id() -> None:
+    source = Path(__file__).with_name("scenarios.py").read_text()
+    assert "temporary_other_due" in source
+    assert "permanent_other_due" in source
+    assert "temporary_target_due" in source
+    assert "WHERE id=%(id)s" in source
+
+
 @pytest.mark.parametrize("run_error", [None, RuntimeError("scenario failed")])
 def test_main_runs_cleanup_after_success_and_failure(
     monkeypatch: pytest.MonkeyPatch, run_error: Exception | None

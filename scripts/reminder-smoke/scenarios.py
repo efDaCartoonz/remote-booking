@@ -195,20 +195,29 @@ def scenario_6() -> None:
     check(row["bad_events"] == 0 and row["good_events"] == 1, f"savepoint isolation bad_events={row['bad_events']} good_events={row['good_events']}")
 
 def scenario_7() -> None:
+    def isolate(label: str) -> None:
+        execute(label + "_schedules", "UPDATE reminder_schedules SET next_due_at=now()+interval '1 day' WHERE closed_at IS NULL AND next_due_at <= now()")
+        execute(label + "_intents", "UPDATE notifications SET next_attempt_at=now()+interval '1 day' WHERE status_code=0")
+
+    isolate("temporary_delivery_isolation")
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/reset", data=b"{}", method="POST"), timeout=3).read()
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/mode", data=json.dumps({"telegram": "temporary", "bitrix": "success"}).encode(), method="POST"), timeout=3).read()
     temp = card("delivery-temporary"); execute("temporary_delivery_disable_escalation", "UPDATE reminder_schedules SET escalation_after_count=999 WHERE card_id=%(id)s", {"id": temp["id"]}, expected_rowcount=1); scan()
+    target = query_one("temporary_target_intent", "SELECT n.id, n.status_code, n.attempts FROM notifications n WHERE n.card_id=%(id)s AND n.channel_code=0 AND n.status_code=0 AND (n.next_attempt_at IS NULL OR n.next_attempt_at <= now())", {"id": temp["id"]}); check(query_one("temporary_other_due", "SELECT count(*) n FROM notifications n WHERE n.card_id<>%(id)s AND n.channel_code=0 AND n.status_code=0 AND (n.next_attempt_at IS NULL OR n.next_attempt_at <= now())", {"id": temp["id"]})["n"] == 0, "temporary queue isolated")
     with db_connection() as db: deliver_pending_notifications(PostgresNotificationRuntimeRepository(db), {0: TelegramAdapter(), 1: Bitrix24Adapter()})
-    query("UPDATE notifications SET next_attempt_at=now() WHERE card_id=%(id)s AND status_code=0", {"id": temp["id"]})
+    first = query_one("temporary_after_first", "SELECT status_code, attempts FROM notifications WHERE id=%(id)s", {"id": target["id"]}); check(first["status_code"] == 0 and first["attempts"] == 1, "temporary first retry state")
+    execute("temporary_target_due", "UPDATE notifications SET next_attempt_at=now() WHERE id=%(id)s", {"id": target["id"]}, expected_rowcount=1)
     with db_connection() as db: deliver_pending_notifications(PostgresNotificationRuntimeRepository(db), {0: TelegramAdapter(), 1: Bitrix24Adapter()})
-    row = query_one("temporary_delivery_assertions", "SELECT count(*) n, max(status_code) status_code, max(attempts) attempts FROM notifications WHERE card_id=%(id)s AND channel_code=0", {"id": temp["id"]}); check(row["n"] == 1 and row["status_code"] == 1 and row["attempts"] == 2, f"temporary retry n={row['n']} status={row['status_code']} attempts={row['attempts']}")
+    row = query_one("temporary_delivery_assertions", "SELECT status_code, attempts FROM notifications WHERE id=%(id)s", {"id": target["id"]}); check(row["status_code"] == 1 and row["attempts"] == 2, f"temporary retry status={row['status_code']} attempts={row['attempts']}")
     with urllib.request.urlopen("http://stub:8080/stats", timeout=3) as response: stats = json.load(response)
     check(stats["telegram"]["calls"] == 2 and stats["telegram"]["codes"] == [500, 200], "temporary stub calls")
+    isolate("permanent_delivery_isolation")
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/reset", data=b"{}", method="POST"), timeout=3).read()
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/mode", data=json.dumps({"telegram": "permanent", "bitrix": "success"}).encode(), method="POST"), timeout=3).read()
     permanent = card("delivery-permanent"); execute("permanent_delivery_disable_escalation", "UPDATE reminder_schedules SET escalation_after_count=999 WHERE card_id=%(id)s", {"id": permanent["id"]}, expected_rowcount=1); scan()
+    target = query_one("permanent_target_intent", "SELECT n.id, n.status_code, n.attempts FROM notifications n WHERE n.card_id=%(id)s AND n.channel_code=0 AND n.status_code=0 AND (n.next_attempt_at IS NULL OR n.next_attempt_at <= now())", {"id": permanent["id"]}); check(query_one("permanent_other_due", "SELECT count(*) n FROM notifications n WHERE n.card_id<>%(id)s AND n.channel_code=0 AND n.status_code=0 AND (n.next_attempt_at IS NULL OR n.next_attempt_at <= now())", {"id": permanent["id"]})["n"] == 0, "permanent queue isolated")
     with db_connection() as db: deliver_pending_notifications(PostgresNotificationRuntimeRepository(db), {0: TelegramAdapter(), 1: Bitrix24Adapter()})
-    row = query_one("permanent_delivery_assertions", "SELECT count(*) n, max(status_code) status_code, max(attempts) attempts, max(error_message) error_message FROM notifications WHERE card_id=%(id)s AND channel_code=0", {"id": permanent["id"]}); check(row["n"] == 1 and row["status_code"] == 2 and row["attempts"] == 1 and row["error_message"] == "telegram_rejected", "permanent terminal")
+    row = query_one("permanent_delivery_assertions", "SELECT status_code, attempts, error_message FROM notifications WHERE id=%(id)s", {"id": target["id"]}); check(row["status_code"] == 2 and row["attempts"] == 1 and row["error_message"] == "telegram_rejected", "permanent terminal")
     with urllib.request.urlopen("http://stub:8080/stats", timeout=3) as response: stats = json.load(response)
     check(stats["telegram"]["calls"] == 1 and stats["telegram"]["codes"] == [400], "permanent stub calls")
 
