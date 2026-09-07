@@ -6,6 +6,7 @@ import json
 import time
 import urllib.request
 from datetime import UTC, datetime, timedelta
+from psycopg import sql
 
 from app.cards.repository import PostgresCardRepository
 from app.cards.schemas import CardCreateRequest
@@ -42,6 +43,29 @@ def execute(label: str, statement: str, params: dict | None = None, expected_row
             raise AssertionError(f"{label}: expected rowcount {expected_rowcount}, got {count}")
         c.commit()
         return count
+
+def install_selective_failure_trigger(connection, bad_card_id: int) -> None:
+    with connection.cursor() as cur:
+        cur.execute(sql.SQL("CREATE OR REPLACE FUNCTION reminder_smoke_fail() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION ''reminder_smoke_trigger''; END'"))
+        cur.execute(sql.SQL("CREATE TRIGGER reminder_smoke_fail_trigger BEFORE INSERT ON card_events FOR EACH ROW WHEN (NEW.card_id = {}) EXECUTE FUNCTION reminder_smoke_fail()").format(sql.Literal(bad_card_id)))
+    connection.commit()
+
+def trigger_selectivity_preflight(bad_card_id: int, good_card_id: int) -> None:
+    with db_connection() as connection:
+        with connection.transaction():
+            with connection.cursor() as cur:
+                cur.execute("INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_good')", (good_card_id,))
+            connection.rollback()
+        try:
+            with connection.transaction():
+                with connection.cursor() as cur:
+                    cur.execute("INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_bad')", (bad_card_id,))
+        except Exception as exc:
+            check(str(exc) == "reminder_smoke_trigger", "trigger preflight exception")
+            connection.rollback()
+        with connection.cursor() as cur:
+            cur.execute("SELECT 1")
+            check(cur.fetchone()[0] == 1, "trigger preflight connection")
 
 def query(statement: str, params: dict | None = None) -> dict:
     """Compatibility shim; new deterministic checks use explicit helpers."""
@@ -145,14 +169,14 @@ def scenario_5() -> None:
 def scenario_6() -> None:
     bad, good = card("savepoint"), card("savepoint-good")
     query("UPDATE reminder_schedules SET next_due_at=now()-interval '1 second' WHERE card_id IN (%(bad)s,%(good)s)", {"bad": bad["id"], "good": good["id"]})
-    with db_connection() as db, db.cursor() as cur:
-        cur.execute("CREATE OR REPLACE FUNCTION reminder_smoke_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.card_id = %s THEN RAISE EXCEPTION 'reminder_smoke_trigger'; END IF; RETURN NEW; END $$", (bad["id"],))
-        cur.execute("CREATE TRIGGER reminder_smoke_fail_trigger BEFORE INSERT ON card_events FOR EACH ROW EXECUTE FUNCTION reminder_smoke_fail()")
-        db.commit()
+    with db_connection() as db:
+        install_selective_failure_trigger(db, bad["id"])
+    trigger_selectivity_preflight(bad["id"], good["id"])
     try:
         scan()
     finally:
-        query("DROP TRIGGER IF EXISTS reminder_smoke_fail_trigger ON card_events; DROP FUNCTION IF EXISTS reminder_smoke_fail()")
+        execute("savepoint_trigger_cleanup", "DROP TRIGGER IF EXISTS reminder_smoke_fail_trigger ON card_events")
+        execute("savepoint_function_cleanup", "DROP FUNCTION IF EXISTS reminder_smoke_fail()")
     row = query("SELECT (SELECT count(*) FROM card_events WHERE card_id=%(bad)s AND comment='timer_reminder') bad_events, (SELECT count(*) FROM card_events WHERE card_id=%(good)s AND comment='timer_reminder') good_events", {"bad": bad["id"], "good": good["id"]})
     check(row["bad_events"] == 0 and row["good_events"] == 1, f"savepoint isolation bad_events={row['bad_events']} good_events={row['good_events']}")
 

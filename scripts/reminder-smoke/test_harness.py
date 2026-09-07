@@ -156,6 +156,14 @@ def test_catch_up_uses_fixed_scan_time_and_three_intervals() -> None:
     assert "next_due_at=%(now)s" in source
 
 
+def test_savepoint_trigger_is_selective_and_literal_bound() -> None:
+    source = Path(__file__).with_name("scenarios.py").read_text()
+    trigger = source.split("def install_selective_failure_trigger", 1)[1].split("def trigger_selectivity_preflight", 1)[0]
+    assert "sql.Literal(bad_card_id)" in trigger
+    assert "WHEN (NEW.card_id = {})" in trigger
+    assert "NEW.card_id = %s" not in trigger
+
+
 @pytest.mark.parametrize("run_error", [None, RuntimeError("scenario failed")])
 def test_main_runs_cleanup_after_success_and_failure(
     monkeypatch: pytest.MonkeyPatch, run_error: Exception | None
