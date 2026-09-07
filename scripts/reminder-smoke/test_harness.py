@@ -39,6 +39,19 @@ def test_preflight_rejects_missing_backend() -> None:
         harness.validate_compose_config(config)
 
 
+def test_load_smoke_env_reads_only_simple_pairs(tmp_path) -> None:
+    env_file = tmp_path / "smoke.env"
+    env_file.write_text("# comment\nA=one\nB=two=three\n")
+    assert harness.load_smoke_env(env_file) == {"A": "one", "B": "two=three"}
+
+
+def test_load_smoke_env_rejects_invalid_line(tmp_path) -> None:
+    env_file = tmp_path / "smoke.env"
+    env_file.write_text("not-an-assignment\n")
+    with pytest.raises(harness.PreflightError, match="invalid line"):
+        harness.load_smoke_env(env_file)
+
+
 def test_wait_until_times_out_with_safe_last_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

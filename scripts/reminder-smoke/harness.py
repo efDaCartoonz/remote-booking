@@ -146,6 +146,20 @@ def _remove_env_file(env_file: Path | None) -> None:
         env_file.unlink()
 
 
+def load_smoke_env(env_file: Path) -> dict[str, str]:
+    """Load only simple key-value pairs from the harness-owned temporary env."""
+    values: dict[str, str] = {}
+    for raw_line in env_file.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, separator, value = line.partition("=")
+        if not separator or not key:
+            raise PreflightError("temporary smoke env contains an invalid line")
+        values[key] = value
+    return values
+
+
 def run_smoke(project: str, env: dict[str, str], timeout: float) -> None:
     preflight(project, env)
     compose(project, env, "up", "-d", *SERVICES)
@@ -185,6 +199,7 @@ def main() -> int:
                     "REMINDER_L2_INTERVAL_SECONDS=2", "REMINDER_L2_INTERVAL_SECONDS=1"
                 )
             )
+        env.update(load_smoke_env(env_file))
         env["SMOKE_ENV_FILE"] = str(env_file)
         env["COMPOSE_PROJECT_NAME"] = project
         run_smoke(project, env, args.timeout)
