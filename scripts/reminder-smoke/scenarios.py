@@ -104,13 +104,24 @@ def workflow_card(name: str) -> dict:
     with db_connection() as c:
         with c.cursor() as cur:
             cur.execute("SELECT id FROM users WHERE username=%s", ("smoke-actor",)); actor = cur.fetchone()["id"]
-        created = CardService(PostgresCardRepository(c)).create_card(CardCreateRequest(omnidesk_ticket_number=ticket, planned_start_at=datetime.now(UTC) + timedelta(minutes=90 + FIXTURE_NAMES.index(name) * 20), planned_duration_minutes=30, description=f"{MARKER}:workflow:{name}"), actor_user_id=actor, ip_address=None, user_agent="reminder-smoke", actor_type=ActorType.INTERNAL_USER)
+        created = CardService(PostgresCardRepository(c)).create_card(CardCreateRequest(omnidesk_ticket_number=ticket, planned_start_at=datetime.now(UTC) + timedelta(hours=2, minutes=(20 + FIXTURE_NAMES.index(name)) * 45), planned_duration_minutes=30, description=f"{MARKER}:workflow:{name}"), actor_user_id=actor, ip_address=None, user_agent="reminder-smoke", actor_type=ActorType.INTERNAL_USER)
         c.commit()
         return {"id": created.id, "public_id": created.public_id, "actor": actor, "l2": created.l2_engineer_id}
 
 def check(value: bool, reason: str) -> None:
     if not value:
         raise AssertionError(reason)
+
+def lifecycle_state(label: str, card_id: int) -> dict:
+    return query_one(label, "SELECT status_code, l1_owner_id IS NOT NULL has_l1, l2_engineer_id IS NOT NULL has_l2, (SELECT count(*) FROM assignment_attempts WHERE card_id=c.id AND status_code=0) pending_attempts, (SELECT coalesce(string_agg(kind, ',' ORDER BY kind), '') FROM reminder_schedules WHERE card_id=c.id AND closed_at IS NULL) active_schedules FROM connection_cards c WHERE c.id=%(id)s", {"id": card_id})
+
+def require_lifecycle(label: str, card_id: int, *, status: int, l1: bool | None = None, l2: bool | None = None, pending: int | None = None) -> dict:
+    row = lifecycle_state(label, card_id)
+    check(row["status_code"] == status, f"{label}: status={row['status_code']}")
+    if l1 is not None: check(row["has_l1"] is l1, f"{label}: l1={row['has_l1']}")
+    if l2 is not None: check(row["has_l2"] is l2, f"{label}: l2={row['has_l2']}")
+    if pending is not None: check(row["pending_attempts"] == pending, f"{label}: pending={row['pending_attempts']}")
+    return row
 
 def scenario_1() -> None:
     c = card("chain")
@@ -203,22 +214,35 @@ def scenario_7() -> None:
 
 def scenario_8() -> None:
     c = workflow_card("confirm")
+    require_lifecycle("confirm_precondition", c["id"], status=1, l2=True, pending=1)
     with db_connection() as db:
         service = CardService(PostgresCardRepository(db)); service.confirm_card(c["public_id"], actor_user_id=c["l2"], comment="smoke", ip_address=None, user_agent="reminder-smoke"); db.commit()
     check(query("SELECT count(*) n FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL", {"id": c["id"]})["n"] == 0, "confirm closes schedule")
     r = workflow_card("reject")
+    require_lifecycle("reject_precondition", r["id"], status=1, l2=True, pending=1)
     with db_connection() as db:
         service = CardService(PostgresCardRepository(db)); rejected = service.reject_card(r["public_id"], actor_user_id=r["l2"], rejection_reason="smoke", ip_address=None, user_agent="reminder-smoke"); db.commit()
     check(query("SELECT count(*) n FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL", {"id": r["id"]})["n"] == 1, "reject creates next lifecycle schedule")
     s = workflow_card("reschedule")
+    require_lifecycle("reschedule_reject_precondition", s["id"], status=1, l2=True, pending=1)
     with db_connection() as db:
-        service = CardService(PostgresCardRepository(db)); service.reject_card(s["public_id"], actor_user_id=s["l2"], rejection_reason="smoke", ip_address=None, user_agent="reminder-smoke")
+        service = CardService(PostgresCardRepository(db)); service.reject_card(s["public_id"], actor_user_id=s["l2"], rejection_reason="smoke", ip_address=None, user_agent="reminder-smoke"); db.commit()
+    require_lifecycle("reschedule_update_precondition", s["id"], status=4, l1=True, l2=False, pending=0)
+    with db_connection() as db:
+        service = CardService(PostgresCardRepository(db))
         with db.cursor() as cur: cur.execute("SELECT l1_owner_id FROM connection_cards WHERE id=%s", (s["id"],)); l1_owner = cur.fetchone()["l1_owner_id"]
         service.update_rejected_card(s["public_id"], actor_user_id=l1_owner, planned_start_at=datetime.now(UTC) + timedelta(hours=2), planned_duration_minutes=30, description="smoke-rescheduled", ip_address=None, user_agent="reminder-smoke"); db.commit()
     check(query("SELECT count(*) n FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL", {"id": s["id"]})["n"] <= 1, "reschedule closes prior schedule")
     t = workflow_card("terminal")
+    require_lifecycle("terminal_confirm_precondition", t["id"], status=1, l2=True, pending=1)
     with db_connection() as db:
-        service = CardService(PostgresCardRepository(db)); service.confirm_card(t["public_id"], actor_user_id=t["l2"], comment="smoke", ip_address=None, user_agent="reminder-smoke"); service.start_card(t["public_id"], actor_user_id=t["l2"], comment=None, ip_address=None, user_agent="reminder-smoke"); service.complete_card(t["public_id"], result_code=0, engineer_report="smoke complete", actor_user_id=t["l2"], comment=None, ip_address=None, user_agent="reminder-smoke"); db.commit()
+        service = CardService(PostgresCardRepository(db)); service.confirm_card(t["public_id"], actor_user_id=t["l2"], comment="smoke", ip_address=None, user_agent="reminder-smoke"); db.commit()
+    require_lifecycle("terminal_start_precondition", t["id"], status=2, l2=True, pending=0)
+    with db_connection() as db:
+        service = CardService(PostgresCardRepository(db)); service.start_card(t["public_id"], actor_user_id=t["l2"], comment=None, ip_address=None, user_agent="reminder-smoke"); db.commit()
+    require_lifecycle("terminal_complete_precondition", t["id"], status=3, l2=True, pending=0)
+    with db_connection() as db:
+        service = CardService(PostgresCardRepository(db)); service.complete_card(t["public_id"], result_code=0, engineer_report="smoke complete", actor_user_id=t["l2"], comment=None, ip_address=None, user_agent="reminder-smoke"); db.commit()
     check(query("SELECT count(*) n FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL", {"id": t["id"]})["n"] == 0, "terminal closes schedule")
 
 SCENARIOS = (scenario_1, scenario_2, scenario_3, scenario_4, scenario_5, scenario_6, scenario_7, scenario_8)

@@ -164,6 +164,20 @@ def test_savepoint_trigger_is_selective_and_literal_bound() -> None:
     assert "NEW.card_id = %s" not in trigger
 
 
+def test_lifecycle_has_safe_step_diagnostics_and_separate_actions() -> None:
+    source = Path(__file__).with_name("scenarios.py").read_text()
+    for label in ("confirm_precondition", "reject_precondition", "reschedule_update_precondition", "terminal_start_precondition", "terminal_complete_precondition"):
+        assert label in source
+    assert "lifecycle_state" in source
+    assert source.count("with db_connection() as db:") >= 6
+
+
+def test_fixture_availability_covers_all_weekdays() -> None:
+    source = Path(__file__).with_name("fixture.py").read_text()
+    assert "range(1, 8)" in source
+    assert "range(1, 8)" in source
+
+
 @pytest.mark.parametrize("run_error", [None, RuntimeError("scenario failed")])
 def test_main_runs_cleanup_after_success_and_failure(
     monkeypatch: pytest.MonkeyPatch, run_error: Exception | None
