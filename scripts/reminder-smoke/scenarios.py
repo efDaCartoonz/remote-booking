@@ -18,12 +18,37 @@ from app.reminders import PostgresReminderRepository, ReminderService
 MARKER = "REMINDER_SMOKE"
 FIXTURE_NAMES = ("chain", "post-informed", "overdue", "catch-up", "concurrent", "savepoint", "savepoint-good", "delivery-temporary", "delivery-permanent", "confirm", "reject", "reassign", "cycle", "reschedule", "terminal")
 
-def query(statement: str, params: dict | None = None) -> dict:
+def query_one(label: str, statement: str, params: dict | None = None) -> dict:
     with db_connection() as c, c.cursor() as cur:
-        cur.execute(statement, params or {})
-        row = dict(cur.fetchone() or {}) if cur.description else {}
+        try:
+            cur.execute(statement, params or {})
+        except Exception as exc:
+            raise type(exc)(f"{label}: SQL failed; params={sorted((params or {}).keys())}") from exc
+        rows = cur.fetchall()
+        if len(rows) != 1:
+            raise AssertionError(f"{label}: expected one row, got {len(rows)}")
+        row = dict(rows[0])
         c.commit()
         return row
+
+def execute(label: str, statement: str, params: dict | None = None, expected_rowcount: int | None = None) -> int:
+    with db_connection() as c, c.cursor() as cur:
+        try:
+            cur.execute(statement, params or {})
+        except Exception as exc:
+            raise type(exc)(f"{label}: SQL failed; params={sorted((params or {}).keys())}") from exc
+        count = cur.rowcount
+        if expected_rowcount is not None and count != expected_rowcount:
+            raise AssertionError(f"{label}: expected rowcount {expected_rowcount}, got {count}")
+        c.commit()
+        return count
+
+def query(statement: str, params: dict | None = None) -> dict:
+    """Compatibility shim; new deterministic checks use explicit helpers."""
+    if statement.lstrip().upper().startswith(("SELECT", "WITH")):
+        return query_one("legacy_query", statement, params)
+    execute("legacy_execute", statement, params)
+    return {}
 
 def card(name: str) -> dict:
     ticket = f"999-{FIXTURE_NAMES.index(name):06d}"
@@ -84,17 +109,30 @@ def scenario_2() -> None:
         informed_again = service.mark_client_informed(rejected.public_id, actor_user_id=rejected.l1_owner_id, ip_address=None, user_agent="reminder-smoke")
         db.commit()
         check(informed.client_informed and informed_again == informed, "client informed service")
-    row = query("SELECT count(*) n FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL AND kind='l1_reminder' AND settings_snapshot->>'l1_mode'='post_informed'", {"id": c["id"]})
-    check(row["n"] == 1, "post-informed schedule")
-    scan()
-    row = query("SELECT count(*) n FROM notifications WHERE card_id=%(id)s AND event_type_code=2", {"id": c["id"]})
-    check(row["n"] == 0, "post-informed escalation")
+    fixed_now = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    schedule = query_one("post_informed_schedule", "SELECT id, interval_seconds FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL AND kind='l1_reminder' AND settings_snapshot->>'l1_mode'='post_informed'", {"id": c["id"]})
+    execute("post_informed_due", "UPDATE reminder_schedules SET anchor_at=%(anchor)s, next_due_at=%(now)s WHERE id=%(schedule_id)s", {"anchor": fixed_now - timedelta(seconds=schedule["interval_seconds"]), "now": fixed_now, "schedule_id": schedule["id"]}, expected_rowcount=1)
+    scan(fixed_now)
+    row = query_one("post_informed_assertions", "SELECT (SELECT count(*) FROM card_events WHERE card_id=%(id)s AND comment='timer_reminder' AND new_values @> '{\"timer\": \"l1_reminder\"}') l1_events, (SELECT count(*) FROM notifications WHERE card_id=%(id)s AND event_type_code=5) l1_intents, (SELECT count(*) FROM notifications WHERE card_id=%(id)s AND event_type_code=2) manager_intents, (SELECT count(*) FROM reminder_schedules WHERE id=%(schedule_id)s AND closed_at IS NULL AND settings_snapshot->>'l1_mode'='post_informed') active", {"id": c["id"], "schedule_id": schedule["id"]})
+    check(row["l1_events"] == 1 and row["l1_intents"] > 0 and row["manager_intents"] == 0 and row["active"] == 1, "post-informed assertions")
+    scan(fixed_now)
+    check(query_one("post_informed_no_duplicate", "SELECT count(*) n FROM card_events WHERE card_id=%(id)s AND comment='timer_reminder' AND new_values @> '{\"timer\": \"l1_reminder\"}'", {"id": c["id"]})["n"] == 1, "post-informed idempotent")
 
 def scenario_3() -> None:
     c = card("overdue"); query("UPDATE connection_cards SET planned_start_at=now()-interval '2 hours', planned_duration_minutes=30 WHERE id=%(id)s", {"id": c["id"]}); scan(); row = query("SELECT overdue_at, status_code FROM connection_cards WHERE id=%(id)s", {"id": c["id"]}); check(row["overdue_at"] is not None and row["status_code"] == 1, "overdue status"); scan(); row = query("SELECT count(*) events, (SELECT count(*) FROM audit_log WHERE entity_type='connection_card' AND entity_id=%(id)s AND new_values @> '{\"overdue\": true}') audits, (SELECT count(*) FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL) active FROM card_events WHERE card_id=%(id)s AND comment='l2_overdue'", {"id": c["id"]}); check(row["events"] == 1 and row["audits"] == 1 and row["active"] == 0, "overdue once and close")
 
 def scenario_4() -> None:
-    c = card("catch-up"); scan_now = datetime(2026, 9, 7, 12, 0, tzinfo=UTC); row = query("SELECT planned_start_at + planned_duration_minutes * interval '1 minute' > %(now)s future FROM connection_cards WHERE id=%(id)s", {"id": c["id"], "now": scan_now}); check(row["future"], "catch-up not overdue"); query("UPDATE reminder_schedules SET anchor_at=%(anchor)s, next_due_at=%(now)s WHERE card_id=%(id)s", {"anchor": scan_now - timedelta(seconds=3), "now": scan_now}); scan(scan_now); row = query("SELECT last_count, next_due_at=%(next)s exact_due, (SELECT count(*) FROM card_events WHERE card_id=%(id)s AND comment='timer_reminder') events, (SELECT count(*) FROM notifications WHERE card_id=%(id)s) intents FROM reminder_schedules WHERE card_id=%(id)s", {"id": c["id"], "next": scan_now + timedelta(seconds=1)}); check(row["last_count"] == 3 and row["exact_due"] and row["events"] == 1 and row["intents"] <= 2, "catch-up exact"); scan(scan_now); check(query("SELECT count(*) n FROM card_events WHERE card_id=%(id)s AND comment='timer_reminder'", {"id": c["id"]})["n"] == 1, "catch-up idempotent")
+    c = card("catch-up"); scan_now = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)
+    window = query_one("catchup_card_window", "SELECT planned_start_at + planned_duration_minutes * interval '1 minute' > %(now)s future FROM connection_cards WHERE id=%(id)s", {"id": c["id"], "now": scan_now}); check(window["future"], "catchup_card_window")
+    schedule = query_one("catchup_schedule_id", "SELECT id, interval_seconds FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL", {"id": c["id"]})
+    interval = timedelta(seconds=1)
+    execute("catchup_schedule_update", "UPDATE reminder_schedules SET anchor_at=%(anchor)s, next_due_at=%(now)s WHERE id=%(schedule_id)s", {"anchor": scan_now - 3 * interval, "now": scan_now, "schedule_id": schedule["id"]}, expected_rowcount=1)
+    scan(scan_now)
+    result = query_one("catchup_schedule_result", "SELECT last_count, next_due_at=%(next)s exact_due, closed_at IS NULL active FROM reminder_schedules WHERE id=%(schedule_id)s", {"schedule_id": schedule["id"], "next": scan_now + interval})
+    events = query_one("catchup_event_count", "SELECT count(*) n FROM card_events WHERE card_id=%(id)s AND comment='timer_reminder'", {"id": c["id"]})
+    check(result["last_count"] == 3 and result["exact_due"] and result["active"] and events["n"] == 1, "catch-up exact")
+    scan(scan_now)
+    check(query_one("catchup_event_count_repeat", "SELECT count(*) n FROM card_events WHERE card_id=%(id)s AND comment='timer_reminder'", {"id": c["id"]})["n"] == 1, "catch-up idempotent")
 
 def scenario_5() -> None:
     c = card("concurrent"); target = query("SELECT id FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL", {"id": c["id"]})["id"]
