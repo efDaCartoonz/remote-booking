@@ -109,10 +109,10 @@ def trigger_selectivity_preflight(bad_card_id: int, good_card_id: int) -> None:
             pass
         try:
             with connection.transaction(), connection.cursor() as cur:
-                    cur.execute(
-                        "INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_bad')",
-                        (bad_card_id,),
-                    )
+                cur.execute(
+                    "INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_bad')",
+                    (bad_card_id,),
+                )
         except Exception as exc:  # noqa: BLE001 - verify the database trigger error
             primary = getattr(getattr(exc, "diag", None), "message_primary", None)
             check(primary == "reminder_smoke_trigger", "trigger preflight exception")
