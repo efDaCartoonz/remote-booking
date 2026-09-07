@@ -16,7 +16,7 @@ from app.notifications import Bitrix24Adapter, PostgresNotificationRuntimeReposi
 from app.reminders import PostgresReminderRepository, ReminderService
 
 MARKER = "REMINDER_SMOKE"
-FIXTURE_NAMES = ("chain", "post-informed", "overdue", "catch-up", "concurrent", "savepoint", "delivery-temporary", "delivery-permanent", "confirm", "reject", "reassign", "cycle", "reschedule", "terminal")
+FIXTURE_NAMES = ("chain", "post-informed", "overdue", "catch-up", "concurrent", "savepoint", "savepoint-good", "delivery-temporary", "delivery-permanent", "confirm", "reject", "reassign", "cycle", "reschedule", "terminal")
 
 def query(statement: str, params: dict | None = None) -> dict:
     with db_connection() as c, c.cursor() as cur:
@@ -104,7 +104,7 @@ def scenario_5() -> None:
         b.rollback(); a.rollback(); check(all(item.id != target for item in y), "specific schedule skip locked")
 
 def scenario_6() -> None:
-    bad, good = card("savepoint"), card("catch-up")
+    bad, good = card("savepoint"), card("savepoint-good")
     query("UPDATE reminder_schedules SET next_due_at=now()-interval '1 second' WHERE card_id IN (%(bad)s,%(good)s)", {"bad": bad["id"], "good": good["id"]})
     with db_connection() as db, db.cursor() as cur:
         cur.execute("CREATE OR REPLACE FUNCTION reminder_smoke_fail() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.card_id = %s THEN RAISE EXCEPTION 'reminder_smoke_trigger'; END IF; RETURN NEW; END $$", (bad["id"],))
