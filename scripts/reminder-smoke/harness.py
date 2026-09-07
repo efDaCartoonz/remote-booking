@@ -174,6 +174,12 @@ def run_smoke(project: str, env: dict[str, str], timeout: float) -> None:
         "/smoke/scenarios.py",
         "--timeout",
         str(timeout),
+        "--start", "1", "--end", "1",
+    )
+    compose(project, env, "stop", "worker", "beat")
+    compose(
+        project, env, "run", "--rm", "scenarios", "python", "/smoke/scenarios.py",
+        "--timeout", str(timeout), "--start", "2", "--end", "8",
     )
 
 

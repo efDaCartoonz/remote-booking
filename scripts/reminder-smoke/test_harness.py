@@ -142,6 +142,20 @@ def test_scenarios_forbid_false_pass_shortcuts() -> None:
     assert len(source.split("def scenario_")) - 1 == 8
 
 
+def test_orchestration_stops_background_workers_between_phases() -> None:
+    source = Path(harness.__file__).read_text()
+    assert '"--start", "1", "--end", "1"' in source
+    assert 'compose(project, env, "stop", "worker", "beat")' in source
+    assert '"--start", "2", "--end", "8"' in source
+
+
+def test_catch_up_uses_fixed_scan_time_and_three_intervals() -> None:
+    source = Path(__file__).with_name("scenarios.py").read_text()
+    assert "scan_now = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)" in source
+    assert "row[\"last_count\"] == 3" in source
+    assert "next_due_at=%(now)s" in source
+
+
 @pytest.mark.parametrize("run_error", [None, RuntimeError("scenario failed")])
 def test_main_runs_cleanup_after_success_and_failure(
     monkeypatch: pytest.MonkeyPatch, run_error: Exception | None

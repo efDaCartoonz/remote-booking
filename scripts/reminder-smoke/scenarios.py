@@ -41,9 +41,9 @@ def card(name: str) -> dict:
         c.commit()
         return {"id": created.id, "public_id": created.public_id, "l2": l2, "actor": actor}
 
-def scan() -> int:
+def scan(now: datetime | None = None) -> int:
     with db_connection() as c:
-        result = ReminderService(PostgresReminderRepository(c), PostgresNotificationService(c)).scan(now=datetime.now(UTC), batch_size=100)
+        result = ReminderService(PostgresReminderRepository(c), PostgresNotificationService(c)).scan(now=now or datetime.now(UTC), batch_size=100)
         c.commit()
         return result
 
@@ -94,7 +94,7 @@ def scenario_3() -> None:
     c = card("overdue"); query("UPDATE connection_cards SET planned_start_at=now()-interval '2 hours', planned_duration_minutes=30 WHERE id=%(id)s", {"id": c["id"]}); scan(); row = query("SELECT overdue_at, status_code FROM connection_cards WHERE id=%(id)s", {"id": c["id"]}); check(row["overdue_at"] is not None and row["status_code"] == 1, "overdue status"); scan(); row = query("SELECT count(*) events, (SELECT count(*) FROM audit_log WHERE entity_type='connection_card' AND entity_id=%(id)s AND new_values @> '{\"overdue\": true}') audits, (SELECT count(*) FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL) active FROM card_events WHERE card_id=%(id)s AND comment='l2_overdue'", {"id": c["id"]}); check(row["events"] == 1 and row["audits"] == 1 and row["active"] == 0, "overdue once and close")
 
 def scenario_4() -> None:
-    c = card("catch-up"); row = query("SELECT planned_start_at + planned_duration_minutes * interval '1 minute' > now() future FROM connection_cards WHERE id=%(id)s", {"id": c["id"]}); check(row["future"], "catch-up not overdue"); query("UPDATE reminder_schedules SET anchor_at=now()-interval '3 seconds', next_due_at=now()-interval '1 second' WHERE card_id=%(id)s", {"id": c["id"]}); scan(); row = query("SELECT last_count, next_due_at > now() future, (SELECT count(*) FROM card_events WHERE card_id=%(id)s AND comment='timer_reminder') events, (SELECT count(*) FROM notifications WHERE card_id=%(id)s) intents FROM reminder_schedules WHERE card_id=%(id)s", {"id": c["id"]}); check(row["last_count"] == 1 and row["future"] and row["events"] == 1 and row["intents"] <= 2, "catch-up exact")
+    c = card("catch-up"); scan_now = datetime(2026, 9, 7, 12, 0, tzinfo=UTC); row = query("SELECT planned_start_at + planned_duration_minutes * interval '1 minute' > %(now)s future FROM connection_cards WHERE id=%(id)s", {"id": c["id"], "now": scan_now}); check(row["future"], "catch-up not overdue"); query("UPDATE reminder_schedules SET anchor_at=%(anchor)s, next_due_at=%(now)s WHERE card_id=%(id)s", {"anchor": scan_now - timedelta(seconds=3), "now": scan_now}); scan(scan_now); row = query("SELECT last_count, next_due_at=%(next)s exact_due, (SELECT count(*) FROM card_events WHERE card_id=%(id)s AND comment='timer_reminder') events, (SELECT count(*) FROM notifications WHERE card_id=%(id)s) intents FROM reminder_schedules WHERE card_id=%(id)s", {"id": c["id"], "next": scan_now + timedelta(seconds=1)}); check(row["last_count"] == 3 and row["exact_due"] and row["events"] == 1 and row["intents"] <= 2, "catch-up exact"); scan(scan_now); check(query("SELECT count(*) n FROM card_events WHERE card_id=%(id)s AND comment='timer_reminder'", {"id": c["id"]})["n"] == 1, "catch-up idempotent")
 
 def scenario_5() -> None:
     c = card("concurrent"); target = query("SELECT id FROM reminder_schedules WHERE card_id=%(id)s AND closed_at IS NULL", {"id": c["id"]})["id"]
@@ -158,8 +158,9 @@ def scenario_8() -> None:
 SCENARIOS = (scenario_1, scenario_2, scenario_3, scenario_4, scenario_5, scenario_6, scenario_7, scenario_8)
 
 def main() -> None:
-    parser = argparse.ArgumentParser(); parser.add_argument("--timeout", type=float, default=180); args = parser.parse_args(); deadline = time.monotonic() + args.timeout
+    parser = argparse.ArgumentParser(); parser.add_argument("--timeout", type=float, default=180); parser.add_argument("--start", type=int, default=1); parser.add_argument("--end", type=int, default=8); args = parser.parse_args(); deadline = time.monotonic() + args.timeout
     for number, scenario in enumerate(SCENARIOS, 1):
+        if number < args.start or number > args.end: continue
         check(time.monotonic() < deadline, "harness timeout"); scenario(); print(f"scenario-{number}=PASS", flush=True)
 
 if __name__ == "__main__":
