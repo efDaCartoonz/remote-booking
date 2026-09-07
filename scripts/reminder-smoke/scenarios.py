@@ -12,6 +12,7 @@ from app.notifications import Bitrix24Adapter, PostgresNotificationRuntimeReposi
 from app.reminders import PostgresReminderRepository, ReminderService
 
 MARKER = "REMINDER_SMOKE"
+FIXTURE_NAMES = ("chain", "post-informed", "overdue", "catch-up", "concurrent", "savepoint", "delivery-temporary", "delivery-permanent", "confirm", "reject", "reassign", "cycle", "reschedule", "terminal")
 
 def query(statement: str, params: dict | None = None) -> dict:
     with db_connection() as c, c.cursor() as cur:
@@ -21,7 +22,8 @@ def query(statement: str, params: dict | None = None) -> dict:
         return row
 
 def card(name: str) -> dict:
-    return query("SELECT id FROM connection_cards WHERE description=%(d)s", {"d": f"{MARKER}:{name}"})
+    ticket = f"999-{FIXTURE_NAMES.index(name):06d}"
+    return query("SELECT id FROM connection_cards WHERE omnidesk_ticket_number=%(ticket)s", {"ticket": ticket})
 
 def scan() -> int:
     with db_connection() as c:
