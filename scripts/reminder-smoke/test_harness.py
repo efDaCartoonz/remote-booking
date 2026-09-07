@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import harness
 import pytest
@@ -116,6 +117,19 @@ def test_wait_until_retries_expected_temporary_error(
 def test_wait_until_does_not_hide_unexpected_exception() -> None:
     with pytest.raises(ValueError, match="bug"):
         harness.wait_until(lambda: (_ for _ in ()).throw(ValueError("bug")), timeout=1)
+
+
+def test_scenario_one_uses_background_chain_only() -> None:
+    source = (Path(__file__).with_name("scenarios.py")).read_text()
+    scenario = source.split("def scenario_1", 1)[1].split("def scenario_2", 1)[0]
+    assert "scan()" not in scenario
+    assert "deliver_pending_notifications" not in scenario
+
+
+def test_fixture_does_not_preseed_shared_due_cards() -> None:
+    source = (Path(__file__).with_name("fixture.py")).read_text()
+    assert "create_reminder_schedule" not in source
+    assert "for index, name" not in source
 
 
 @pytest.mark.parametrize("run_error", [None, RuntimeError("scenario failed")])
