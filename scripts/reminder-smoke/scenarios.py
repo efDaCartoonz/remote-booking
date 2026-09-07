@@ -140,6 +140,7 @@ def scenario_5() -> None:
         with a.cursor() as cur: cur.execute("SELECT id FROM reminder_schedules WHERE id=%s FOR UPDATE", (target,))
         y = PostgresReminderRepository(b).claim_due(now=datetime.now(UTC), limit=100)
         b.rollback(); a.rollback(); check(all(item.id != target for item in y), "specific schedule skip locked")
+    execute("concurrent_schedule_cleanup", "UPDATE reminder_schedules SET next_due_at=now()+interval '1 hour' WHERE id=%(schedule_id)s", {"schedule_id": target}, expected_rowcount=1)
 
 def scenario_6() -> None:
     bad, good = card("savepoint"), card("savepoint-good")
