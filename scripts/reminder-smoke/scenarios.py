@@ -36,8 +36,8 @@ def card(name: str) -> dict:
             CardCreateRequest(omnidesk_ticket_number=ticket, planned_start_at=start, planned_duration_minutes=30,
                               l1_owner_id=None, l2_engineer_id=l2, description=f"{MARKER}:{name}"),
             actor_user_id=actor, ip_address=None, user_agent="reminder-smoke", actor_type=ActorType.INTERNAL_USER)
-        PostgresCardRepository(c).create_reminder_schedule(card_id=created.id, kind="l2_reminder", owner_id=l2,
-                                                            anchor_at=datetime.now(UTC) - timedelta(seconds=5))
+        anchor = datetime.now(UTC) + timedelta(seconds=60) if name == "catch-up" else datetime.now(UTC) - timedelta(seconds=5)
+        PostgresCardRepository(c).create_reminder_schedule(card_id=created.id, kind="l2_reminder", owner_id=l2, anchor_at=anchor)
         c.commit()
         return {"id": created.id, "public_id": created.public_id, "l2": l2, "actor": actor}
 
