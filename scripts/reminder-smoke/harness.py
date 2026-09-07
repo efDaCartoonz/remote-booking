@@ -160,28 +160,44 @@ def load_smoke_env(env_file: Path) -> dict[str, str]:
     return values
 
 
-def run_smoke(project: str, env: dict[str, str], timeout: float, start: int = 1, end: int = 8) -> None:
+def run_smoke(
+    project: str, env: dict[str, str], timeout: float, start: int = 1, end: int = 8
+) -> None:
     preflight(project, env)
     compose(project, env, "up", "-d", *SERVICES)
     compose(project, env, "run", "--rm", "fixture", "python", "/smoke/fixture.py")
     if start <= 1 <= end:
         compose(
-        project,
-        env,
-        "run",
-        "--rm",
-        "scenarios",
-        "python",
-        "/smoke/scenarios.py",
-        "--timeout",
-        str(timeout),
-            "--start", "1", "--end", "1",
+            project,
+            env,
+            "run",
+            "--rm",
+            "scenarios",
+            "python",
+            "/smoke/scenarios.py",
+            "--timeout",
+            str(timeout),
+            "--start",
+            "1",
+            "--end",
+            "1",
         )
     compose(project, env, "stop", "worker", "beat")
     if end >= 2 and start <= 8:
         compose(
-        project, env, "run", "--rm", "scenarios", "python", "/smoke/scenarios.py",
-            "--timeout", str(timeout), "--start", str(max(2, start)), "--end", str(end),
+            project,
+            env,
+            "run",
+            "--rm",
+            "scenarios",
+            "python",
+            "/smoke/scenarios.py",
+            "--timeout",
+            str(timeout),
+            "--start",
+            str(max(2, start)),
+            "--end",
+            str(end),
         )
 
 

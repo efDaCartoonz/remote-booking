@@ -152,13 +152,15 @@ def test_orchestration_stops_background_workers_between_phases() -> None:
 def test_catch_up_uses_fixed_scan_time_and_three_intervals() -> None:
     source = Path(__file__).with_name("scenarios.py").read_text()
     assert "scan_now = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)" in source
-    assert "result[\"last_count\"] == 3" in source
+    assert 'result["last_count"] == 3' in source
     assert "next_due_at=%(now)s" in source
 
 
 def test_savepoint_trigger_is_selective_and_literal_bound() -> None:
     source = Path(__file__).with_name("scenarios.py").read_text()
-    trigger = source.split("def install_selective_failure_trigger", 1)[1].split("def trigger_selectivity_preflight", 1)[0]
+    trigger = source.split("def install_selective_failure_trigger", 1)[1].split(
+        "def trigger_selectivity_preflight", 1
+    )[0]
     assert "sql.Literal(bad_card_id)" in trigger
     assert "WHEN (NEW.card_id = {})" in trigger
     assert "NEW.card_id = %s" not in trigger
@@ -166,7 +168,13 @@ def test_savepoint_trigger_is_selective_and_literal_bound() -> None:
 
 def test_lifecycle_has_safe_step_diagnostics_and_separate_actions() -> None:
     source = Path(__file__).with_name("scenarios.py").read_text()
-    for label in ("confirm_precondition", "reject_precondition", "reschedule_update_precondition", "terminal_start_precondition", "terminal_complete_precondition"):
+    for label in (
+        "confirm_precondition",
+        "reject_precondition",
+        "reschedule_update_precondition",
+        "terminal_start_precondition",
+        "terminal_complete_precondition",
+    ):
         assert label in source
     assert "lifecycle_state" in source
     assert source.count("with db_connection() as db:") >= 6

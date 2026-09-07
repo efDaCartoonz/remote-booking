@@ -39,7 +39,9 @@ def main() -> None:
         l1_id = create_user(connection, username="smoke-l1", role_id=1, channel_id="1")
         l2_id = create_user(connection, username="smoke-l2", role_id=2, channel_id="2")
         create_user(connection, username="smoke-manager", role_id=3, channel_id="3")
-        actor_id = create_user(connection, username="smoke-actor", role_id=4, channel_id="4")
+        actor_id = create_user(
+            connection, username="smoke-actor", role_id=4, channel_id="4"
+        )
 
         # Make the real distribution services eligible for the synthetic window.
         with connection.cursor() as cursor:
