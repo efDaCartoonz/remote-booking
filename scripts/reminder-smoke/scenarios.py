@@ -17,7 +17,7 @@ FIXTURE_NAMES = ("chain", "post-informed", "overdue", "catch-up", "concurrent", 
 def query(statement: str, params: dict | None = None) -> dict:
     with db_connection() as c, c.cursor() as cur:
         cur.execute(statement, params or {})
-        row = dict(cur.fetchone() or {})
+        row = dict(cur.fetchone() or {}) if cur.description else {}
         c.commit()
         return row
 
