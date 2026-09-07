@@ -65,6 +65,11 @@ def test_load_smoke_env_reads_only_simple_pairs(tmp_path) -> None:
     assert harness.load_smoke_env(env_file) == {"A": "one", "B": "two=three"}
 
 
+def test_smoke_env_exposes_application_package_path() -> None:
+    smoke_env = harness.ROOT / "scripts/reminder-smoke/.env.example"
+    assert harness.load_smoke_env(smoke_env)["PYTHONPATH"] == "/app"
+
+
 def test_load_smoke_env_rejects_invalid_line(tmp_path) -> None:
     env_file = tmp_path / "smoke.env"
     env_file.write_text("not-an-assignment\n")
