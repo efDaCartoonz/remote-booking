@@ -190,7 +190,7 @@ def scenario_7() -> None:
     with db_connection() as db: deliver_pending_notifications(PostgresNotificationRuntimeRepository(db), {0: TelegramAdapter(), 1: Bitrix24Adapter()})
     query("UPDATE notifications SET next_attempt_at=now() WHERE card_id=%(id)s AND status_code=0", {"id": temp["id"]})
     with db_connection() as db: deliver_pending_notifications(PostgresNotificationRuntimeRepository(db), {0: TelegramAdapter(), 1: Bitrix24Adapter()})
-    row = query_one("temporary_delivery_assertions", "SELECT count(*) n, max(status_code) status_code, max(attempts) attempts FROM notifications WHERE card_id=%(id)s AND channel_code=0", {"id": temp["id"]}); check(row["n"] == 1 and row["status_code"] == 1 and row["attempts"] == 2, "temporary retry")
+    row = query_one("temporary_delivery_assertions", "SELECT count(*) n, max(status_code) status_code, max(attempts) attempts FROM notifications WHERE card_id=%(id)s AND channel_code=0", {"id": temp["id"]}); check(row["n"] == 1 and row["status_code"] == 1 and row["attempts"] == 2, f"temporary retry n={row['n']} status={row['status_code']} attempts={row['attempts']}")
     with urllib.request.urlopen("http://stub:8080/stats", timeout=3) as response: stats = json.load(response)
     check(stats["telegram"]["calls"] == 2 and stats["telegram"]["codes"] == [500, 200], "temporary stub calls")
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/reset", data=b"{}", method="POST"), timeout=3).read()
