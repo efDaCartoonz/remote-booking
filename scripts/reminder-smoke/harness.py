@@ -160,11 +160,12 @@ def load_smoke_env(env_file: Path) -> dict[str, str]:
     return values
 
 
-def run_smoke(project: str, env: dict[str, str], timeout: float) -> None:
+def run_smoke(project: str, env: dict[str, str], timeout: float, start: int = 1, end: int = 8) -> None:
     preflight(project, env)
     compose(project, env, "up", "-d", *SERVICES)
     compose(project, env, "run", "--rm", "fixture", "python", "/smoke/fixture.py")
-    compose(
+    if start <= 1 <= end:
+        compose(
         project,
         env,
         "run",
@@ -174,18 +175,21 @@ def run_smoke(project: str, env: dict[str, str], timeout: float) -> None:
         "/smoke/scenarios.py",
         "--timeout",
         str(timeout),
-        "--start", "1", "--end", "1",
-    )
+            "--start", "1", "--end", "1",
+        )
     compose(project, env, "stop", "worker", "beat")
-    compose(
+    if end >= 2 and start <= 8:
+        compose(
         project, env, "run", "--rm", "scenarios", "python", "/smoke/scenarios.py",
-        "--timeout", str(timeout), "--start", "2", "--end", "8",
-    )
+            "--timeout", str(timeout), "--start", str(max(2, start)), "--end", str(end),
+        )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--timeout", type=float, default=180)
+    parser.add_argument("--start", type=int, default=1)
+    parser.add_argument("--end", type=int, default=8)
     args = parser.parse_args()
     project = validate_project_name(project_name())
     env = os.environ.copy()
@@ -208,7 +212,7 @@ def main() -> int:
         env.update(load_smoke_env(env_file))
         env["SMOKE_ENV_FILE"] = str(env_file)
         env["COMPOSE_PROJECT_NAME"] = project
-        run_smoke(project, env, args.timeout)
+        run_smoke(project, env, args.timeout, args.start, args.end)
     except (
         OSError,
         PreflightError,
