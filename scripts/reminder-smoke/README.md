@@ -3,7 +3,7 @@
 Полный изолированный smoke запускается одной командой из корня checkout:
 
 ```sh
-python scripts/reminder-smoke/harness.py
+python3 scripts/reminder-smoke/harness.py
 ```
 
 Harness сам генерирует имя `rdm-reminder-smoke-<12 hex>`, создаёт env во
