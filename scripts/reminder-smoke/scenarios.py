@@ -186,7 +186,7 @@ def scenario_6() -> None:
 def scenario_7() -> None:
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/reset", data=b"{}", method="POST"), timeout=3).read()
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/mode", data=json.dumps({"telegram": "temporary", "bitrix": "success"}).encode(), method="POST"), timeout=3).read()
-    temp = card("delivery-temporary"); scan()
+    temp = card("delivery-temporary"); execute("temporary_delivery_disable_escalation", "UPDATE reminder_schedules SET escalation_after_count=999 WHERE card_id=%(id)s", {"id": temp["id"]}, expected_rowcount=1); scan()
     with db_connection() as db: deliver_pending_notifications(PostgresNotificationRuntimeRepository(db), {0: TelegramAdapter(), 1: Bitrix24Adapter()})
     query("UPDATE notifications SET next_attempt_at=now() WHERE card_id=%(id)s AND status_code=0", {"id": temp["id"]})
     with db_connection() as db: deliver_pending_notifications(PostgresNotificationRuntimeRepository(db), {0: TelegramAdapter(), 1: Bitrix24Adapter()})
@@ -195,7 +195,7 @@ def scenario_7() -> None:
     check(stats["telegram"]["calls"] == 2 and stats["telegram"]["codes"] == [500, 200], "temporary stub calls")
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/reset", data=b"{}", method="POST"), timeout=3).read()
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/mode", data=json.dumps({"telegram": "permanent", "bitrix": "success"}).encode(), method="POST"), timeout=3).read()
-    permanent = card("delivery-permanent"); scan()
+    permanent = card("delivery-permanent"); execute("permanent_delivery_disable_escalation", "UPDATE reminder_schedules SET escalation_after_count=999 WHERE card_id=%(id)s", {"id": permanent["id"]}, expected_rowcount=1); scan()
     with db_connection() as db: deliver_pending_notifications(PostgresNotificationRuntimeRepository(db), {0: TelegramAdapter(), 1: Bitrix24Adapter()})
     row = query_one("permanent_delivery_assertions", "SELECT count(*) n, max(status_code) status_code, max(attempts) attempts, max(error_message) error_message FROM notifications WHERE card_id=%(id)s AND channel_code=0", {"id": permanent["id"]}); check(row["n"] == 1 and row["status_code"] == 2 and row["attempts"] == 1 and row["error_message"] == "telegram_rejected", "permanent terminal")
     with urllib.request.urlopen("http://stub:8080/stats", timeout=3) as response: stats = json.load(response)
