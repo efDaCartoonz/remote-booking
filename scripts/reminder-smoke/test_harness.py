@@ -39,6 +39,26 @@ def test_preflight_rejects_missing_backend() -> None:
         harness.validate_compose_config(config)
 
 
+def test_compose_failure_reports_safe_exit_code(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        harness, "project_name", lambda: harness.PREFIX + "0123456789ab"
+    )
+    monkeypatch.setattr(
+        harness,
+        "run_smoke",
+        lambda *_: (_ for _ in ()).throw(
+            subprocess.CalledProcessError(7, ["docker", "compose"])
+        ),
+    )
+    monkeypatch.setattr(harness, "cleanup", lambda *_: None)
+    monkeypatch.setattr(harness, "_remove_env_file", lambda _: None)
+    monkeypatch.setattr("sys.argv", ["harness.py"])
+    assert harness.main() == 1
+    assert "exit_code=7" in capsys.readouterr().err
+
+
 def test_load_smoke_env_reads_only_simple_pairs(tmp_path) -> None:
     env_file = tmp_path / "smoke.env"
     env_file.write_text("# comment\nA=one\nB=two=three\n")

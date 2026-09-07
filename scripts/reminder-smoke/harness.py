@@ -222,7 +222,12 @@ def main() -> int:
             cleanup_error = cleanup_error or exc
 
     if primary_error is not None:
-        print(f"reminder smoke failed: {primary_error}", file=sys.stderr)
+        detail = (
+            f" exit_code={primary_error.returncode}"
+            if isinstance(primary_error, subprocess.CalledProcessError)
+            else ""
+        )
+        print(f"reminder smoke failed:{detail} {primary_error}", file=sys.stderr)
     if cleanup_error is not None:
         print(f"reminder smoke cleanup failed: {cleanup_error}", file=sys.stderr)
     if primary_error is not None or cleanup_error is not None:

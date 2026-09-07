@@ -22,7 +22,7 @@ services:
   migrate:
     build: {context: ../../backend}
     env_file: ${SMOKE_ENV_FILE}
-    command: [alembic, upgrade, 20260904_0005]
+    command: [alembic, upgrade, "20260904_0005"]
     depends_on: {postgres: {condition: service_healthy}}
     networks: [smoke]
   fixture:
