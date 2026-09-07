@@ -39,7 +39,19 @@ def main() -> None:
         l1_id = create_user(connection, username="smoke-l1", role_id=1, channel_id="1")
         l2_id = create_user(connection, username="smoke-l2", role_id=2, channel_id="2")
         create_user(connection, username="smoke-manager", role_id=3, channel_id="3")
-        create_user(connection, username="smoke-actor", role_id=4, channel_id="4")
+        actor_id = create_user(connection, username="smoke-actor", role_id=4, channel_id="4")
+
+        # Make the real distribution services eligible for the synthetic window.
+        with connection.cursor() as cursor:
+            for user_id, pool in ((l1_id, 1), (l2_id, 2)):
+                cursor.execute(
+                    "INSERT INTO distribution_members (user_id, pool_code, is_enabled, enabled_by_id) VALUES (%s, %s, true, %s)",
+                    (user_id, pool, actor_id),
+                )
+                cursor.execute(
+                    "INSERT INTO schedules (user_id, weekday, start_time, end_time, timezone) VALUES (%s, extract(isodow from current_date)::smallint, '00:00', '23:59', 'UTC')",
+                    (user_id,),
+                )
 
         connection.commit()
     print("fixture=users-ready marker=REMINDER_SMOKE_SYNTHETIC")

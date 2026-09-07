@@ -132,6 +132,16 @@ def test_fixture_does_not_preseed_shared_due_cards() -> None:
     assert "for index, name" not in source
 
 
+def test_scenarios_forbid_false_pass_shortcuts() -> None:
+    source = (Path(__file__).with_name("scenarios.py")).read_text()
+    assert "UPDATE reminder_schedules SET closed_at" not in source
+    assert "FOR UPDATE" in source
+    assert "reminder_smoke_fail_trigger" in source
+    assert "status_code == 1" in source and "attempts == 2" in source
+    assert "status_code == 2" in source and "codes == [400]" in source
+    assert len(source.split("def scenario_")) - 1 == 8
+
+
 @pytest.mark.parametrize("run_error", [None, RuntimeError("scenario failed")])
 def test_main_runs_cleanup_after_success_and_failure(
     monkeypatch: pytest.MonkeyPatch, run_error: Exception | None
