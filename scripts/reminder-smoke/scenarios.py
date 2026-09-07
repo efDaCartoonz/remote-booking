@@ -7,12 +7,10 @@ import json
 import time
 import urllib.request
 from datetime import UTC, datetime, timedelta
-from psycopg import sql
-
+from app.cards.constants import ActorType
 from app.cards.repository import PostgresCardRepository
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService
-from app.cards.constants import ActorType
 from app.db import db_connection
 from app.notifications import (
     Bitrix24Adapter,
@@ -22,6 +20,7 @@ from app.notifications import (
     deliver_pending_notifications,
 )
 from app.reminders import PostgresReminderRepository, ReminderService
+from psycopg import sql
 
 MARKER = "REMINDER_SMOKE"
 FIXTURE_NAMES = (
@@ -99,8 +98,7 @@ def install_selective_failure_trigger(connection, bad_card_id: int) -> None:
 def trigger_selectivity_preflight(bad_card_id: int, good_card_id: int) -> None:
     with db_connection() as connection:
         try:
-            with connection.transaction():
-                with connection.cursor() as cur:
+            with connection.transaction(), connection.cursor() as cur:
                     cur.execute(
                         "INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_good')",
                         (good_card_id,),
@@ -115,7 +113,7 @@ def trigger_selectivity_preflight(bad_card_id: int, good_card_id: int) -> None:
                         "INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_bad')",
                         (bad_card_id,),
                     )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - verify the database trigger error
             primary = getattr(getattr(exc, "diag", None), "message_primary", None)
             check(primary == "reminder_smoke_trigger", "trigger preflight exception")
         with connection.cursor() as cur:
@@ -285,7 +283,7 @@ def scenario_2() -> None:
     c = workflow_card("post-informed")
     with db_connection() as db:
         service = CardService(PostgresCardRepository(db))
-        rejected = service.reject_card(
+        service.reject_card(
             c["public_id"],
             actor_user_id=c["l2"],
             rejection_reason="smoke-rejected",
