@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Isolated, fail-closed Compose runner for the reminder e2e suite."""
 
 from __future__ import annotations
