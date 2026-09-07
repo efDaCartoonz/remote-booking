@@ -154,7 +154,7 @@ def scenario_6() -> None:
     finally:
         query("DROP TRIGGER IF EXISTS reminder_smoke_fail_trigger ON card_events; DROP FUNCTION IF EXISTS reminder_smoke_fail()")
     row = query("SELECT (SELECT count(*) FROM card_events WHERE card_id=%(bad)s AND comment='timer_reminder') bad_events, (SELECT count(*) FROM card_events WHERE card_id=%(good)s AND comment='timer_reminder') good_events", {"bad": bad["id"], "good": good["id"]})
-    check(row["bad_events"] == 0 and row["good_events"] == 1, "savepoint isolation")
+    check(row["bad_events"] == 0 and row["good_events"] == 1, f"savepoint isolation bad_events={row['bad_events']} good_events={row['good_events']}")
 
 def scenario_7() -> None:
     urllib.request.urlopen(urllib.request.Request("http://stub:8080/control/reset", data=b"{}", method="POST"), timeout=3).read()
