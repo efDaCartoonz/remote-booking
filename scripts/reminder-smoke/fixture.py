@@ -50,26 +50,30 @@ def main() -> None:
         )
 
         repository = PostgresCardRepository(connection)
-        card = CardService(repository).create_card(
-            CardCreateRequest(
-                omnidesk_ticket_number="999-999999",
-                planned_start_at=datetime.now(UTC) - timedelta(minutes=2),
-                planned_duration_minutes=30,
-                l1_owner_id=l1_id,
-                l2_engineer_id=l2_id,
-                description=MARKER,
-            ),
-            actor_user_id=actor_id,
-            ip_address=None,
-            user_agent="reminder-smoke",
-            actor_type=ActorType.INTERNAL_USER,
-        )
-        repository.create_reminder_schedule(
-            card_id=card.id,
-            kind="l2_reminder",
-            owner_id=l2_id,
-            anchor_at=datetime.now(UTC) - timedelta(seconds=5),
-        )
+        names = ("chain", "post-informed", "overdue", "catch-up", "concurrent",
+                 "savepoint", "delivery-temporary", "delivery-permanent",
+                 "confirm", "reject", "reassign", "cycle", "reschedule", "terminal")
+        for index, name in enumerate(names):
+            card = CardService(repository).create_card(
+                CardCreateRequest(
+                    omnidesk_ticket_number=f"999-{index:06d}",
+                    planned_start_at=datetime.now(UTC) - timedelta(minutes=2),
+                    planned_duration_minutes=30,
+                    l1_owner_id=l1_id,
+                    l2_engineer_id=l2_id,
+                    description=f"{MARKER}:{name}",
+                ),
+                actor_user_id=actor_id,
+                ip_address=None,
+                user_agent="reminder-smoke",
+                actor_type=ActorType.INTERNAL_USER,
+            )
+            repository.create_reminder_schedule(
+                card_id=card.id,
+                kind="l2_reminder",
+                owner_id=l2_id,
+                anchor_at=datetime.now(UTC) - timedelta(seconds=5),
+            )
         connection.commit()
     print("fixture=created marker=REMINDER_SMOKE_SYNTHETIC")
 
