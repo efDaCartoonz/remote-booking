@@ -52,17 +52,20 @@ def install_selective_failure_trigger(connection, bad_card_id: int) -> None:
 
 def trigger_selectivity_preflight(bad_card_id: int, good_card_id: int) -> None:
     with db_connection() as connection:
-        with connection.transaction():
-            with connection.cursor() as cur:
-                cur.execute("INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_good')", (good_card_id,))
-            connection.rollback()
+        try:
+            with connection.transaction():
+                with connection.cursor() as cur:
+                    cur.execute("INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_good')", (good_card_id,))
+                raise RuntimeError("preflight rollback")
+        except RuntimeError:
+            pass
         try:
             with connection.transaction():
                 with connection.cursor() as cur:
                     cur.execute("INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_bad')", (bad_card_id,))
         except Exception as exc:
-            check(str(exc) == "reminder_smoke_trigger", "trigger preflight exception")
-            connection.rollback()
+            primary = getattr(getattr(exc, "diag", None), "message_primary", None)
+            check(primary == "reminder_smoke_trigger", "trigger preflight exception")
         with connection.cursor() as cur:
             cur.execute("SELECT 1")
             check(cur.fetchone()[0] == 1, "trigger preflight connection")
