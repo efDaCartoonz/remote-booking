@@ -146,13 +146,13 @@ def test_orchestration_stops_background_workers_between_phases() -> None:
     source = Path(harness.__file__).read_text()
     assert '"--start", "1", "--end", "1"' in source
     assert 'compose(project, env, "stop", "worker", "beat")' in source
-    assert '"--start", "2", "--end", "8"' in source
+    assert '"--start", str(max(2, start)), "--end", str(end)' in source
 
 
 def test_catch_up_uses_fixed_scan_time_and_three_intervals() -> None:
     source = Path(__file__).with_name("scenarios.py").read_text()
     assert "scan_now = datetime(2026, 9, 7, 12, 0, tzinfo=UTC)" in source
-    assert "row[\"last_count\"] == 3" in source
+    assert "result[\"last_count\"] == 3" in source
     assert "next_due_at=%(now)s" in source
 
 
