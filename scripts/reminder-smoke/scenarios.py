@@ -31,7 +31,7 @@ def card(name: str) -> dict:
         with c.cursor() as cur:
             cur.execute("SELECT id FROM users WHERE username=%s", ("smoke-l2",)); l2 = cur.fetchone()["id"]
             cur.execute("SELECT id FROM users WHERE username=%s", ("smoke-actor",)); actor = cur.fetchone()["id"]
-        start = datetime.now(UTC) + (timedelta(minutes=30) if name != "overdue" else timedelta(hours=-2))
+        start = datetime.now(UTC) + (timedelta(minutes=30 + FIXTURE_NAMES.index(name) * 40) if name != "overdue" else timedelta(hours=-2))
         created = CardService(PostgresCardRepository(c)).create_card(
             CardCreateRequest(omnidesk_ticket_number=ticket, planned_start_at=start, planned_duration_minutes=30,
                               l1_owner_id=None, l2_engineer_id=l2, description=f"{MARKER}:{name}"),
