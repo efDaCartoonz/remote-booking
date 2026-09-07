@@ -7,29 +7,55 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes: [postgres:/var/lib/postgresql/data]
     networks: [smoke]
+    healthcheck: {test: [CMD-SHELL, "pg_isready -U smoke -d smoke"], interval: 2s, timeout: 2s, retries: 30}
   redis:
     image: redis:7-alpine
     volumes: [redis:/data]
     networks: [smoke]
+    healthcheck: {test: [CMD, redis-cli, ping], interval: 2s, timeout: 2s, retries: 30}
   stub:
     image: python:3.12-slim
     command: [python, /smoke/stub.py]
     volumes: [./stub.py:/smoke/stub.py:ro]
     networks: [smoke]
+    healthcheck: {test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"], interval: 2s, timeout: 2s, retries: 30}
+  migrate:
+    build: {context: ../../backend}
+    env_file: ${SMOKE_ENV_FILE}
+    command: [alembic, upgrade, 20260904_0005]
+    depends_on: {postgres: {condition: service_healthy}}
+    networks: [smoke]
+  fixture:
+    build: {context: ../../backend}
+    env_file: ${SMOKE_ENV_FILE}
+    command: [python, /smoke/fixture.py]
+    volumes: [./fixture.py:/smoke/fixture.py:ro]
+    depends_on: {migrate: {condition: service_completed_successfully}}
+    networks: [smoke]
+  scenarios:
+    build: {context: ../../backend}
+    env_file: ${SMOKE_ENV_FILE}
+    command: [python, /smoke/scenarios.py]
+    volumes: [./scenarios.py:/smoke/scenarios.py:ro]
+    depends_on: {stub: {condition: service_healthy}}
+    networks: [smoke]
   backend:
     build: {context: ../../backend}
     env_file: ${SMOKE_ENV_FILE:-.env}
     command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000"]
+    depends_on: {postgres: {condition: service_healthy}, redis: {condition: service_healthy}}
     networks: [smoke]
   worker:
     build: {context: ../../backend}
     env_file: ${SMOKE_ENV_FILE:-.env}
     command: [celery, -A, app.worker.celery_app, worker, --queues=notifications, --loglevel=INFO]
+    depends_on: {migrate: {condition: service_completed_successfully}, redis: {condition: service_healthy}}
     networks: [smoke]
   beat:
     build: {context: ../../backend}
     env_file: ${SMOKE_ENV_FILE:-.env}
     command: [celery, -A, app.worker.celery_app, beat, --loglevel=INFO]
+    depends_on: {migrate: {condition: service_completed_successfully}, redis: {condition: service_healthy}}
     networks: [smoke]
 networks:
   smoke: {internal: true}
