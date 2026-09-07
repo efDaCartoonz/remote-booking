@@ -57,7 +57,7 @@ def main() -> None:
             card = CardService(repository).create_card(
                 CardCreateRequest(
                     omnidesk_ticket_number=f"999-{index:06d}",
-                    planned_start_at=datetime.now(UTC) - timedelta(minutes=2),
+                    planned_start_at=datetime.now(UTC) - timedelta(minutes=2 + index * 31),
                     planned_duration_minutes=30,
                     l1_owner_id=l1_id,
                     l2_engineer_id=l2_id,
