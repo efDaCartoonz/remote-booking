@@ -1,0 +1,33 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment: {POSTGRES_DB: ${POSTGRES_DB}, POSTGRES_USER: ${POSTGRES_USER}, POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}}
+    volumes: [postgres:/var/lib/postgresql/data]
+    networks: [smoke]
+  redis:
+    image: redis:7-alpine
+    volumes: [redis:/data]
+    networks: [smoke]
+  stub:
+    image: python:3.12-slim
+    command: [python, /smoke/stub.py]
+    volumes: [./stub.py:/smoke/stub.py:ro]
+    networks: [smoke]
+  backend:
+    build: {context: ../../backend}
+    env_file: .env
+    command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000"]
+    networks: [smoke]
+  worker:
+    build: {context: ../../backend}
+    env_file: .env
+    command: [celery, -A, app.worker.celery_app, worker, --queues=notifications, --loglevel=INFO]
+    networks: [smoke]
+  beat:
+    build: {context: ../../backend}
+    env_file: .env
+    command: [celery, -A, app.worker.celery_app, beat, --loglevel=INFO]
+    networks: [smoke]
+networks:
+  smoke: {internal: true}
+volumes: {postgres: {}, redis: {}}
