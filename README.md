@@ -7,8 +7,9 @@ Remote Desktop Manager (RDM) — сервис бронирования и упр
 карточки удалённого подключения, Frame API с Omnidesk, первичным автоматическим
 распределением L2, действиями назначенного L2 и автоматическим распределением
 L1, а также сопровождением отклонённой карточки назначенным L1. Актуальный
-stage-стенд: Raspberry Pi `172.17.131.115`. Runtime-доставка notification
-intents подтверждена на stage для внутреннего изолированного контура.
+stage-стенд: Raspberry Pi `172.17.131.115`. Runtime-доставка и периодические
+напоминания подтверждены на stage только для внутреннего изолированного
+контура; production scanner и delivery остаются выключенными.
 
 ## Что Реализовано
 
@@ -296,6 +297,19 @@ health endpoints возвращают `200`, а rollback-smoke не остави
 Следующий этап: подключить событийную менеджерскую эскалацию к подтверждённым
 веткам L1/L2. Периодические напоминания и включение реальных внешних каналов
 останутся отдельными stage-gate.
+
+Для периодических напоминаний полный isolated harness подтвердил восемь
+независимых сценариев: L1 lifecycle до `client_informed`, post-informed без
+manager escalation, однократный `overdue_at`, catch-up без лавины событий,
+`FOR UPDATE SKIP LOCKED`, savepoint isolation, temporary retry/terminal failure
+и lifecycle-закрытие schedules. Проверка использовала только внутренние
+stub-каналы и фиктивные IDs; backfill и реальные Telegram/Bitrix24 отправки не
+выполнялись. Alembic находится на `20260904_0005`; интервалы и пороги
+сохраняются в snapshot. На production stage `REMINDER_SCANNER_ENABLED=false` и
+`NOTIFICATION_DELIVERY_ENABLED=false`.
+
+Следующий этап: согласованный тест реальных Telegram/Bitrix24 каналов с
+тестовым получателем и отдельное решение о включении фоновых задач.
 
 ## Завершение Каждого Этапа
 
