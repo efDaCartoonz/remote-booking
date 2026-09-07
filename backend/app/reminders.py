@@ -24,6 +24,8 @@ class DueReminder:
     escalation_sent: bool
     last_escalated_at: datetime | None = None
     manager_repeat_seconds: int = 1800
+    l1_mode: str | None = None
+    client_informed: bool = False
 
 
 class ReminderRepository(Protocol):
@@ -70,6 +72,7 @@ class ReminderService:
 
     def _scan_one(self, reminder: DueReminder, now: datetime) -> int:
         created = 0
+        l1_mode = _resolve_l1_mode(reminder)
         if not self.repository.current(reminder):
             self.repository.advance(
                 reminder_id=reminder.id,
@@ -100,16 +103,20 @@ class ReminderService:
                 },
             ):
                 created += 1
-        escalate = count >= reminder.escalation_after_count and (
-            (reminder.kind == "l2_reminder" and not reminder.escalation_sent)
-            or (
-                reminder.kind == "l1_reminder"
-                and (
-                    not reminder.escalation_sent
-                    or reminder.last_escalated_at is None
-                    or now
-                    >= reminder.last_escalated_at
-                    + timedelta(seconds=reminder.manager_repeat_seconds)
+        escalate = (
+            l1_mode != "post_informed"
+            and count >= reminder.escalation_after_count
+            and (
+                (reminder.kind == "l2_reminder" and not reminder.escalation_sent)
+                or (
+                    reminder.kind == "l1_reminder"
+                    and (
+                        not reminder.escalation_sent
+                        or reminder.last_escalated_at is None
+                        or now
+                        >= reminder.last_escalated_at
+                        + timedelta(seconds=reminder.manager_repeat_seconds)
+                    )
                 )
             )
         )
@@ -150,7 +157,7 @@ class PostgresReminderRepository:
     def claim_due(self, *, now: datetime, limit: int) -> list[DueReminder]:
         with self.connection.cursor() as cursor:
             cursor.execute(
-                "SELECT id, card_id, kind, owner_id, anchor_at, interval_seconds, escalation_after_count, last_count, escalation_sent, last_escalated_at, COALESCE((settings_snapshot->>'manager_repeat_seconds')::integer, 1800) AS manager_repeat_seconds FROM reminder_schedules WHERE closed_at IS NULL AND next_due_at <= %(now)s ORDER BY next_due_at, id LIMIT %(limit)s FOR UPDATE SKIP LOCKED",
+                "SELECT rs.id, rs.card_id, rs.kind, rs.owner_id, rs.anchor_at, rs.interval_seconds, rs.escalation_after_count, rs.last_count, rs.escalation_sent, rs.last_escalated_at, COALESCE((rs.settings_snapshot->>'manager_repeat_seconds')::integer, 1800) AS manager_repeat_seconds, rs.settings_snapshot->>'l1_mode' AS l1_mode, c.client_informed FROM reminder_schedules rs JOIN connection_cards c ON c.id = rs.card_id WHERE rs.closed_at IS NULL AND rs.next_due_at <= %(now)s ORDER BY rs.next_due_at, rs.id LIMIT %(limit)s FOR UPDATE OF rs SKIP LOCKED",
                 {"now": now, "limit": min(max(limit, 1), 500)},
             )
             return [DueReminder(**dict(row)) for row in cursor.fetchall()]
@@ -264,3 +271,13 @@ class PostgresReminderRepository:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_l1_mode(reminder: DueReminder) -> str | None:
+    if reminder.kind != "l1_reminder":
+        return None
+    if reminder.l1_mode is None:
+        return "post_informed" if reminder.client_informed else "pre_informed"
+    if reminder.l1_mode in {"pre_informed", "post_informed"}:
+        return reminder.l1_mode
+    raise ValueError("unknown_l1_mode")

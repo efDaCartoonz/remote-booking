@@ -224,6 +224,8 @@ class PostgresCardRepository:
             "cycle_id": cycle_id,
             "attempt_id": attempt_id,
         }
+        if kind == "l1_reminder":
+            snapshot["l1_mode"] = "post_informed" if informed else "pre_informed"
         with self.connection.cursor() as cursor:
             cursor.execute(
                 "INSERT INTO reminder_schedules (card_id, kind, cycle_id, attempt_id, owner_id, anchor_at, interval_seconds, escalation_after_count, next_due_at, settings_snapshot) VALUES (%(card_id)s, %(kind)s, %(cycle_id)s, %(attempt_id)s, %(owner_id)s, %(anchor_at)s, %(interval)s, %(threshold)s, %(next_due)s, %(snapshot)s) ON CONFLICT DO NOTHING",

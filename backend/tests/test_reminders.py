@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from app.reminders import DueReminder, ReminderService
+from app.reminders import DueReminder, ReminderService, _resolve_l1_mode
 from app.worker import celery_app, scan_reminders
 
 
@@ -84,6 +84,74 @@ def test_l1_escalation_repeats_only_after_snapshot_interval():
     assert [item["event"] for item in notifications.items].count(
         "manager_escalation"
     ) == 1
+
+
+def test_post_informed_l1_reminder_never_escalates_including_catch_up():
+    anchor = datetime(2026, 9, 4, 10, 0, tzinfo=UTC)
+    reminder = DueReminder(
+        1,
+        10,
+        "l1_reminder",
+        20,
+        anchor,
+        600,
+        1,
+        0,
+        False,
+        l1_mode="post_informed",
+        client_informed=True,
+    )
+    repo = FakeRepository(reminder)
+    notifications = FakeNotifications()
+
+    ReminderService(repo, notifications).scan(
+        now=anchor + timedelta(minutes=35), batch_size=100
+    )
+
+    assert [item["event"] for item in notifications.items] == ["l1_reminder"]
+    assert repo.events[0]["count"] == 3
+
+
+def test_legacy_informed_l1_schedule_uses_post_informed_mode():
+    reminder = DueReminder(
+        1,
+        10,
+        "l1_reminder",
+        20,
+        datetime(2026, 9, 4, 10, tzinfo=UTC),
+        600,
+        1,
+        0,
+        False,
+        client_informed=True,
+    )
+    assert _resolve_l1_mode(reminder) == "post_informed"
+
+
+def test_unknown_l1_mode_creates_no_partial_side_effects():
+    reminder = DueReminder(
+        1,
+        10,
+        "l1_reminder",
+        20,
+        datetime(2026, 9, 4, 10, tzinfo=UTC),
+        600,
+        1,
+        0,
+        False,
+        l1_mode="invalid",
+    )
+    repo = FakeRepository(reminder)
+    notifications = FakeNotifications()
+
+    assert (
+        ReminderService(repo, notifications).scan(
+            now=datetime(2026, 9, 4, 10, 10, tzinfo=UTC), batch_size=100
+        )
+        == 0
+    )
+    assert not repo.events
+    assert not notifications.items
 
 
 def test_stale_schedule_is_closed_without_notification():
