@@ -283,7 +283,7 @@ def scenario_2() -> None:
     c = workflow_card("post-informed")
     with db_connection() as db:
         service = CardService(PostgresCardRepository(db))
-        service.reject_card(
+        rejected = service.reject_card(
             c["public_id"],
             actor_user_id=c["l2"],
             rejection_reason="smoke-rejected",
@@ -658,7 +658,7 @@ def scenario_8() -> None:
     require_lifecycle("reject_precondition", r["id"], status=1, l2=True, pending=1)
     with db_connection() as db:
         service = CardService(PostgresCardRepository(db))
-        rejected = service.reject_card(
+        service.reject_card(
             r["public_id"],
             actor_user_id=r["l2"],
             rejection_reason="smoke",
