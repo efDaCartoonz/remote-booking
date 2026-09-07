@@ -99,10 +99,10 @@ def trigger_selectivity_preflight(bad_card_id: int, good_card_id: int) -> None:
     with db_connection() as connection:
         try:
             with connection.transaction(), connection.cursor() as cur:
-                    cur.execute(
-                        "INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_good')",
-                        (good_card_id,),
-                    )
+                cur.execute(
+                    "INSERT INTO card_events (card_id, event_type_code, actor_type_code, comment) VALUES (%s, 4, 2, 'reminder_smoke_preflight_good')",
+                    (good_card_id,),
+                )
                 raise RuntimeError("preflight rollback")
         except RuntimeError:
             pass

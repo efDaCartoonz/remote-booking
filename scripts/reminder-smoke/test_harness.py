@@ -144,9 +144,13 @@ def test_scenarios_forbid_false_pass_shortcuts() -> None:
 
 def test_orchestration_stops_background_workers_between_phases() -> None:
     source = Path(harness.__file__).read_text()
-    assert '"--start",\n            "1",\n            "--end",\n            "1",' in source
+    assert (
+        '"--start",\n            "1",\n            "--end",\n            "1",' in source
+    )
     assert 'compose(project, env, "stop", "worker", "beat")' in source
-    assert '"--start",\n            str(max(2, start)),\n            "--end",\n            str(end),' in source
+    assert (
+        '"--start",\n            str(max(2, start)),\n            "--end",\n            str(end),' in source
+    )
 
 
 def test_catch_up_uses_fixed_scan_time_and_three_intervals() -> None:
