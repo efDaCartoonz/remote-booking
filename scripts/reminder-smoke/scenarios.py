@@ -52,7 +52,7 @@ def workflow_card(name: str) -> dict:
     with db_connection() as c:
         with c.cursor() as cur:
             cur.execute("SELECT id FROM users WHERE username=%s", ("smoke-actor",)); actor = cur.fetchone()["id"]
-        created = CardService(PostgresCardRepository(c)).create_card(CardCreateRequest(omnidesk_ticket_number=ticket, planned_start_at=datetime.now(UTC) + timedelta(minutes=30), planned_duration_minutes=30, description=f"{MARKER}:workflow:{name}"), actor_user_id=actor, ip_address=None, user_agent="reminder-smoke", actor_type=ActorType.INTERNAL_USER)
+        created = CardService(PostgresCardRepository(c)).create_card(CardCreateRequest(omnidesk_ticket_number=ticket, planned_start_at=datetime.now(UTC) + timedelta(hours=3 + FIXTURE_NAMES.index(name)), planned_duration_minutes=30, description=f"{MARKER}:workflow:{name}"), actor_user_id=actor, ip_address=None, user_agent="reminder-smoke", actor_type=ActorType.INTERNAL_USER)
         c.commit()
         return {"id": created.id, "public_id": created.public_id, "actor": actor, "l2": created.l2_engineer_id}
 
