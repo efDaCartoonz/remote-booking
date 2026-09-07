@@ -67,8 +67,8 @@ def trigger_selectivity_preflight(bad_card_id: int, good_card_id: int) -> None:
             primary = getattr(getattr(exc, "diag", None), "message_primary", None)
             check(primary == "reminder_smoke_trigger", "trigger preflight exception")
         with connection.cursor() as cur:
-            cur.execute("SELECT 1")
-            check(cur.fetchone()[0] == 1, "trigger preflight connection")
+            cur.execute("SELECT 1 AS ok")
+            check(cur.fetchone()["ok"] == 1, "trigger preflight connection")
 
 def query(statement: str, params: dict | None = None) -> dict:
     """Compatibility shim; new deterministic checks use explicit helpers."""
