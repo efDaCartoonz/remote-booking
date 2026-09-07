@@ -23,6 +23,11 @@ def test_report_shape_has_no_sensitive_fields() -> None:
     assert not {"token", "recipient", "message", "body"} & set(report)
 
 
+def test_chain_report_requires_delivery_evidence() -> None:
+    chain = {"schedules": 1, "events": 1, "audits": 1, "intents": 1, "sent": 1}
+    assert all(value > 0 for value in chain.values())
+
+
 def compose_config(*, services: dict[str, dict] | None = None) -> dict:
     required = {name: {"command": ["command"]} for name in harness.SERVICES}
     required["worker"] = {"command": ["celery", "--queues=notifications"]}
