@@ -66,6 +66,16 @@ class CardRecord:
     created_at: datetime
     updated_at: datetime
     client_informed: bool = False
+    l1_owner_name: str | None = None
+    l2_engineer_name: str | None = None
+
+
+@dataclass(frozen=True)
+class CardHistoryRecord:
+    event_type_code: int
+    actor_type_code: int
+    actor_name: str | None
+    created_at: datetime
 
 
 @dataclass(frozen=True)
@@ -147,6 +157,8 @@ class CardRepository(Protocol):
     def get_card_by_public_id_for_update(
         self, public_id: UUID
     ) -> CardRecord | None: ...
+
+    def list_card_history(self, public_id: UUID) -> list[CardHistoryRecord] | None: ...
 
     def update_card_status(
         self, public_id: UUID, data: StatusUpdateData
@@ -890,6 +902,41 @@ class PostgresCardRepository:
     def get_card_by_public_id_for_update(self, public_id: UUID) -> CardRecord | None:
         return self._get_card(public_id, lock=True)
 
+    def list_card_history(self, public_id: UUID) -> list[CardHistoryRecord] | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT e.event_type_code,
+                       e.actor_type_code,
+                       u.full_name AS actor_name,
+                       e.created_at
+                FROM card_events e
+                JOIN connection_cards c ON c.id = e.card_id
+                LEFT JOIN users u ON u.id = e.actor_user_id
+                WHERE c.public_id = %(public_id)s
+                ORDER BY e.created_at DESC, e.id DESC
+                """,
+                {"public_id": public_id},
+            )
+            rows = cursor.fetchall()
+        if not rows:
+            with self.connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT 1 FROM connection_cards WHERE public_id = %(public_id)s",
+                    {"public_id": public_id},
+                )
+                if cursor.fetchone() is None:
+                    return None
+        return [
+            CardHistoryRecord(
+                event_type_code=row["event_type_code"],
+                actor_type_code=row["actor_type_code"],
+                actor_name=row["actor_name"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+
     def update_card_status(
         self, public_id: UUID, data: StatusUpdateData
     ) -> CardRecord | None:
@@ -1112,13 +1159,17 @@ class PostgresCardRepository:
         )
 
     def _get_card(self, public_id: UUID, *, lock: bool) -> CardRecord | None:
-        suffix = " FOR UPDATE" if lock else ""
+        suffix = " FOR UPDATE OF c" if lock else ""
         with self.connection.cursor() as cursor:
             cursor.execute(
                 f"""
-                SELECT *
-                FROM connection_cards
-                WHERE public_id = %(public_id)s
+                SELECT c.*,
+                       l1.full_name AS l1_owner_name,
+                       l2.full_name AS l2_engineer_name
+                FROM connection_cards c
+                LEFT JOIN users l1 ON l1.id = c.l1_owner_id
+                LEFT JOIN users l2 ON l2.id = c.l2_engineer_id
+                WHERE c.public_id = %(public_id)s
                 {suffix}
                 """,
                 {"public_id": public_id},
@@ -1162,7 +1213,9 @@ def _card_from_row(row: dict[str, Any]) -> CardRecord:
         created_by_id=row["created_by_id"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
-        client_informed=row["client_informed"],
+        client_informed=row.get("client_informed", False),
+        l1_owner_name=row.get("l1_owner_name"),
+        l2_engineer_name=row.get("l2_engineer_name"),
     )
 
 

@@ -78,6 +78,23 @@ class CardEventType(IntEnum):
     DETAILS_UPDATED = 4
 
 
+CARD_EVENT_LABELS: dict[CardEventType, str] = {
+    CardEventType.CREATED: "Карточка создана",
+    CardEventType.STATUS_CHANGED: "Статус изменён",
+    CardEventType.ENGINEER_ASSIGNED: "Назначен ответственный",
+    CardEventType.L1_CLIENT_INFORMED: "Клиент проинформирован",
+    CardEventType.DETAILS_UPDATED: "Данные карточки изменены",
+}
+
+
+ACTOR_TYPE_LABELS: dict[ActorType, str] = {
+    ActorType.INTERNAL_USER: "Сотрудник",
+    ActorType.FRAME_CLIENT: "Клиент",
+    ActorType.SYSTEM: "Система",
+    ActorType.OMNIDESK: "Omnidesk",
+}
+
+
 class AuditAction(IntEnum):
     CREATE = 0
     UPDATE = 1

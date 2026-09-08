@@ -15,10 +15,12 @@ from app.cards.schemas import (
     CardAssignRequest,
     CardCompleteRequest,
     CardCreateRequest,
+    CardHistoryResponse,
     CardRejectRequest,
     CardResponse,
     CardStatusChangeRequest,
     L1RescheduleRequest,
+    card_history_response,
     card_response,
 )
 from app.cards.service import CardNotFoundError, CardService, InvalidCardTransitionError
@@ -69,6 +71,20 @@ def get_card(
 ) -> CardResponse:
     try:
         return card_response(service.get_card(card_id))
+    except CardNotFoundError as exc:
+        raise _not_found() from exc
+
+
+@router.get("/{card_id}/history", response_model=list[CardHistoryResponse])
+def get_card_history(
+    card_id: UUID,
+    _: Annotated[UserAuthRecord, Depends(get_current_user)],
+    service: Annotated[CardService, Depends(get_card_service)],
+) -> list[CardHistoryResponse]:
+    try:
+        return [
+            card_history_response(event) for event in service.list_card_history(card_id)
+        ]
     except CardNotFoundError as exc:
         raise _not_found() from exc
 

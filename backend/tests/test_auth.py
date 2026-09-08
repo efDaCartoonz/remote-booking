@@ -1,13 +1,14 @@
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
+
 from app.auth.dependencies import get_auth_store, require_roles
 from app.auth.security import hash_password, hash_session_token
 from app.auth.store import AuthSessionRecord, RoleRecord, SessionRecord, UserAuthRecord
 from app.core.config import settings
 from app.main import create_app
-from fastapi import Depends, FastAPI
-from fastapi.testclient import TestClient
 
 
 class FakeAuthStore:
@@ -184,7 +185,9 @@ def test_logout_revokes_session_clears_cookie_and_writes_audit_event() -> None:
     assert logout_response.status_code == 204
     assert store.revoked_sessions == [1]
     assert [event["action_code"] for event in store.audit_events] == [3, 4]
-    assert f"{settings.auth_session_cookie_name}=" in logout_response.headers["set-cookie"]
+    assert (
+        f"{settings.auth_session_cookie_name}=" in logout_response.headers["set-cookie"]
+    )
     assert "Max-Age=0" in logout_response.headers["set-cookie"]
     assert client.get("/api/v1/auth/me").status_code == 401
 

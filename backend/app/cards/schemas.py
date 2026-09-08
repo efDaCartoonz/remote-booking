@@ -6,8 +6,17 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.cards.constants import CardStatus, CardStatusSlug, status_label, status_slug
-from app.cards.repository import CardRecord
+from app.cards.constants import (
+    ACTOR_TYPE_LABELS,
+    CARD_EVENT_LABELS,
+    ActorType,
+    CardEventType,
+    CardStatus,
+    CardStatusSlug,
+    status_label,
+    status_slug,
+)
+from app.cards.repository import CardHistoryRecord, CardRecord
 
 TicketNumber = Annotated[str, Field(pattern=r"^[0-9]{3}-[0-9]{6}$")]
 
@@ -97,6 +106,14 @@ class CardResponse(BaseModel):
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime
+    l1_owner_name: str | None
+    l2_engineer_name: str | None
+
+
+class CardHistoryResponse(BaseModel):
+    event_label: str
+    actor_label: str
+    created_at: datetime
 
 
 def card_response(card: CardRecord) -> CardResponse:
@@ -128,4 +145,22 @@ def card_response(card: CardRecord) -> CardResponse:
         created_by_id=card.created_by_id,
         created_at=card.created_at,
         updated_at=card.updated_at,
+        l1_owner_name=card.l1_owner_name,
+        l2_engineer_name=card.l2_engineer_name,
+    )
+
+
+def card_history_response(event: CardHistoryRecord) -> CardHistoryResponse:
+    try:
+        event_label = CARD_EVENT_LABELS[CardEventType(event.event_type_code)]
+    except ValueError:
+        event_label = "Изменение карточки"
+    try:
+        actor_type = ActorType(event.actor_type_code)
+    except ValueError:
+        actor_type = ActorType.SYSTEM
+    return CardHistoryResponse(
+        event_label=event_label,
+        actor_label=event.actor_name or ACTOR_TYPE_LABELS[actor_type],
+        created_at=event.created_at,
     )

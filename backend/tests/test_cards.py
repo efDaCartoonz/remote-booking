@@ -6,6 +6,8 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi.testclient import TestClient
+
 from app.api.cards import get_card_repository
 from app.assignments.types import (
     AssignmentAttemptRecord,
@@ -27,6 +29,7 @@ from app.cards.constants import (
     DistributionPool,
 )
 from app.cards.repository import (
+    CardHistoryRecord,
     CardRecord,
     ClientRecord,
     ClientSyncData,
@@ -38,7 +41,6 @@ from app.cards.repository import (
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService, InvalidCardTransitionError
 from app.main import create_app
-from fastapi.testclient import TestClient
 
 DEFAULT_PLANNED_START_AT = datetime(2026, 9, 7, 10, tzinfo=UTC)
 
@@ -135,6 +137,21 @@ class FakeCardRepository:
 
     def get_card_by_public_id_for_update(self, public_id: UUID) -> CardRecord | None:
         return self.cards.get(public_id)
+
+    def list_card_history(self, public_id: UUID) -> list[CardHistoryRecord] | None:
+        card = self.cards.get(public_id)
+        if card is None:
+            return None
+        return [
+            CardHistoryRecord(
+                event_type_code=int(event["event_type"]),
+                actor_type_code=int(event["actor_type"]),
+                actor_name=None,
+                created_at=event["created_at"],
+            )
+            for event in reversed(self.events)
+            if event["card_id"] == card.id
+        ]
 
     def update_card_status(
         self,
@@ -447,6 +464,7 @@ class FakeCardRepository:
                 "old_values": old_values,
                 "new_values": new_values,
                 "comment": comment,
+                "created_at": datetime.now(UTC),
             }
         )
         return event_id
@@ -1018,6 +1036,55 @@ def test_cards_api_creates_and_reads_card() -> None:
 
     assert read_response.status_code == 200
     assert read_response.json()["id"] == created_body["id"]
+
+
+def test_cards_api_returns_safe_card_history() -> None:
+    repository = FakeCardRepository()
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=10,
+        username="manager",
+        password_hash="unused",
+        full_name="Руководитель",
+        email=None,
+        roles=(RoleRecord(id=3, name="Руководитель"),),
+    )
+    client = TestClient(app, base_url="https://testserver")
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    response = client.get(f"/api/v1/cards/{card.public_id}/history")
+
+    assert response.status_code == 200
+    assert response.json()[0]["event_label"] == "Карточка создана"
+    assert response.json()[0]["actor_label"] == "Сотрудник"
+    assert "old_values" not in response.json()[0]
+    assert "comment" not in response.json()[0]
+
+
+def test_cards_api_returns_not_found_for_missing_card_history() -> None:
+    repository = FakeCardRepository()
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=10,
+        username="manager",
+        password_hash="unused",
+        full_name="Руководитель",
+        email=None,
+        roles=(RoleRecord(id=3, name="Руководитель"),),
+    )
+    client = TestClient(app, base_url="https://testserver")
+
+    response = client.get(f"/api/v1/cards/{uuid4()}/history")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "card_not_found"
 
 
 def test_cards_api_returns_conflict_for_forbidden_transition() -> None:

@@ -16,6 +16,7 @@ from app.cards.constants import (
     CreatedSource,
 )
 from app.cards.repository import (
+    CardHistoryRecord,
     CardRecord,
     CardRepository,
     CreateCardData,
@@ -242,6 +243,12 @@ class CardService:
         if card is None:
             raise CardNotFoundError
         return card
+
+    def list_card_history(self, public_id: UUID) -> list[CardHistoryRecord]:
+        history = self.repository.list_card_history(public_id)
+        if history is None:
+            raise CardNotFoundError
+        return history
 
     def assign_card(
         self,

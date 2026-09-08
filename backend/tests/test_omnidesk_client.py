@@ -5,6 +5,7 @@ import json
 
 import httpx
 import pytest
+
 from app.frame.omnidesk import (
     HttpOmnideskTicketClient,
     OmnideskInvalidResponseError,
