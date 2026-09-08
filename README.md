@@ -328,6 +328,16 @@ Bitrix24, периодической delivery или retry: intent получи�
 удалены по точному marker; очередь пуста. `/health/live` и `/health/ready`
 возвращают `200`, Alembic остаётся на `20260904_0005`.
 
+Dependency corrective обновил Vite до `6.4.3`; lockfile фиксирует esbuild
+`0.25.12` и `@vitejs/plugin-vue 5.2.4`. На stage `npm audit` сообщил `0`
+vulnerabilities, frontend build прошёл, а runtime-образ не содержит Node, npm
+или `node_modules`. Controlled Telegram delivery после обновления также
+подтверждена одной отправкой (`sent`, `attempts=1`, audit=1) и очищена по marker.
+Предупреждение: при первом frontend rebuild Compose пересоздал backend как
+зависимость; последствия проверены отдельно. Последующие frontend-only deploy
+выполняются через `docker compose build frontend` и
+`docker compose up -d --no-deps --force-recreate frontend`.
+
 Telegram stage-gate завершён: пользователь `nimda` успешно авторизован,
 private Telegram chat привязан, штатный `TelegramAdapter` выполнил ровно один
 HTTP-вызов с безопасным текстом, а получение сообщения подтверждено вручную.
