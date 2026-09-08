@@ -56,3 +56,12 @@ p {
   text-decoration: none;
 }
 
+form { display: grid; gap: 16px; }
+label { display: grid; gap: 6px; font-weight: 600; }
+input { padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 10px; font: inherit; }
+button { border: 0; border-radius: 10px; padding: 11px 16px; color: white; background: #3867d6; font: inherit; cursor: pointer; }
+.secondary { background: #64748b; }
+.top { display: flex; justify-content: space-between; align-items: start; }
+.error { color: #b42318; }
+.status { display: inline-block; padding: 6px 10px; border-radius: 999px; background: #e0eaff; color: #244b9b; }
+dt { color: #64748b; margin-top: 14px; } dd { margin: 4px 0 0; }
