@@ -11,11 +11,18 @@ stage-стенд: Raspberry Pi `172.17.131.115`. Runtime-доставка и п�
 напоминания подтверждены на stage только для внутреннего изолированного
 контура; production scanner и delivery остаются выключенными.
 
+Минимальный внутренний frontend подтверждён на доверенном LAN stage: ссылка из
+контролируемого Telegram-уведомления ведёт к login, возвращает на карточку после
+входа и поддерживает logout и UI-ветку `404`. Для HTTP stage допустим
+`AUTH_COOKIE_SECURE=false`; на VPS обязательны HTTPS и `AUTH_COOKIE_SECURE=true`.
+
 ## Что Реализовано
 
 - FastAPI backend с health endpoints и OpenAPI-документацией.
 - PostgreSQL-схема под управлением Alembic.
 - Redis и сервисный контур Docker Compose.
+- Минимальный внутренний frontend с SPA fallback, same-origin `/api/v1` и
+  отображением карточки по UUID после локальной авторизации.
 - Локальная авторизация пользователей через HTTP-only session cookie.
 - Внутренний API карточек и базовые переходы жизненного цикла.
 - Клиентский Frame API для тикетов Omnidesk:
@@ -85,6 +92,8 @@ stage-стенд: Raspberry Pi `172.17.131.115`. Runtime-доставка и п�
 - `decisions/` — зафиксированные проектные решения.
 - `scripts/` — эксплуатационные вспомогательные скрипты.
 - `docker-compose.yml` — локальный/dev/stage контур сервисов.
+- `Docs/RDM-Technical-Design-v0.1.md` — первая версия технического проекта
+  для согласования, не утверждённая спецификация.
 
 ## Локальный Запуск
 
@@ -312,6 +321,12 @@ stub-каналы и фиктивные IDs; backfill и реальные Telegr
 
 Следующий этап: согласованный тест реальных Telegram/Bitrix24 каналов с
 тестовым получателем и отдельное решение о включении фоновых задач.
+
+Frontend stage-smoke выполнил один controlled Telegram intent для `nimda` без
+Bitrix24, периодической delivery или retry: intent получил `sent`, `attempts=1`
+и одну audit-запись. После ручной проверки synthetic card, event, intent и audit
+удалены по точному marker; очередь пуста. `/health/live` и `/health/ready`
+возвращают `200`, Alembic остаётся на `20260904_0005`.
 
 Telegram stage-gate завершён: пользователь `nimda` успешно авторизован,
 private Telegram chat привязан, штатный `TelegramAdapter` выполнил ровно один
