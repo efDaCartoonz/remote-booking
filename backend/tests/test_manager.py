@@ -8,43 +8,129 @@ from app.auth.dependencies import get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
 from app.cards.constants import CardStatus
 from app.cards.repository import CardRecord
+from app.cards.repository import PostgresCardRepository
 from app.main import create_app
 
 
-def _card(status: CardStatus, number: str, *, overdue: bool = False) -> CardRecord:
+def make_card(status: CardStatus, number: str, *, overdue: bool = False) -> CardRecord:
     now = datetime(2026, 9, 9, 10, tzinfo=UTC)
-    return CardRecord(1, uuid4(), number, "123-456789", None, int(status), 0, 1,
-        now, 60, None, None, None, None, None, None, None, 0, 0, None, None,
-        None, None, False, False, overdue, None, None, 0, None, now, now,
-        l1_owner_name="L1", l2_engineer_name="L2")
+    return CardRecord(
+        id=1, public_id=uuid4(), number=number, omnidesk_ticket_number="123-456789",
+        client_id=7, status_code=int(status), criticality_code=0, urgency_code=1,
+        planned_start_at=now, planned_duration_minutes=60,
+        client_timezone_at_creation="Europe/Moscow", timezone_source_code=1,
+        actual_start_at=None, actual_end_at=None, l1_owner_id=2, l2_engineer_id=3,
+        assignment_method_code=0, unsuccessful_cycle_count=0,
+        client_contact_type_code=1, client_contact_value="secret-contact",
+        description="secret-description", urgent_reason="secret-reason",
+        out_of_hours_flag=True, retroactive_flag=False, overdue_flag=overdue,
+        result_code=None, engineer_report="secret-report", created_source_code=0,
+        created_by_id=1, created_at=now, updated_at=now,
+        l1_owner_name="L1", l2_engineer_name="L2",
+    )
 
 
 class ManagerRepository:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+        self.cards = [make_card(CardStatus.ASSIGNED, "RDM-000001"), make_card(CardStatus.REJECTED, "RDM-000002", overdue=True)]
+
     def list_manager_cards(self, **kwargs):
-        cards = [_card(CardStatus.ASSIGNED, "RDM-000001"), _card(CardStatus.REJECTED, "RDM-000002", overdue=True)]
-        return cards[: kwargs["limit"]], {"assigned": 1, "confirmed": 0, "rejected": 1, "overdue": 1}
+        self.calls.append(kwargs)
+        return self.cards[: kwargs["limit"]], {"assigned": 1, "confirmed": 0, "rejected": 1, "overdue": 1}
 
 
-def test_manager_endpoint_requires_manager_role_and_returns_safe_projection():
+def client_for(user: UserAuthRecord | None, repository: ManagerRepository | None = None) -> tuple[TestClient, ManagerRepository]:
     app = create_app()
-    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
-        1, "manager", "hash", "Manager", None, (RoleRecord(3, "Руководитель"),)
-    )
-    app.dependency_overrides[get_manager_repository] = ManagerRepository
-    response = TestClient(app).get("/api/v1/manager/cards?status=assigned&limit=2")
+    repo = repository or ManagerRepository()
+    if user is not None:
+        app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_manager_repository] = lambda: repo
+    return TestClient(app), repo
+
+
+MANAGER = UserAuthRecord(1, "manager", "hash", "Manager", None, (RoleRecord(3, "Руководитель"),))
+L1 = UserAuthRecord(1, "l1", "hash", "L1", None, (RoleRecord(1, "L1"),))
+
+
+def test_manager_requires_session_and_role() -> None:
+    unauthenticated, _ = client_for(None)
+    assert unauthenticated.get("/api/v1/manager/cards").status_code == 401
+    forbidden, _ = client_for(L1)
+    assert forbidden.get("/api/v1/manager/cards").status_code == 403
+
+
+def test_manager_validates_status_dates_and_limit() -> None:
+    client, _ = client_for(MANAGER)
+    assert client.get("/api/v1/manager/cards?status=assigned").status_code == 200
+    assert client.get("/api/v1/manager/cards?status=unknown").status_code == 422
+    assert client.get("/api/v1/manager/cards?period_from=2026-09-09T10:00:00").status_code == 422
+    assert client.get("/api/v1/manager/cards?period_from=2026-09-09T10:00:00Z&period_to=2026-09-09T11:00:00Z").status_code == 200
+    assert client.get("/api/v1/manager/cards?period_from=2026-09-09T11:00:00Z&period_to=2026-09-09T10:00:00Z").status_code == 422
+    assert client.get("/api/v1/manager/cards?limit=1").status_code == 200
+    assert client.get("/api/v1/manager/cards?limit=200").status_code == 200
+    assert client.get("/api/v1/manager/cards?limit=0").status_code == 422
+    assert client.get("/api/v1/manager/cards?limit=201").status_code == 422
+
+
+def test_manager_passes_filters_and_summary_is_not_limited() -> None:
+    client, repository = client_for(MANAGER)
+    response = client.get("/api/v1/manager/cards?status=assigned&period_from=2026-09-09T09:00:00Z&period_to=2026-09-09T11:00:00Z&limit=1")
     assert response.status_code == 200
-    payload = response.json()
-    assert payload["summary"] == {"assigned": 1, "confirmed": 0, "rejected": 1, "overdue": 1}
-    assert set(payload["items"][0]) == {
-        "public_id", "number", "omnidesk_ticket_number", "status", "status_label",
-        "planned_start_at", "planned_end_at", "planned_duration_minutes",
-        "l1_owner_name", "l2_engineer_name", "urgent", "overdue", "out_of_hours",
-    }
+    assert repository.calls == [{"status_code": 1, "period_from": datetime(2026, 9, 9, 9, tzinfo=UTC), "period_to": datetime(2026, 9, 9, 11, tzinfo=UTC), "limit": 1}]
+    assert response.json()["summary"] == {"assigned": 1, "confirmed": 0, "rejected": 1, "overdue": 1}
+    assert len(response.json()["items"]) == 1
 
 
-def test_manager_endpoint_forbids_user_without_manager_role():
-    app = create_app()
-    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
-        1, "l1", "hash", "L1", None, (RoleRecord(1, "L1"),)
+def test_manager_response_is_safe_projection() -> None:
+    client, _ = client_for(MANAGER)
+    payload = client.get("/api/v1/manager/cards").json()
+    assert set(payload["items"][0]) == {"public_id", "number", "omnidesk_ticket_number", "status", "status_label", "planned_start_at", "planned_end_at", "planned_duration_minutes", "l1_owner_name", "l2_engineer_name", "urgent", "overdue", "out_of_hours"}
+    assert "secret-contact" not in str(payload)
+    assert "secret-description" not in str(payload)
+
+
+class CursorStub:
+    def __init__(self) -> None:
+        self.queries: list[tuple[str, dict]] = []
+        self.results = [[], {"assigned": 0, "confirmed": 0, "rejected": 0, "overdue": 0}]
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, query: str, params: dict) -> None:
+        self.queries.append((query, params))
+
+    def fetchall(self):
+        return self.results[0]
+
+    def fetchone(self):
+        return self.results.pop(1 if len(self.results) == 2 else 0)
+
+
+class ConnectionStub:
+    def __init__(self, cursor: CursorStub) -> None:
+        self.cursor_stub = cursor
+
+    def cursor(self):
+        return self.cursor_stub
+
+
+def test_repository_uses_checked_code_filters_and_deterministic_sorting() -> None:
+    cursor = CursorStub()
+    repository = PostgresCardRepository(ConnectionStub(cursor))
+    repository.list_manager_cards(
+        status_code=int(CardStatus.ASSIGNED),
+        period_from=datetime(2026, 9, 9, 9, tzinfo=UTC),
+        period_to=datetime(2026, 9, 9, 11, tzinfo=UTC),
+        limit=1,
     )
-    assert TestClient(app).get("/api/v1/manager/cards").status_code == 403
+    query, params = cursor.queries[0]
+    assert "c.status_code = %(status)s" in query
+    assert "c.planned_start_at >= %(period_from)s" in query
+    assert "c.planned_start_at < %(period_to)s" in query
+    assert "ORDER BY c.planned_start_at ASC, c.id ASC" in query
+    assert params["status"] == int(CardStatus.ASSIGNED)

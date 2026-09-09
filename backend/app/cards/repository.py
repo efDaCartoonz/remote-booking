@@ -146,7 +146,7 @@ class CardRepository(Protocol):
     def list_manager_cards(
         self,
         *,
-        status: str | None,
+        status_code: int | None,
         period_from: datetime | None,
         period_to: datetime | None,
         limit: int,
@@ -888,20 +888,18 @@ class PostgresCardRepository:
         return [_card_from_row(row) for row in rows]
 
     def list_manager_cards(
-        self, *, status: str | None, period_from: datetime | None,
-        period_to: datetime | None, limit: int
+        self,
+        *,
+        status_code: int | None,
+        period_from: datetime | None,
+        period_to: datetime | None,
+        limit: int,
     ) -> tuple[list[CardRecord], dict[str, int]]:
-        status_value = None
-        if status is not None:
-            try:
-                status_value = next(int(item) for item in CardStatus if status_slug(item).value == status)
-            except StopIteration as exc:
-                raise ValueError("invalid_status") from exc
         filters = ["TRUE"]
         params: dict[str, Any] = {"limit": limit}
-        if status_value is not None:
+        if status_code is not None:
             filters.append("c.status_code = %(status)s")
-            params["status"] = status_value
+            params["status"] = status_code
         if period_from is not None:
             filters.append("c.planned_start_at >= %(period_from)s")
             params["period_from"] = period_from
@@ -917,7 +915,9 @@ class PostgresCardRepository:
                     LEFT JOIN users l2 ON l2.id = c.l2_engineer_id
                     WHERE {where}
                     ORDER BY c.planned_start_at ASC, c.id ASC
-                    LIMIT %(limit)s""", params)
+                    LIMIT %(limit)s""",
+                params,
+            )
             rows = cursor.fetchall()
             cursor.execute(
                 f"""SELECT
@@ -925,9 +925,13 @@ class PostgresCardRepository:
                     count(*) FILTER (WHERE c.status_code = 2) AS confirmed,
                     count(*) FILTER (WHERE c.status_code = 4) AS rejected,
                     count(*) FILTER (WHERE c.overdue_flag) AS overdue
-                    FROM connection_cards c WHERE {where}""", params)
+                    FROM connection_cards c WHERE {where}""",
+                params,
+            )
             counts = dict(cursor.fetchone())
-        return [_card_from_row(row) for row in rows], {key: int(value) for key, value in counts.items()}
+        return [_card_from_row(row) for row in rows], {
+            key: int(value) for key, value in counts.items()
+        }
 
     def has_active_card_for_ticket(self, omnidesk_ticket_number: str) -> bool:
         with self.connection.cursor() as cursor:
