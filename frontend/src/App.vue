@@ -32,6 +32,8 @@ type Card = {
 };
 type HistoryEntry = { event_label: string; actor_label: string; created_at: string };
 type ApiError = Error & { status: number; detail?: unknown };
+type ManagerCard = { public_id: string; number: string; omnidesk_ticket_number: string; status: string; status_label: string; planned_start_at: string; planned_end_at: string; planned_duration_minutes: number; l1_owner_name: string | null; l2_engineer_name: string | null; urgent: boolean; overdue: boolean; out_of_hours: boolean };
+type ManagerData = { summary: { assigned: number; confirmed: number; rejected: number; overdue: number }; items: ManagerCard[]; limit: number };
 
 const RETURN_TO_KEY = "rdm.return_to";
 const user = ref<User | null>(null);
@@ -52,6 +54,12 @@ const rescheduleDuration = ref(60);
 const rescheduleDescription = ref("");
 const cardId = computed(() => location.pathname.match(/^\/cards\/([^/]+)\/?$/)?.[1]);
 const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Moscow";
+const managerPath = location.pathname === "/manager";
+const manager = ref<ManagerData | null>(null);
+const managerStatus = ref("");
+const managerFrom = ref("");
+const managerTo = ref("");
+const managerError = ref("");
 
 const hasL1Role = computed(() => hasRole(1));
 const hasL2Role = computed(() => hasRole(2));
@@ -174,7 +182,9 @@ async function load(): Promise<void> {
   rememberCardRoute();
   try {
     user.value = await api<User>("/api/v1/auth/me");
-    if (cardId.value) {
+    if (managerPath) {
+      await loadManager();
+    } else if (cardId.value) {
       applyCard(await api<Card>(`/api/v1/cards/${encodeURIComponent(cardId.value)}`));
       await loadHistory();
     }
@@ -184,6 +194,20 @@ async function load(): Promise<void> {
     else errorStatus.value = status;
   } finally {
     busy.value = false;
+  }
+}
+
+async function loadManager(): Promise<void> {
+  managerError.value = "";
+  const query = new URLSearchParams();
+  if (managerStatus.value) query.set("status", managerStatus.value);
+  if (managerFrom.value) query.set("period_from", new Date(managerFrom.value).toISOString());
+  if (managerTo.value) query.set("period_to", new Date(managerTo.value).toISOString());
+  try {
+    manager.value = await api<ManagerData>(`/api/v1/manager/cards?${query}`);
+  } catch (error) {
+    managerError.value = (error as ApiError).status === 403 ? "Доступ к панели руководителя запрещён (403)." : (error as ApiError).status === 401 ? "Сессия завершилась. Войдите снова." : "Не удалось загрузить панель. Повторите попытку.";
+    if ((error as ApiError).status === 401) handleUnauthorized();
   }
 }
 
@@ -306,6 +330,7 @@ onMounted(load);
             <h1>{{ card.number }}</h1>
           </div>
           <button class="secondary" @click="logout">Выйти</button>
+          <a v-if="hasRole(3)" class="button-link" href="/manager">Панель руководителя</a>
         </header>
 
         <div class="status-line">
@@ -393,6 +418,15 @@ onMounted(load);
         </section>
 
         <footer class="footer muted">Вы вошли как {{ user.full_name || user.username }}.</footer>
+      </template>
+
+      <template v-else-if="managerPath && manager">
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ browserTimeZone }}</p></div><button class="secondary" @click="logout">Выйти</button></header>
+        <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div></div>
+        <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>С периода<input v-model="managerFrom" type="datetime-local" /></label><label>По период<input v-model="managerTo" type="datetime-local" /></label><button>Применить</button></form>
+        <p v-if="managerError" class="error" role="alert">{{ managerError }} <button class="secondary" @click="loadManager">Повторить</button></p>
+        <p v-else-if="!manager.items.length" class="hint">Карточки не найдены.</p>
+        <div v-else class="manager-list"><a v-for="item in manager.items" :key="item.public_id" class="manager-row panel" :href="`/cards/${item.public_id}`"><div><strong>{{ item.number }}</strong><span class="muted">Тикет {{ item.omnidesk_ticket_number }}</span></div><span class="status" :class="`status-${item.status}`">{{ item.status_label }}</span><span>{{ formatDateTime(item.planned_start_at) }} · {{ formatDuration(item.planned_duration_minutes) }}</span><span>L1: {{ item.l1_owner_name || "Не назначен" }} · L2: {{ item.l2_engineer_name || "Не назначен" }}</span><span v-if="item.urgent || item.overdue || item.out_of_hours" class="muted">{{ item.urgent ? "Срочно " : "" }}{{ item.overdue ? "Просрочено " : "" }}{{ item.out_of_hours ? "Вне рабочего времени" : "" }}</span></a></div>
       </template>
 
       <template v-else>

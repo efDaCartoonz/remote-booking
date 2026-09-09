@@ -143,6 +143,15 @@ class L1FollowupUpdateData:
 
 
 class CardRepository(Protocol):
+    def list_manager_cards(
+        self,
+        *,
+        status: str | None,
+        period_from: datetime | None,
+        period_to: datetime | None,
+        limit: int,
+    ) -> tuple[list[CardRecord], dict[str, int]]: ...
+
     def list_active_manager_recipients(self) -> list[ManagerRecipient]: ...
     def create_card(self, data: CreateCardData) -> CardRecord: ...
 
@@ -877,6 +886,48 @@ class PostgresCardRepository:
             )
             rows = cursor.fetchall()
         return [_card_from_row(row) for row in rows]
+
+    def list_manager_cards(
+        self, *, status: str | None, period_from: datetime | None,
+        period_to: datetime | None, limit: int
+    ) -> tuple[list[CardRecord], dict[str, int]]:
+        status_value = None
+        if status is not None:
+            try:
+                status_value = next(int(item) for item in CardStatus if status_slug(item).value == status)
+            except StopIteration as exc:
+                raise ValueError("invalid_status") from exc
+        filters = ["TRUE"]
+        params: dict[str, Any] = {"limit": limit}
+        if status_value is not None:
+            filters.append("c.status_code = %(status)s")
+            params["status"] = status_value
+        if period_from is not None:
+            filters.append("c.planned_start_at >= %(period_from)s")
+            params["period_from"] = period_from
+        if period_to is not None:
+            filters.append("c.planned_start_at < %(period_to)s")
+            params["period_to"] = period_to
+        where = " AND ".join(filters)
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                f"""SELECT c.*, l1.full_name AS l1_owner_name, l2.full_name AS l2_engineer_name
+                    FROM connection_cards c
+                    LEFT JOIN users l1 ON l1.id = c.l1_owner_id
+                    LEFT JOIN users l2 ON l2.id = c.l2_engineer_id
+                    WHERE {where}
+                    ORDER BY c.planned_start_at ASC, c.id ASC
+                    LIMIT %(limit)s""", params)
+            rows = cursor.fetchall()
+            cursor.execute(
+                f"""SELECT
+                    count(*) FILTER (WHERE c.status_code = 1) AS assigned,
+                    count(*) FILTER (WHERE c.status_code = 2) AS confirmed,
+                    count(*) FILTER (WHERE c.status_code = 4) AS rejected,
+                    count(*) FILTER (WHERE c.overdue_flag) AS overdue
+                    FROM connection_cards c WHERE {where}""", params)
+            counts = dict(cursor.fetchone())
+        return [_card_from_row(row) for row in rows], {key: int(value) for key, value in counts.items()}
 
     def has_active_card_for_ticket(self, omnidesk_ticket_number: str) -> bool:
         with self.connection.cursor() as cursor:
