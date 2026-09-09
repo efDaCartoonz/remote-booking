@@ -303,9 +303,10 @@ def test_bitrix24_application_error_does_not_log_or_raise_response_details(
         ),
     )
 
-    with caplog.at_level("WARNING"), pytest.raises(
-        PermanentDeliveryError, match="^bitrix24_rejected$"
-    ) as exc_info:
+    with (
+        caplog.at_level("WARNING"),
+        pytest.raises(PermanentDeliveryError, match="^bitrix24_rejected$") as exc_info,
+    ):
         Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
     assert "secret response detail" not in caplog.text
     assert "bitrix.example" not in caplog.text
