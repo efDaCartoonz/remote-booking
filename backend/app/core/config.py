@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_api_url: str = "https://api.telegram.org"
     bitrix24_bot_webhook_url: str = ""
+    bitrix24_bot_id: str = ""
+    bitrix24_bot_client_id: str = ""
     notification_card_base_url: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")

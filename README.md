@@ -323,6 +323,12 @@ stub-каналы и фиктивные IDs; backfill и реальные Telegr
 Следующий этап: согласованный тест реальных Telegram/Bitrix24 каналов с
 тестовым получателем и отдельное решение о включении фоновых задач.
 
+Текущий контракт Bitrix24 для доставки — `imbot.message.add`: адаптер отправляет
+POST на `BITRIX24_BOT_WEBHOOK_URL` с полями `BOT_ID`, `CLIENT_ID`, `DIALOG_ID` и
+`MESSAGE`. `DIALOG_ID` берётся из `user_settings.bitrix24_user_id` (для
+пользователя `nimda` настроен ID `488`). Переход на `imbot.v2` — отдельный
+будущий этап и не входит в этот corrective.
+
 Frontend stage-smoke выполнил один controlled Telegram intent для `nimda` без
 Bitrix24, периодической delivery или retry: intent получил `sent`, `attempts=1`
 и одну audit-запись. После ручной проверки synthetic card, event, intent и audit

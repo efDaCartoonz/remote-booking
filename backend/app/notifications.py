@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -10,6 +11,8 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 PENDING = 0
 SENT = 1
@@ -226,23 +229,37 @@ class TelegramAdapter:
 
 class Bitrix24Adapter:
     def send(self, *, recipient: str, text: str, idempotency_key: str) -> None:
-        if not settings.bitrix24_bot_webhook_url or not recipient:
+        if (
+            not settings.bitrix24_bot_webhook_url
+            or not settings.bitrix24_bot_id
+            or not settings.bitrix24_bot_client_id
+            or not recipient
+        ):
             raise PermanentDeliveryError("bitrix24_not_configured")
         try:
             response = httpx.post(
                 settings.bitrix24_bot_webhook_url,
-                json={
-                    "USER_ID": recipient,
+                data={
+                    "BOT_ID": settings.bitrix24_bot_id,
+                    "CLIENT_ID": settings.bitrix24_bot_client_id,
+                    "DIALOG_ID": recipient,
                     "MESSAGE": text,
-                    "MESSAGE_ID": idempotency_key,
                 },
                 timeout=settings.notification_http_timeout_seconds,
             )
         except httpx.RequestError as exc:
             raise TemporaryDeliveryError("bitrix24_unavailable") from exc
         if response.status_code == 429 or response.status_code >= 500:
+            logger.warning(
+                "bitrix24 delivery deferred: status_class=%s",
+                response.status_code // 100,
+            )
             raise TemporaryDeliveryError("bitrix24_temporary_error")
         if response.status_code >= 400:
+            logger.warning(
+                "bitrix24 delivery rejected: status_class=%s",
+                response.status_code // 100,
+            )
             raise PermanentDeliveryError("bitrix24_rejected")
 
 

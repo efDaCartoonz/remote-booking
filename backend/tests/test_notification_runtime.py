@@ -78,6 +78,8 @@ def notification_settings(monkeypatch):
         telegram_bot_token="test-token",
         telegram_api_url="https://telegram.example",
         bitrix24_bot_webhook_url="https://bitrix.example/hook",
+        bitrix24_bot_id="bot-1",
+        bitrix24_bot_client_id="client-1",
     )
     monkeypatch.setattr("app.notifications.settings", values)
     return values
@@ -109,19 +111,18 @@ def make_intent(
 
 
 @pytest.mark.parametrize(
-    ("adapter", "recipient", "expected_url", "expects_idempotency_key"),
+    ("adapter", "recipient", "expected_url"),
     [
         (
             TelegramAdapter(),
             "telegram-chat",
             "https://telegram.example/bottest-token/sendMessage",
-            False,
         ),
-        (Bitrix24Adapter(), "bitrix-user", "https://bitrix.example/hook", True),
+        (Bitrix24Adapter(), "bitrix-user", "https://bitrix.example/hook"),
     ],
 )
 def test_channel_adapters_deliver_with_timeout_and_mocked_http(
-    monkeypatch, adapter, recipient, expected_url, expects_idempotency_key
+    monkeypatch, adapter, recipient, expected_url
 ) -> None:
     calls = []
     monkeypatch.setattr(
@@ -136,8 +137,13 @@ def test_channel_adapters_deliver_with_timeout_and_mocked_http(
 
     assert calls[0][0] == expected_url
     assert calls[0][1]["timeout"] == 5.0
-    if expects_idempotency_key:
-        assert "rdm:1" in calls[0][1]["json"].values()
+    if isinstance(adapter, Bitrix24Adapter):
+        assert calls[0][1]["data"] == {
+            "BOT_ID": "bot-1",
+            "CLIENT_ID": "client-1",
+            "DIALOG_ID": "bitrix-user",
+            "MESSAGE": "safe message",
+        }
 
 
 def test_temporary_error_schedules_retry_without_persisting_external_detail() -> None:
@@ -150,6 +156,49 @@ def test_temporary_error_schedules_retry_without_persisting_external_detail() ->
         (1, "telegram_unavailable", NOW + timedelta(seconds=60))
     ]
     assert repository.failed == []
+
+
+@pytest.mark.parametrize("status_code", [429, 500, 503])
+def test_bitrix24_rate_limit_and_server_errors_are_retryable(monkeypatch, status_code):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(status_code=status_code),
+    )
+    with pytest.raises(TemporaryDeliveryError, match="^bitrix24_temporary_error$"):
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+
+
+def test_bitrix24_client_errors_are_permanent(monkeypatch):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(status_code=400),
+    )
+    with pytest.raises(PermanentDeliveryError, match="^bitrix24_rejected$"):
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+
+
+def test_bitrix24_missing_configuration_is_permanent(notification_settings):
+    notification_settings.bitrix24_bot_client_id = ""
+    with pytest.raises(PermanentDeliveryError, match="^bitrix24_not_configured$"):
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+
+
+def test_bitrix24_safe_logging_does_not_include_webhook_or_response(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(
+            status_code=500, text="personal response must not be logged"
+        ),
+    )
+    with caplog.at_level("WARNING"), pytest.raises(TemporaryDeliveryError):
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+    assert "personal response" not in caplog.text
+    assert "bitrix.example" not in caplog.text
 
 
 def test_permanent_error_is_terminal() -> None:
