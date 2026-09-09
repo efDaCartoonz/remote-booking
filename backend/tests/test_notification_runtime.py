@@ -215,7 +215,7 @@ def test_bitrix24_rejects_missing_result(monkeypatch):
     monkeypatch.setattr(
         httpx,
         "post",
-        lambda *args, **kwargs: SimpleNamespace(status_code=200, json=lambda: {}),
+        lambda *args, **kwargs: SimpleNamespace(status_code=200, json=dict),
     )
 
     with pytest.raises(PermanentDeliveryError, match="^bitrix24_invalid_response$"):
