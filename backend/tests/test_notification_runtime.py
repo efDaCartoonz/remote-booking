@@ -129,7 +129,13 @@ def test_channel_adapters_deliver_with_timeout_and_mocked_http(
         httpx,
         "post",
         lambda url, **kwargs: (
-            calls.append((url, kwargs)) or SimpleNamespace(status_code=200)
+            calls.append((url, kwargs))
+            or SimpleNamespace(
+                status_code=200,
+                json=(lambda: {"result": 1})
+                if isinstance(adapter, Bitrix24Adapter)
+                else lambda: None,
+            )
         ),
     )
 
@@ -179,6 +185,87 @@ def test_bitrix24_client_errors_are_permanent(monkeypatch):
         Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
 
 
+def test_bitrix24_success_requires_positive_integer_result(monkeypatch):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(
+            status_code=200, json=lambda: {"result": 123}
+        ),
+    )
+
+    Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+
+
+@pytest.mark.parametrize("result", [False, 0, "123", None])
+def test_bitrix24_rejects_invalid_success_result(monkeypatch, result):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(
+            status_code=200, json=lambda: {"result": result}
+        ),
+    )
+
+    with pytest.raises(PermanentDeliveryError, match="^bitrix24_invalid_response$"):
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+
+
+def test_bitrix24_rejects_missing_result(monkeypatch):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(status_code=200, json=lambda: {}),
+    )
+
+    with pytest.raises(PermanentDeliveryError, match="^bitrix24_invalid_response$"):
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+
+
+def test_bitrix24_invalid_json_is_safe_permanent_error(monkeypatch):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(
+            status_code=200,
+            json=lambda: (_ for _ in ()).throw(ValueError("sensitive response")),
+        ),
+    )
+
+    with pytest.raises(PermanentDeliveryError, match="^bitrix24_invalid_response$"):
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+
+
+def test_bitrix24_application_error_is_permanent(monkeypatch):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "error": "APP_ID_ERROR",
+                "error_description": "sensitive application detail",
+            },
+        ),
+    )
+
+    with pytest.raises(PermanentDeliveryError, match="^bitrix24_rejected$"):
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+
+
+def test_bitrix24_retryable_application_error_uses_retry_code(monkeypatch):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(
+            status_code=200, json=lambda: {"error": "QUERY_LIMIT_EXCEEDED"}
+        ),
+    )
+
+    with pytest.raises(TemporaryDeliveryError, match="^bitrix24_temporary_error$"):
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+
+
 def test_bitrix24_missing_configuration_is_permanent(notification_settings):
     notification_settings.bitrix24_bot_client_id = ""
     with pytest.raises(PermanentDeliveryError, match="^bitrix24_not_configured$"):
@@ -199,6 +286,30 @@ def test_bitrix24_safe_logging_does_not_include_webhook_or_response(
         Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
     assert "personal response" not in caplog.text
     assert "bitrix.example" not in caplog.text
+
+
+def test_bitrix24_application_error_does_not_log_or_raise_response_details(
+    monkeypatch, caplog
+):
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: SimpleNamespace(
+            status_code=200,
+            json=lambda: {
+                "error": "APP_ID_ERROR",
+                "error_description": "secret response detail",
+            },
+        ),
+    )
+
+    with caplog.at_level("WARNING"), pytest.raises(
+        PermanentDeliveryError, match="^bitrix24_rejected$"
+    ) as exc_info:
+        Bitrix24Adapter().send(recipient="488", text="safe", idempotency_key="rdm:1")
+    assert "secret response detail" not in caplog.text
+    assert "bitrix.example" not in caplog.text
+    assert "secret response detail" not in str(exc_info.value)
 
 
 def test_permanent_error_is_terminal() -> None:

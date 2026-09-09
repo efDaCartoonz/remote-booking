@@ -27,6 +27,9 @@ NOTIFICATION_EVENT_CODES = {
 }
 NOTIFICATION_CHANNEL_CODES = {"telegram": 0, "bitrix24": 1}
 SAFE_NOTIFICATION_PAYLOAD_KEYS = frozenset({"card_id", "assignment"})
+RETRYABLE_BITRIX24_ERRORS = frozenset(
+    {"QUERY_LIMIT_EXCEEDED", "RATE_LIMIT_EXCEEDED", "SERVICE_UNAVAILABLE"}
+)
 
 
 @dataclass(frozen=True)
@@ -261,6 +264,31 @@ class Bitrix24Adapter:
                 response.status_code // 100,
             )
             raise PermanentDeliveryError("bitrix24_rejected")
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            logger.warning("bitrix24 delivery rejected: response_class=invalid_json")
+            raise PermanentDeliveryError("bitrix24_invalid_response") from exc
+        if not isinstance(payload, dict):
+            logger.warning("bitrix24 delivery rejected: response_class=invalid_shape")
+            raise PermanentDeliveryError("bitrix24_invalid_response")
+
+        error = payload.get("error")
+        if error:
+            if isinstance(error, str) and error in RETRYABLE_BITRIX24_ERRORS:
+                logger.warning(
+                    "bitrix24 delivery deferred: response_class=application_retryable"
+                )
+                raise TemporaryDeliveryError("bitrix24_temporary_error")
+            logger.warning(
+                "bitrix24 delivery rejected: response_class=application_rejected"
+            )
+            raise PermanentDeliveryError("bitrix24_rejected")
+
+        result = payload.get("result")
+        if isinstance(result, bool) or not isinstance(result, int) or result <= 0:
+            logger.warning("bitrix24 delivery rejected: response_class=invalid_result")
+            raise PermanentDeliveryError("bitrix24_invalid_response")
 
 
 @dataclass(frozen=True)
