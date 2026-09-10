@@ -60,6 +60,9 @@ const managerStatus = ref("");
 const managerFrom = ref("");
 const managerTo = ref("");
 const managerError = ref("");
+const managerView = ref<"list" | "calendar">("list");
+const calendarMode = ref<"day" | "week">("week");
+const managerLoading = ref(false);
 
 const hasL1Role = computed(() => hasRole(1));
 const hasL2Role = computed(() => hasRole(2));
@@ -198,6 +201,7 @@ async function load(): Promise<void> {
 }
 
 async function loadManager(): Promise<void> {
+  managerLoading.value = true;
   managerError.value = "";
   const query = new URLSearchParams();
   if (managerStatus.value) query.set("status", managerStatus.value);
@@ -208,7 +212,41 @@ async function loadManager(): Promise<void> {
   } catch (error) {
     managerError.value = (error as ApiError).status === 403 ? "Доступ к панели руководителя запрещён (403)." : (error as ApiError).status === 401 ? "Сессия завершилась. Войдите снова." : "Не удалось загрузить панель. Повторите попытку.";
     if ((error as ApiError).status === 401) handleUnauthorized();
+  } finally {
+    managerLoading.value = false;
   }
+}
+
+const calendarStart = computed(() => {
+  const value = managerFrom.value ? new Date(managerFrom.value) : new Date();
+  value.setSeconds(0, 0);
+  if (calendarMode.value === "week") {
+    const day = value.getDay() || 7;
+    value.setDate(value.getDate() - day + 1);
+  }
+  value.setHours(0, 0, 0, 0);
+  return value;
+});
+const calendarDays = computed(() => Array.from({ length: calendarMode.value === "day" ? 1 : 7 }, (_, index) => {
+  const value = new Date(calendarStart.value);
+  value.setDate(value.getDate() + index);
+  return value;
+}));
+const calendarHours = Array.from({ length: 25 }, (_, index) => index);
+function calendarEventStyle(item: ManagerCard, day: Date): Record<string, string> {
+  const start = new Date(item.planned_start_at);
+  const end = new Date(item.planned_end_at);
+  const dayStart = new Date(day);
+  const dayEnd = new Date(day); dayEnd.setDate(dayEnd.getDate() + 1);
+  const visibleStart = Math.max(start.getTime(), dayStart.getTime());
+  const visibleEnd = Math.min(end.getTime(), dayEnd.getTime());
+  const top = ((visibleStart - dayStart.getTime()) / 60000) / 15 * 20;
+  const height = Math.max(24, ((visibleEnd - visibleStart) / 60000) / 15 * 20);
+  return { top: `${top}px`, height: `${height}px` };
+}
+function calendarItems(day: Date): ManagerCard[] {
+  const dayEnd = new Date(day); dayEnd.setDate(dayEnd.getDate() + 1);
+  return manager.value?.items.filter((item) => new Date(item.planned_start_at) < dayEnd && new Date(item.planned_end_at) > day) ?? [];
 }
 
 async function login(): Promise<void> {
@@ -276,6 +314,9 @@ function rescheduleCard(): Promise<void> {
 
 function formatDateTime(value: string, timeZone = browserTimeZone): string {
   return new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "short", timeZone }).format(new Date(value));
+}
+function formatTime(value: string): string {
+  return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: browserTimeZone }).format(new Date(value));
 }
 
 function toLocalInput(value: string): string {
@@ -425,8 +466,12 @@ onMounted(load);
         <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div></div>
         <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>С периода<input v-model="managerFrom" type="datetime-local" /></label><label>По период<input v-model="managerTo" type="datetime-local" /></label><button>Применить</button></form>
         <p v-if="managerError" class="error" role="alert">{{ managerError }} <button class="secondary" @click="loadManager">Повторить</button></p>
-        <p v-else-if="!manager.items.length" class="hint">Карточки не найдены.</p>
-        <div v-else class="manager-list"><a v-for="item in manager.items" :key="item.public_id" class="manager-row panel" :href="`/cards/${item.public_id}`"><div><strong>{{ item.number }}</strong><span class="muted">Тикет {{ item.omnidesk_ticket_number }}</span></div><span class="status" :class="`status-${item.status}`">{{ item.status_label }}</span><span>{{ formatDateTime(item.planned_start_at) }} · {{ formatDuration(item.planned_duration_minutes) }}</span><span>L1: {{ item.l1_owner_name || "Не назначен" }} · L2: {{ item.l2_engineer_name || "Не назначен" }}</span><span v-if="item.urgent || item.overdue || item.out_of_hours" class="muted">{{ item.urgent ? "Срочно " : "" }}{{ item.overdue ? "Просрочено " : "" }}{{ item.out_of_hours ? "Вне рабочего времени" : "" }}</span></a></div>
+        <p v-if="managerLoading" class="hint" role="status">Загрузка календаря…</p>
+        <p v-else-if="manager.items.length === manager.limit" class="warning" role="status">Показаны первые {{ manager.limit }} карточек. Данные периода могут быть неполными — сузьте период или фильтр.</p>
+        <div class="manager-toggle" role="group" aria-label="Режим отображения"><button type="button" :class="{ selected: managerView === 'list' }" @click="managerView = 'list'">Список</button><button type="button" :class="{ selected: managerView === 'calendar' }" @click="managerView = 'calendar'">Календарь</button><template v-if="managerView === 'calendar'"><button type="button" :class="{ selected: calendarMode === 'day' }" @click="calendarMode = 'day'">День</button><button type="button" :class="{ selected: calendarMode === 'week' }" @click="calendarMode = 'week'">Неделя</button></template></div>
+        <p v-if="!managerLoading && !manager.items.length" class="hint">Карточки не найдены за выбранный период.</p>
+        <div v-else-if="managerView === 'list'" class="manager-list"><a v-for="item in manager.items" :key="item.public_id" class="manager-row panel" :href="`/cards/${item.public_id}`"><div><strong>{{ item.number }}</strong><span class="muted">Тикет {{ item.omnidesk_ticket_number }}</span></div><span class="status" :class="`status-${item.status}`">{{ item.status_label }}</span><span>{{ formatDateTime(item.planned_start_at) }} · {{ formatDuration(item.planned_duration_minutes) }}</span><span>L2: {{ item.l2_engineer_name || "Не назначен" }}</span><span v-if="item.urgent || item.overdue" class="muted">{{ item.urgent ? "Срочно " : "" }}{{ item.overdue ? "Просрочено" : "" }}</span></a></div>
+        <div v-else class="calendar"><div class="calendar-head"><span>Время</span><strong v-for="day in calendarDays" :key="day.toISOString()">{{ new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "short" }).format(day) }}</strong></div><div class="calendar-body"><div class="calendar-times"><span v-for="hour in calendarHours" :key="hour">{{ String(hour).padStart(2, "0") }}:00</span></div><div v-for="day in calendarDays" :key="`col-${day.toISOString()}`" class="calendar-column"><span v-for="hour in calendarHours" :key="hour" class="calendar-line" :style="{ top: `${hour * 80}px` }"></span><a v-for="item in calendarItems(day)" :key="item.public_id" class="calendar-event" :class="[`status-${item.status}`, { urgent: item.urgent, overdue: item.overdue }]" :style="calendarEventStyle(item, day)" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ formatTime(item.planned_start_at) }}–{{ formatTime(item.planned_end_at) }} · L2: {{ item.l2_engineer_name || "Не назначен" }}</span><small>{{ item.status_label }}{{ item.urgent ? " · Срочно" : "" }}{{ item.overdue ? " · Просрочено" : "" }}</small></a></div></div></div>
       </template>
 
       <template v-else>
