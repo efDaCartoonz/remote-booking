@@ -1,8 +1,10 @@
+from contextlib import contextmanager
 from datetime import UTC, datetime
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
 
+import app.api.manager as manager_api
 from app.api.manager import get_manager_repository
 from app.auth.dependencies import get_auth_store, get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
@@ -56,7 +58,7 @@ MANAGER = UserAuthRecord(1, "manager", "hash", "Manager", None, (RoleRecord(3, "
 L1 = UserAuthRecord(1, "l1", "hash", "L1", None, (RoleRecord(1, "L1"),))
 
 
-def test_manager_requires_session_and_role() -> None:
+def test_manager_requires_session_and_role(monkeypatch) -> None:
     app = create_app()
     app.dependency_overrides[get_auth_store] = lambda: (
         _ for _ in ()
@@ -68,9 +70,12 @@ def test_manager_requires_session_and_role() -> None:
 
     app = create_app()
     app.dependency_overrides[get_current_user] = lambda: L1
-    app.dependency_overrides[get_db] = lambda: (
-        _ for _ in ()
-    ).throw(AssertionError("db called"))
+    @contextmanager
+    def fail_connection():
+        raise AssertionError("manager repository connection called")
+        yield
+
+    monkeypatch.setattr(manager_api, "db_connection", fail_connection)
     assert TestClient(app).get("/api/v1/manager/cards").status_code == 403
 
 
@@ -91,12 +96,15 @@ def test_manager_validates_status_dates_and_limit() -> None:
     assert client.get("/api/v1/manager/cards?limit=201").status_code == 422
 
 
-def test_invalid_filters_never_create_repository() -> None:
+def test_invalid_filters_never_create_repository(monkeypatch) -> None:
     app = create_app()
     app.dependency_overrides[get_current_user] = lambda: MANAGER
-    app.dependency_overrides[get_db] = lambda: (_ for _ in ()).throw(
-        AssertionError("repository/db called")
-    )
+    @contextmanager
+    def fail_connection():
+        raise AssertionError("repository/db called")
+        yield
+
+    monkeypatch.setattr(manager_api, "db_connection", fail_connection)
     client = TestClient(app)
     invalid_queries = (
         "status=unknown",
@@ -110,6 +118,25 @@ def test_invalid_filters_never_create_repository() -> None:
     )
     for query in invalid_queries:
         assert client.get(f"/api/v1/manager/cards?{query}").status_code == 422
+
+
+def test_valid_manager_request_opens_repository_connection_once(monkeypatch) -> None:
+    repository = ManagerRepository()
+    opened = 0
+
+    @contextmanager
+    def connection():
+        nonlocal opened
+        opened += 1
+        yield object()
+
+    monkeypatch.setattr(manager_api, "db_connection", connection)
+    monkeypatch.setattr(manager_api, "PostgresCardRepository", lambda _: repository)
+    app = create_app()
+    app.dependency_overrides[get_current_user] = lambda: MANAGER
+    response = TestClient(app).get("/api/v1/manager/cards?status=assigned")
+    assert response.status_code == 200
+    assert opened == 1
 
 
 def test_manager_passes_filters_and_summary_is_not_limited() -> None:

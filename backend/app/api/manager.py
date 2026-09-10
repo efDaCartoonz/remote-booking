@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from collections.abc import Generator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
@@ -12,7 +13,7 @@ from app.auth.store import UserAuthRecord
 from app.cards.constants import CardStatus, CardStatusSlug, RoleId, status_slug
 from app.cards.repository import CardRepository, PostgresCardRepository
 from app.cards.schemas import status_label
-from app.db import get_db
+from app.db import db_connection
 
 router = APIRouter(prefix="/api/v1/manager", tags=["manager"])
 
@@ -54,6 +55,12 @@ class ManagerFilters:
     limit: int
 
 
+@dataclass(frozen=True)
+class ManagerAccessContext:
+    user: UserAuthRecord
+    filters: ManagerFilters
+
+
 def get_manager_filters(
     status: CardStatusSlug | None = Query(default=None),
     period_from: datetime | None = Query(default=None),
@@ -85,28 +92,34 @@ def get_manager_filters(
 require_manager_role = require_roles(int(RoleId.MANAGER))
 
 
+def get_manager_context(
+    user: Annotated[UserAuthRecord, Depends(require_manager_role)],
+    filters: Annotated[ManagerFilters, Depends(get_manager_filters)],
+) -> ManagerAccessContext:
+    return ManagerAccessContext(user=user, filters=filters)
+
+
 def get_manager_repository(
-    _user: Annotated[UserAuthRecord, Depends(require_manager_role)],
-    _filters: Annotated[ManagerFilters, Depends(get_manager_filters)],
-    connection: Annotated[object, Depends(get_db)],
-) -> CardRepository:
-    return PostgresCardRepository(connection)
+    _context: Annotated[ManagerAccessContext, Depends(get_manager_context)],
+) -> Generator[CardRepository, None, None]:
+    with db_connection() as connection:
+        yield PostgresCardRepository(connection)
 
 
 @router.get("/cards", response_model=ManagerCardsResponse)
 def list_manager_cards(
     repository: Annotated[CardRepository, Depends(get_manager_repository)],
-    filters: Annotated[ManagerFilters, Depends(get_manager_filters)],
+    context: Annotated[ManagerAccessContext, Depends(get_manager_context)],
 ) -> ManagerCardsResponse:
     rows, counts = repository.list_manager_cards(
         status_code=(
-            next(item for item in CardStatus if status_slug(item) == filters.status)
-            if filters.status is not None
+            next(item for item in CardStatus if status_slug(item) == context.filters.status)
+            if context.filters.status is not None
             else None
         ),
-        period_from=filters.period_from,
-        period_to=filters.period_to,
-        limit=filters.limit,
+        period_from=context.filters.period_from,
+        period_to=context.filters.period_to,
+        limit=context.filters.limit,
     )
     return ManagerCardsResponse(
         summary=ManagerSummary(**counts),
@@ -129,5 +142,5 @@ def list_manager_cards(
             )
             for card in rows
         ],
-        limit=filters.limit,
+        limit=context.filters.limit,
     )
