@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.auth.dependencies import require_roles
 from app.auth.store import UserAuthRecord
-from app.cards.constants import CardStatus, RoleId, status_slug
+from app.cards.constants import CardStatus, CardStatusSlug, RoleId, status_slug
 from app.cards.repository import CardRepository, PostgresCardRepository
 from app.cards.schemas import status_label
 from app.db import get_db
@@ -46,22 +46,10 @@ class ManagerCardsResponse(BaseModel):
 
 
 class ManagerFilters(BaseModel):
-    status: int | None = None
+    status: CardStatusSlug | None = None
     period_from: datetime | None = None
     period_to: datetime | None = None
     limit: int = Field(default=100, ge=1, le=200)
-
-    @field_validator("status", mode="before")
-    @classmethod
-    def parse_status(cls, value: str | int | None) -> int | None:
-        if value in (None, ""):
-            return None
-        try:
-            return next(
-                int(item) for item in CardStatus if status_slug(item).value == value
-            )
-        except (StopIteration, TypeError) as exc:
-            raise ValueError("invalid_status") from exc
 
     @field_validator("period_from", "period_to")
     @classmethod
@@ -81,7 +69,11 @@ class ManagerFilters(BaseModel):
         return self
 
 
+require_manager_role = require_roles(int(RoleId.MANAGER))
+
+
 def get_manager_repository(
+    _: Annotated[UserAuthRecord, Depends(require_manager_role)],
     connection: Annotated[object, Depends(get_db)],
 ) -> CardRepository:
     return PostgresCardRepository(connection)
@@ -89,12 +81,15 @@ def get_manager_repository(
 
 @router.get("/cards", response_model=ManagerCardsResponse)
 def list_manager_cards(
-    _: Annotated[UserAuthRecord, Depends(require_roles(int(RoleId.MANAGER)))],
     repository: Annotated[CardRepository, Depends(get_manager_repository)],
     filters: Annotated[ManagerFilters, Depends()],
 ) -> ManagerCardsResponse:
     rows, counts = repository.list_manager_cards(
-        status_code=filters.status,
+        status_code=(
+            next(item for item in CardStatus if status_slug(item) == filters.status)
+            if filters.status is not None
+            else None
+        ),
         period_from=filters.period_from,
         period_to=filters.period_to,
         limit=filters.limit,

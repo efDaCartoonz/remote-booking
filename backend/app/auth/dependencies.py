@@ -38,14 +38,17 @@ def unauthorized() -> HTTPException:
     )
 
 
-def get_current_auth(
-    request: Request,
-    store: Annotated[AuthStore, Depends(get_auth_store)],
-) -> CurrentAuth:
+def get_session_token(request: Request) -> str:
     token = request.cookies.get(settings.auth_session_cookie_name)
     if not token:
         raise unauthorized()
+    return token
 
+
+def get_current_auth(
+    token: Annotated[str, Depends(get_session_token)],
+    store: Annotated[AuthStore, Depends(get_auth_store)],
+) -> CurrentAuth:
     auth_session = store.get_user_by_session_hash(hash_session_token(token))
     if auth_session is None:
         raise unauthorized()

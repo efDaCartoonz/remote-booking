@@ -4,11 +4,11 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.api.manager import get_manager_repository
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_auth_store, get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
 from app.cards.constants import CardStatus
-from app.cards.repository import CardRecord
-from app.cards.repository import PostgresCardRepository
+from app.cards.repository import CardRecord, PostgresCardRepository
+from app.db import get_db
 from app.main import create_app
 
 
@@ -33,7 +33,10 @@ def make_card(status: CardStatus, number: str, *, overdue: bool = False) -> Card
 class ManagerRepository:
     def __init__(self) -> None:
         self.calls: list[dict] = []
-        self.cards = [make_card(CardStatus.ASSIGNED, "RDM-000001"), make_card(CardStatus.REJECTED, "RDM-000002", overdue=True)]
+        self.cards = [
+            make_card(CardStatus.ASSIGNED, "RDM-000001"),
+            make_card(CardStatus.REJECTED, "RDM-000002", overdue=True),
+        ]
 
     def list_manager_cards(self, **kwargs):
         self.calls.append(kwargs)
@@ -54,15 +57,30 @@ L1 = UserAuthRecord(1, "l1", "hash", "L1", None, (RoleRecord(1, "L1"),))
 
 
 def test_manager_requires_session_and_role() -> None:
-    unauthenticated, _ = client_for(None)
-    assert unauthenticated.get("/api/v1/manager/cards").status_code == 401
-    forbidden, _ = client_for(L1)
-    assert forbidden.get("/api/v1/manager/cards").status_code == 403
+    app = create_app()
+    app.dependency_overrides[get_auth_store] = lambda: (
+        _ for _ in ()
+    ).throw(AssertionError("auth store called"))
+    app.dependency_overrides[get_db] = lambda: (
+        _ for _ in ()
+    ).throw(AssertionError("db called"))
+    assert TestClient(app).get("/api/v1/manager/cards").status_code == 401
+
+    app = create_app()
+    app.dependency_overrides[get_current_user] = lambda: L1
+    app.dependency_overrides[get_db] = lambda: (
+        _ for _ in ()
+    ).throw(AssertionError("db called"))
+    assert TestClient(app).get("/api/v1/manager/cards").status_code == 403
 
 
 def test_manager_validates_status_dates_and_limit() -> None:
     client, _ = client_for(MANAGER)
-    assert client.get("/api/v1/manager/cards?status=assigned").status_code == 200
+    for slug in (
+        "created", "assigned", "confirmed", "in_progress",
+        "rejected", "completed", "cancelled",
+    ):
+        assert client.get(f"/api/v1/manager/cards?status={slug}").status_code == 200
     assert client.get("/api/v1/manager/cards?status=unknown").status_code == 422
     assert client.get("/api/v1/manager/cards?period_from=2026-09-09T10:00:00").status_code == 422
     assert client.get("/api/v1/manager/cards?period_from=2026-09-09T10:00:00Z&period_to=2026-09-09T11:00:00Z").status_code == 200
