@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Generator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from collections.abc import Generator
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
@@ -62,10 +62,10 @@ class ManagerAccessContext:
 
 
 def get_manager_filters(
-    status: CardStatusSlug | None = Query(default=None),
-    period_from: datetime | None = Query(default=None),
-    period_to: datetime | None = Query(default=None),
-    limit: int = Query(default=100, ge=1, le=200),
+    status: Annotated[CardStatusSlug | None, Query()] = None,
+    period_from: Annotated[datetime | None, Query()] = None,
+    period_to: Annotated[datetime | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
 ) -> ManagerFilters:
     if period_from is not None and (
         period_from.tzinfo is None or period_from.utcoffset() is None
