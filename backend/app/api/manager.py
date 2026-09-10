@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field, field_validator, model_validator
+from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
+from pydantic import BaseModel
 
 from app.auth.dependencies import require_roles
 from app.auth.store import UserAuthRecord
@@ -45,35 +46,48 @@ class ManagerCardsResponse(BaseModel):
     limit: int
 
 
-class ManagerFilters(BaseModel):
-    status: CardStatusSlug | None = None
-    period_from: datetime | None = None
-    period_to: datetime | None = None
-    limit: int = Field(default=100, ge=1, le=200)
+@dataclass(frozen=True)
+class ManagerFilters:
+    status: CardStatusSlug | None
+    period_from: datetime | None
+    period_to: datetime | None
+    limit: int
 
-    @field_validator("period_from", "period_to")
-    @classmethod
-    def require_timezone(cls, value: datetime | None) -> datetime | None:
-        if value is not None and (value.tzinfo is None or value.utcoffset() is None):
-            raise ValueError("timezone_required")
-        return value
 
-    @model_validator(mode="after")
-    def validate_period(self) -> "ManagerFilters":
-        if (
-            self.period_from is not None
-            and self.period_to is not None
-            and self.period_from >= self.period_to
-        ):
-            raise ValueError("period_from_must_be_before_period_to")
-        return self
+def get_manager_filters(
+    status: CardStatusSlug | None = Query(default=None),
+    period_from: datetime | None = Query(default=None),
+    period_to: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=200),
+) -> ManagerFilters:
+    if period_from is not None and (
+        period_from.tzinfo is None or period_from.utcoffset() is None
+    ):
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="period_from_timezone_required",
+        )
+    if period_to is not None and (
+        period_to.tzinfo is None or period_to.utcoffset() is None
+    ):
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="period_to_timezone_required",
+        )
+    if period_from is not None and period_to is not None and period_from >= period_to:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="period_from_must_be_before_period_to",
+        )
+    return ManagerFilters(status, period_from, period_to, limit)
 
 
 require_manager_role = require_roles(int(RoleId.MANAGER))
 
 
 def get_manager_repository(
-    _: Annotated[UserAuthRecord, Depends(require_manager_role)],
+    _user: Annotated[UserAuthRecord, Depends(require_manager_role)],
+    _filters: Annotated[ManagerFilters, Depends(get_manager_filters)],
     connection: Annotated[object, Depends(get_db)],
 ) -> CardRepository:
     return PostgresCardRepository(connection)
@@ -82,7 +96,7 @@ def get_manager_repository(
 @router.get("/cards", response_model=ManagerCardsResponse)
 def list_manager_cards(
     repository: Annotated[CardRepository, Depends(get_manager_repository)],
-    filters: Annotated[ManagerFilters, Depends()],
+    filters: Annotated[ManagerFilters, Depends(get_manager_filters)],
 ) -> ManagerCardsResponse:
     rows, counts = repository.list_manager_cards(
         status_code=(

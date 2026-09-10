@@ -91,6 +91,27 @@ def test_manager_validates_status_dates_and_limit() -> None:
     assert client.get("/api/v1/manager/cards?limit=201").status_code == 422
 
 
+def test_invalid_filters_never_create_repository() -> None:
+    app = create_app()
+    app.dependency_overrides[get_current_user] = lambda: MANAGER
+    app.dependency_overrides[get_db] = lambda: (_ for _ in ()).throw(
+        AssertionError("repository/db called")
+    )
+    client = TestClient(app)
+    invalid_queries = (
+        "status=unknown",
+        "period_from=2026-09-09T10:00:00",
+        "period_to=2026-09-09T10:00:00",
+        "period_from=not-a-date",
+        "period_from=2026-09-09T11:00:00Z&period_to=2026-09-09T10:00:00Z",
+        "period_from=2026-09-09T10:00:00Z&period_to=2026-09-09T10:00:00Z",
+        "limit=0",
+        "limit=201",
+    )
+    for query in invalid_queries:
+        assert client.get(f"/api/v1/manager/cards?{query}").status_code == 422
+
+
 def test_manager_passes_filters_and_summary_is_not_limited() -> None:
     client, repository = client_for(MANAGER)
     response = client.get("/api/v1/manager/cards?status=assigned&period_from=2026-09-09T09:00:00Z&period_to=2026-09-09T11:00:00Z&limit=1")
