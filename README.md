@@ -25,6 +25,9 @@ Production scanner и delivery остаются выключенными.
 - Внутренний Vue frontend с SPA fallback, same-origin `/api/v1` и детальной
   карточкой по UUID после локальной авторизации: статус, время, длительность,
   владельцы L1/L2, флаги, безопасная история и действия назначенных L1/L2.
+- Read-only панель руководителя `/manager` с полным набором статусов,
+  периодом, limit до 200, детерминированной сортировкой и summary по полному
+  отфильтрованному набору. API возвращает только безопасную проекцию карточки.
 - Локальная авторизация пользователей через HTTP-only session cookie.
 - Внутренний API карточек и базовые переходы жизненного цикла.
 - Клиентский Frame API для тикетов Omnidesk:
@@ -252,6 +255,9 @@ ruff format --check --no-cache
 - событийная менеджерская эскалация для отсутствия L2, полного отказа L2,
   повторного неуспешного цикла и отсутствия L1 (`38e0d38`, `45d6349`,
   `af0d919`). Срочная коллизия и таймерные правила в этот этап не входят.
+- read-only панель руководителя (`8877eeb`): доступ только для роли
+  `Руководитель`, safe allowlist полей, фильтры status/period/limit,
+  детерминированная сортировка и full-set summary.
 
 Распределение и действия L2 проверены изолированными тестовыми данными внутри
 транзакции с rollback. На stage подтверждены успешное подтверждение назначенным
@@ -374,6 +380,22 @@ Intent получил `sent`, `attempts=1` и одну audit-запись без
 пользователи и intents удалены по точному набору тестовых тикетов; очередь и
 active reminder schedules равны нулю. Production scanner и delivery снова
 выключены; Bitrix24 не использовался.
+
+Панель руководителя подтверждена на stage (`8877eeb`). Полный candidate gate
+прошёл с `122 passed`, Ruff, frontend audit/type-check/build, Docker build,
+Compose validation и isolated PostgreSQL/Redis HTTP smoke. Последний подтвердил
+`401/403/422`, все status slug, timezone-aware period, границы limit,
+детерминированную PostgreSQL-сортировку, full-set summary и safe projection.
+Ручной LAN smoke пользователя `nimda` подтвердил вход, счётчики, фильтры,
+открытие карточки, возврат на панель и logout. Четыре synthetic-карточки разных
+состояний и synthetic-владельцы удалены по точному marker; queue и active
+schedules снова равны нулю.
+
+В завершение цикла выполнены ровно одна контролируемая Telegram- и одна
+Bitrix24-доставка для `nimda`: оба intent получили `sent`, `attempts=1` и по
+одной audit-записи без retry или дублей; получение и открытие ссылки подтверждены
+вручную. Synthetic card, source event, intents и audit удалены по marker.
+`REMINDER_SCANNER_ENABLED` и `NOTIFICATION_DELIVERY_ENABLED` остаются `false`.
 
 ## Завершение Каждого Этапа
 
