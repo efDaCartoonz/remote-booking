@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status as http_status
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import status as http_status
 from pydantic import BaseModel
 
 from app.auth.dependencies import require_roles
@@ -113,7 +114,11 @@ def list_manager_cards(
 ) -> ManagerCardsResponse:
     rows, counts = repository.list_manager_cards(
         status_code=(
-            next(item for item in CardStatus if status_slug(item) == context.filters.status)
+            next(
+                item
+                for item in CardStatus
+                if status_slug(item) == context.filters.status
+            )
             if context.filters.status is not None
             else None
         ),
