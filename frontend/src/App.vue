@@ -64,6 +64,18 @@ const managerView = ref<"list" | "calendar">("list");
 const calendarMode = ref<"day" | "week">("week");
 const managerLoading = ref(false);
 
+type ManagerPeriod = { periodFrom: string | null; periodTo: string | null };
+
+function localDateAt(dateValue: string, dayOffset = 0): Date {
+  const [year, month, day] = dateValue.split("-").map(Number);
+  return new Date(year, month - 1, day + dayOffset, 0, 0, 0, 0);
+}
+
+function managerPeriod(from: string, to: string): ManagerPeriod | string {
+  if (from && to && localDateAt(to) < localDateAt(from)) return "Дата окончания не может быть раньше даты начала.";
+  return { periodFrom: from ? localDateAt(from).toISOString() : null, periodTo: to ? localDateAt(to, 1).toISOString() : null };
+}
+
 const hasL1Role = computed(() => hasRole(1));
 const hasL2Role = computed(() => hasRole(2));
 const canDecideAsL2 = computed(
@@ -203,10 +215,16 @@ async function load(): Promise<void> {
 async function loadManager(): Promise<void> {
   managerLoading.value = true;
   managerError.value = "";
+  const period = managerPeriod(managerFrom.value, managerTo.value);
+  if (typeof period === "string") {
+    managerError.value = period;
+    managerLoading.value = false;
+    return;
+  }
   const query = new URLSearchParams();
   if (managerStatus.value) query.set("status", managerStatus.value);
-  if (managerFrom.value) query.set("period_from", new Date(managerFrom.value).toISOString());
-  if (managerTo.value) query.set("period_to", new Date(managerTo.value).toISOString());
+  if (period.periodFrom) query.set("period_from", period.periodFrom);
+  if (period.periodTo) query.set("period_to", period.periodTo);
   try {
     manager.value = await api<ManagerData>(`/api/v1/manager/cards?${query}`);
   } catch (error) {
@@ -340,7 +358,7 @@ onMounted(load);
 
 <template>
   <main class="shell">
-    <section class="card" aria-live="polite">
+    <section class="card" :class="{ 'manager-card': managerPath }" aria-live="polite">
       <p v-if="busy">Проверяем сессию…</p>
 
       <template v-else-if="!user">
@@ -464,14 +482,14 @@ onMounted(load);
       <template v-else-if="managerPath && manager">
         <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ browserTimeZone }}</p></div><button class="secondary" @click="logout">Выйти</button></header>
         <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div></div>
-        <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>С периода<input v-model="managerFrom" type="datetime-local" /></label><label>По период<input v-model="managerTo" type="datetime-local" /></label><button>Применить</button></form>
+        <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>Дата с<input v-model="managerFrom" type="date" /></label><label>Дата по<input v-model="managerTo" type="date" /></label><button>Применить</button></form>
         <p v-if="managerError" class="error" role="alert">{{ managerError }} <button class="secondary" @click="loadManager">Повторить</button></p>
         <p v-if="managerLoading" class="hint" role="status">Загрузка календаря…</p>
         <p v-else-if="manager.items.length === manager.limit" class="warning" role="status">Показаны первые {{ manager.limit }} карточек. Данные периода могут быть неполными — сузьте период или фильтр.</p>
         <div class="manager-toggle" role="group" aria-label="Режим отображения"><button type="button" :class="{ selected: managerView === 'list' }" @click="managerView = 'list'">Список</button><button type="button" :class="{ selected: managerView === 'calendar' }" @click="managerView = 'calendar'">Календарь</button><template v-if="managerView === 'calendar'"><button type="button" :class="{ selected: calendarMode === 'day' }" @click="calendarMode = 'day'">День</button><button type="button" :class="{ selected: calendarMode === 'week' }" @click="calendarMode = 'week'">Неделя</button></template></div>
         <p v-if="!managerLoading && !manager.items.length" class="hint">Карточки не найдены за выбранный период.</p>
         <div v-else-if="managerView === 'list'" class="manager-list"><a v-for="item in manager.items" :key="item.public_id" class="manager-row panel" :href="`/cards/${item.public_id}`"><div><strong>{{ item.number }}</strong><span class="muted">Тикет {{ item.omnidesk_ticket_number }}</span></div><span class="status" :class="`status-${item.status}`">{{ item.status_label }}</span><span>{{ formatDateTime(item.planned_start_at) }} · {{ formatDuration(item.planned_duration_minutes) }}</span><span>L2: {{ item.l2_engineer_name || "Не назначен" }}</span><span v-if="item.urgent || item.overdue" class="muted">{{ item.urgent ? "Срочно " : "" }}{{ item.overdue ? "Просрочено" : "" }}</span></a></div>
-        <div v-else class="calendar" :style="{ '--calendar-days': String(calendarDays.length) }"" :data-calendar-days="calendarDays.length"><div class="calendar-head"><span>Время</span><strong v-for="day in calendarDays" :key="day.toISOString()">{{ new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "short" }).format(day) }}</strong></div><div class="calendar-body"><div class="calendar-times"><span v-for="hour in calendarHours" :key="hour">{{ String(hour).padStart(2, "0") }}:00</span></div><div v-for="day in calendarDays" :key="`col-${day.toISOString()}`" class="calendar-column"><span v-for="hour in calendarHours" :key="hour" class="calendar-line" :style="{ top: `${hour * 80}px` }"></span><a v-for="item in calendarItems(day)" :key="item.public_id" class="calendar-event" :class="[`status-${item.status}`, { urgent: item.urgent, overdue: item.overdue }]" :style="calendarEventStyle(item, day)" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ formatTime(item.planned_start_at) }}–{{ formatTime(item.planned_end_at) }} · L2: {{ item.l2_engineer_name || "Не назначен" }}</span><small>{{ item.status_label }}{{ item.urgent ? " · Срочно" : "" }}{{ item.overdue ? " · Просрочено" : "" }}</small></a></div></div></div>
+        <div v-else class="calendar" :style="{ '--calendar-days': String(calendarDays.length) }" :data-calendar-days="calendarDays.length"><div class="calendar-head"><span>Время</span><strong v-for="day in calendarDays" :key="day.toISOString()">{{ new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "short" }).format(day) }}</strong></div><div class="calendar-body"><div class="calendar-times"><span v-for="hour in calendarHours" :key="hour">{{ String(hour).padStart(2, "0") }}:00</span></div><div v-for="day in calendarDays" :key="`col-${day.toISOString()}`" class="calendar-column"><span v-for="hour in calendarHours" :key="hour" class="calendar-line" :style="{ top: `${hour * 80}px` }"></span><a v-for="item in calendarItems(day)" :key="item.public_id" class="calendar-event" :class="[`status-${item.status}`, { urgent: item.urgent, overdue: item.overdue }]" :style="calendarEventStyle(item, day)" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ formatTime(item.planned_start_at) }}–{{ formatTime(item.planned_end_at) }} · L2: {{ item.l2_engineer_name || "Не назначен" }}</span><small>{{ item.status_label }}{{ item.urgent ? " · Срочно" : "" }}{{ item.overdue ? " · Просрочено" : "" }}</small></a></div></div></div>
       </template>
 
       <template v-else>
