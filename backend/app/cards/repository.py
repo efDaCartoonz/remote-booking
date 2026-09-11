@@ -1234,6 +1234,15 @@ class PostgresCardRepository:
         with self.connection.cursor() as cursor:
             if owner_field not in {"l1_owner_id", "l2_engineer_id"}:
                 raise ValueError("invalid assignment owner field")
+            exclusion_sql = ""
+            params = {
+                "user_id": user_id,
+                "planned_start_at": planned_start_at,
+                "planned_end_at": planned_end_at,
+            }
+            if exclude_card_id is not None:
+                exclusion_sql = "AND id <> %(exclude_card_id)s"
+                params["exclude_card_id"] = exclude_card_id
             cursor.execute(
                 f"""
                 SELECT planned_start_at,
@@ -1246,15 +1255,10 @@ class PostgresCardRepository:
                   AND %(planned_start_at)s < (
                     planned_start_at + planned_duration_minutes * interval '1 minute'
                   )
-                  AND (%(exclude_card_id)s IS NULL OR id <> %(exclude_card_id)s)
+                  {exclusion_sql}
                 ORDER BY planned_start_at, id
                 """,
-                {
-                    "user_id": user_id,
-                    "planned_start_at": planned_start_at,
-                    "planned_end_at": planned_end_at,
-                    "exclude_card_id": exclude_card_id,
-                },
+                params,
             )
             rows = cursor.fetchall()
         return tuple(

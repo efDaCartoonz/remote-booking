@@ -7,6 +7,7 @@ import app.api.manager as manager_api
 import psycopg
 import pytest
 from app.auth.store import RoleRecord, UserAuthRecord
+from app.cards.repository import PostgresCardRepository
 from app.frame.omnidesk import OmnideskTicket
 from app.main import create_app
 from fastapi.testclient import TestClient
@@ -62,6 +63,19 @@ def test_postgres_metadata_has_expected_constraints(database_url: str) -> None:
             "SELECT conname FROM pg_constraint WHERE conrelid='connection_cards'::regclass AND conname='ex_connection_cards_l2_no_overlap'"
         )
         assert cursor.fetchone() is not None
+
+
+def test_active_intervals_without_exclusion_id_are_queryable(database_url: str) -> None:
+    start = datetime.now(UTC) + timedelta(days=2)
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        _seed_users(connection, 91001)
+        _insert_card(connection, ticket="910-000000", l2=91001, start=start)
+        intervals = PostgresCardRepository(connection)._list_active_card_intervals(
+            91001,
+            planned_start_at=start,
+            planned_end_at=start + timedelta(minutes=60),
+        )
+    assert len(intervals) == 1
 
 
 def test_postgres_sequential_conflicts_are_distinct(database_url: str) -> None:
