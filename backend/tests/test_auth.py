@@ -1,14 +1,13 @@
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import Depends, FastAPI
-from fastapi.testclient import TestClient
-
 from app.auth.dependencies import get_auth_store, require_roles
 from app.auth.security import hash_password, hash_session_token
 from app.auth.store import AuthSessionRecord, RoleRecord, SessionRecord, UserAuthRecord
 from app.core.config import settings
 from app.main import create_app
+from fastapi import Depends, FastAPI
+from fastapi.testclient import TestClient
 
 
 class FakeAuthStore:

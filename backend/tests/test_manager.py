@@ -2,8 +2,6 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from uuid import uuid4
 
-from fastapi.testclient import TestClient
-
 import app.api.manager as manager_api
 from app.api.manager import get_manager_repository
 from app.auth.dependencies import get_auth_store, get_current_user
@@ -12,6 +10,7 @@ from app.cards.constants import CardStatus
 from app.cards.repository import CardRecord, PostgresCardRepository
 from app.db import get_db
 from app.main import create_app
+from fastapi.testclient import TestClient
 
 
 def make_card(status: CardStatus, number: str, *, overdue: bool = False) -> CardRecord:

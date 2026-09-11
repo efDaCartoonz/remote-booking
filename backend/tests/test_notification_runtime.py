@@ -6,7 +6,6 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-
 from app.notifications import (
     Bitrix24Adapter,
     NotificationIntent,

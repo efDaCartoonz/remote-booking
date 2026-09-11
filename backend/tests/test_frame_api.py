@@ -4,9 +4,6 @@ import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
-from fastapi.testclient import TestClient
-from test_cards import FakeCardRepository
-
 from app.api.frame import get_frame_card_repository
 from app.cards.constants import ActorType, CreatedSource
 from app.cards.schemas import CardCreateRequest
@@ -26,6 +23,8 @@ from app.frame.sessions import (
     get_frame_session_store,
 )
 from app.main import create_app
+from fastapi.testclient import TestClient
+from test_cards import FakeCardRepository
 
 
 class FakeFrameSessionStore:
