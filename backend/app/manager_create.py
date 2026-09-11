@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from typing import TypeVar
 
+from psycopg.errors import ExclusionViolation, UniqueViolation
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.cards.schemas import TicketNumber
@@ -10,6 +13,34 @@ from app.cards.schemas import TicketNumber
 
 class ManagerAssignmentMethod(str, Enum):
     AUTO = "auto"
+
+
+class ManagerCreateConflictError(Exception):
+    def __init__(self, detail: str) -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+T = TypeVar("T")
+
+
+def run_manager_create_transaction(
+    operation: Callable[[], T], *, rollback: Callable[[], None]
+) -> T:
+    try:
+        return operation()
+    except ExclusionViolation as exc:
+        constraint_name = getattr(getattr(exc, "diag", None), "constraint_name", None)
+        if constraint_name != "ex_connection_cards_l2_no_overlap":
+            raise
+        rollback()
+        raise ManagerCreateConflictError("l2_assignment_conflict") from None
+    except UniqueViolation as exc:
+        constraint_name = getattr(getattr(exc, "diag", None), "constraint_name", None)
+        if constraint_name != "ux_connection_cards_one_active_per_ticket":
+            raise
+        rollback()
+        raise ManagerCreateConflictError("active_card_exists_for_ticket") from None
 
 
 class ManagerCreateRequest(BaseModel):

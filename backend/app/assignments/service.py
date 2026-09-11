@@ -36,6 +36,7 @@ class L2DistributionService:
         notifications: NotificationService | None = None,
     ) -> None:
         self.repository = repository
+        self.notifications = notifications
         self.l1_distribution_service = L1DistributionService(repository, notifications)
         self.manager_escalation_service = ManagerEscalationService(
             repository, notifications
@@ -173,7 +174,9 @@ class L2DistributionService:
             (
                 item
                 for item in self.repository.list_all_l2_candidates(
-                    planned_start_at=card.planned_start_at, planned_end_at=end
+                    planned_start_at=card.planned_start_at,
+                    planned_end_at=end,
+                    exclude_card_id=card.id,
                 )
                 if item.user_id == card.l2_engineer_id
             ),

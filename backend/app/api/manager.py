@@ -31,10 +31,12 @@ from app.frame.omnidesk import (
     validate_ticket_response,
 )
 from app.manager_create import (
+    ManagerCreateConflictError,
     ManagerCreateRequest,
     ManagerL2Option,
     ManagerL2OptionsResponse,
     ManagerTicketPreflightResponse,
+    run_manager_create_transaction,
     validate_manager_window,
 )
 from app.notifications import PostgresNotificationService
@@ -237,37 +239,45 @@ def manager_create_card(
     ticket = _manager_ticket(omnidesk, payload.case_id, payload.case_number)
     if not ticket.user_id:
         raise HTTPException(status_code=422, detail="ticket_client_missing")
-    with db_connection() as connection:
-        repository = PostgresCardRepository(connection)
-        if repository.has_active_card_for_ticket(ticket.number):
-            raise HTTPException(status_code=409, detail="active_card_exists_for_ticket")
-        client = repository.get_or_create_client(
-            ClientSyncData(
-                omnidesk_user_id=ticket.user_id,
-                omnidesk_company_id=ticket.company_id,
-                display_name=ticket.client_display_name,
-                preferred_contact_value=ticket.client_contact_value,
+    try:
+        with db_connection() as connection:
+            repository = PostgresCardRepository(connection)
+            if repository.has_active_card_for_ticket(ticket.number):
+                raise HTTPException(
+                    status_code=409, detail="active_card_exists_for_ticket"
+                )
+            client = repository.get_or_create_client(
+                ClientSyncData(
+                    omnidesk_user_id=ticket.user_id,
+                    omnidesk_company_id=ticket.company_id,
+                    display_name=ticket.client_display_name,
+                    preferred_contact_value=ticket.client_contact_value,
+                )
             )
-        )
-        try:
-            card = CardService(
-                repository, PostgresNotificationService(connection)
-            ).create_card(
-                CardCreateRequest(
-                    omnidesk_ticket_number=ticket.number,
-                    planned_start_at=payload.planned_start_at,
-                    planned_duration_minutes=payload.planned_duration_minutes,
-                    client_id=client.id,
-                    description=payload.description,
-                    l2_engineer_id=payload.l2_user_id,
-                ),
-                actor_user_id=user.id,
-                ip_address=request.client.host if request.client else None,
-                user_agent=request.headers.get("user-agent"),
-                manual_assignment=payload.l2_user_id is not None,
-            )
-        except InvalidCardTransitionError as exc:
-            raise HTTPException(status_code=409, detail=exc.detail) from exc
+            try:
+                card = run_manager_create_transaction(
+                    lambda: CardService(
+                        repository, PostgresNotificationService(connection)
+                    ).create_card(
+                        CardCreateRequest(
+                            omnidesk_ticket_number=ticket.number,
+                            planned_start_at=payload.planned_start_at,
+                            planned_duration_minutes=payload.planned_duration_minutes,
+                            client_id=client.id,
+                            description=payload.description,
+                            l2_engineer_id=payload.l2_user_id,
+                        ),
+                        actor_user_id=user.id,
+                        ip_address=request.client.host if request.client else None,
+                        user_agent=request.headers.get("user-agent"),
+                        manual_assignment=payload.l2_user_id is not None,
+                    ),
+                    rollback=connection.rollback,
+                )
+            except InvalidCardTransitionError as exc:
+                raise HTTPException(status_code=409, detail=exc.detail) from exc
+    except ManagerCreateConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
     return card_response(card)
 
 

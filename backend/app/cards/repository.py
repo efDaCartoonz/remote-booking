@@ -468,7 +468,11 @@ class PostgresCardRepository:
         ]
 
     def list_all_l2_candidates(
-        self, *, planned_start_at: datetime, planned_end_at: datetime
+        self,
+        *,
+        planned_start_at: datetime,
+        planned_end_at: datetime,
+        exclude_card_id: int | None = None,
     ) -> list[L2DistributionCandidate]:
         with self.connection.cursor() as cursor:
             cursor.execute(
@@ -492,6 +496,7 @@ class PostgresCardRepository:
                         user_id,
                         planned_start_at=planned_start_at,
                         planned_end_at=planned_end_at,
+                        exclude_card_id=exclude_card_id,
                     )
                 ),
             )
@@ -1224,6 +1229,7 @@ class PostgresCardRepository:
         planned_start_at: datetime,
         planned_end_at: datetime,
         owner_field: str = "l2_engineer_id",
+        exclude_card_id: int | None = None,
     ) -> tuple[TimeInterval, ...]:
         with self.connection.cursor() as cursor:
             if owner_field not in {"l1_owner_id", "l2_engineer_id"}:
@@ -1240,12 +1246,14 @@ class PostgresCardRepository:
                   AND %(planned_start_at)s < (
                     planned_start_at + planned_duration_minutes * interval '1 minute'
                   )
+                  AND (%(exclude_card_id)s IS NULL OR id <> %(exclude_card_id)s)
                 ORDER BY planned_start_at, id
                 """,
                 {
                     "user_id": user_id,
                     "planned_start_at": planned_start_at,
                     "planned_end_at": planned_end_at,
+                    "exclude_card_id": exclude_card_id,
                 },
             )
             rows = cursor.fetchall()
