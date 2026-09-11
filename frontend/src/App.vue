@@ -358,7 +358,7 @@ onMounted(load);
 
 <template>
   <main class="shell">
-    <section class="card" :class="{ 'manager-card': managerPath }" aria-live="polite">
+    <section class="card" :class="{ 'manager-card': managerPath && !!user }" aria-live="polite">
       <p v-if="busy">Проверяем сессию…</p>
 
       <template v-else-if="!user">
