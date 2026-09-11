@@ -60,6 +60,31 @@ class OmnideskTicketReopenError(Exception):
         super().__init__(detail)
 
 
+class OmnideskTicketClientChangedError(Exception):
+    def __init__(self, detail: str = "omnidesk_ticket_client_changed") -> None:
+        self.detail = detail
+        super().__init__(detail)
+
+
+def validate_ticket_response(
+    ticket: OmnideskTicket | None,
+    *,
+    case_id: str,
+    case_number: str,
+    expected_user_id: str | None = None,
+    require_open: bool = False,
+) -> OmnideskTicket:
+    if ticket is None or ticket.case_id != case_id or ticket.number != case_number:
+        raise OmnideskTicketMismatchError
+    if ticket.deleted or ticket.spam:
+        raise OmnideskTicketNotFoundError("ticket_not_available")
+    if require_open and ticket.status != "open":
+        raise OmnideskTicketReopenError("omnidesk_ticket_not_open_after_reopen")
+    if expected_user_id is not None and ticket.user_id != expected_user_id:
+        raise OmnideskTicketClientChangedError
+    return ticket
+
+
 class HttpOmnideskTicketClient:
     def __init__(
         self,

@@ -9,9 +9,11 @@ from app.cards.service import CardService
 from app.frame.omnidesk import (
     OmnideskTicket,
     OmnideskTicketClient,
+    OmnideskTicketClientChangedError,
     OmnideskTicketMismatchError,
     OmnideskTicketNotFoundError,
     OmnideskTicketReopenError,
+    validate_ticket_response,
 )
 from app.frame.schemas import FrameCardCreateRequest
 from app.frame.sessions import CreatedFrameSession, FrameSession, FrameSessionStore
@@ -155,11 +157,14 @@ class FrameService:
             raise FrameTicketAccessError(exc.detail) from exc
         if ticket is None:
             raise FrameTicketAccessError("ticket_not_available")
-        if ticket.case_id != case_id or ticket.number != ticket_number:
-            raise FrameTicketAccessError("omnidesk_ticket_id_number_mismatch")
-        if ticket.deleted or ticket.spam:
-            raise FrameTicketAccessError("ticket_not_available")
-        return ticket
+        try:
+            return validate_ticket_response(
+                ticket, case_id=case_id, case_number=ticket_number
+            )
+        except OmnideskTicketMismatchError as exc:
+            raise FrameTicketAccessError(exc.detail) from exc
+        except OmnideskTicketNotFoundError as exc:
+            raise FrameTicketAccessError(exc.detail) from exc
 
     def _ensure_ticket_open(self, ticket: OmnideskTicket) -> OmnideskTicket:
         if ticket.status != "closed":
@@ -173,13 +178,24 @@ class FrameService:
             raise FrameTicketAccessError(exc.detail) from exc
         if reopened is None:
             raise FrameTicketAccessError("ticket_not_available")
-        if reopened.case_id != ticket.case_id or reopened.number != ticket.number:
-            raise FrameTicketAccessError("omnidesk_ticket_id_number_mismatch")
-        if reopened.deleted or reopened.spam or reopened.user_id != ticket.user_id:
-            raise FrameTicketAccessError("ticket_not_available")
-        if reopened.status != "open":
-            raise OmnideskTicketReopenError("omnidesk_ticket_not_open_after_reopen")
-        return reopened
+        try:
+            return validate_ticket_response(
+                reopened,
+                case_id=ticket.case_id,
+                case_number=ticket.number,
+                expected_user_id=ticket.user_id,
+                require_open=True,
+            )
+        except (
+            OmnideskTicketMismatchError,
+            OmnideskTicketNotFoundError,
+            OmnideskTicketClientChangedError,
+        ) as exc:
+            raise FrameTicketAccessError(
+                getattr(exc, "detail", "ticket_not_available")
+            ) from exc
+        except OmnideskTicketReopenError:
+            raise
 
     def _validate_planning_window(self, planned_start_at: datetime) -> None:
         now = datetime.now(UTC)

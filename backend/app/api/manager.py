@@ -23,10 +23,12 @@ from app.cards.service import CardService, InvalidCardTransitionError
 from app.db import db_connection
 from app.frame.omnidesk import (
     OmnideskTicketClient,
+    OmnideskTicketClientChangedError,
     OmnideskTicketMismatchError,
     OmnideskTicketNotFoundError,
     OmnideskTicketReopenError,
     get_omnidesk_ticket_client,
+    validate_ticket_response,
 )
 from app.manager_create import (
     ManagerCreateRequest,
@@ -118,65 +120,118 @@ def _manager_ticket(client: OmnideskTicketClient, case_id: str, case_number: str
     try:
         ticket = client.get_ticket_by_case_id(case_id)
     except (OmnideskTicketNotFoundError, OmnideskTicketMismatchError) as exc:
-        raise HTTPException(status_code=404, detail="omnidesk_ticket_not_found") from exc
-    if ticket is None or ticket.case_id != case_id or ticket.number != case_number or ticket.deleted or ticket.spam:
-        raise HTTPException(status_code=404, detail="omnidesk_ticket_not_available")
+        raise HTTPException(
+            status_code=404, detail="omnidesk_ticket_not_found"
+        ) from exc
+    try:
+        ticket = validate_ticket_response(
+            ticket, case_id=case_id, case_number=case_number
+        )
+    except OmnideskTicketMismatchError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail) from exc
+    except OmnideskTicketNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=exc.detail) from exc
+    original_user_id = ticket.user_id
     if ticket.status == "closed":
         try:
             client.reopen_ticket(case_id)
-            ticket = client.get_ticket_by_case_id(case_id)
-        except (OmnideskTicketNotFoundError, OmnideskTicketMismatchError, OmnideskTicketReopenError) as exc:
-            raise HTTPException(status_code=409, detail="omnidesk_ticket_reopen_failed") from exc
-        if ticket is None or ticket.status != "open":
-            raise HTTPException(status_code=409, detail="omnidesk_ticket_not_open_after_reopen")
+            ticket = validate_ticket_response(
+                client.get_ticket_by_case_id(case_id),
+                case_id=case_id,
+                case_number=case_number,
+                expected_user_id=original_user_id,
+                require_open=True,
+            )
+        except (
+            OmnideskTicketNotFoundError,
+            OmnideskTicketMismatchError,
+            OmnideskTicketReopenError,
+            OmnideskTicketClientChangedError,
+        ) as exc:
+            raise HTTPException(status_code=409, detail=exc.detail) from exc
     return ticket
 
 
-@router.get("/tickets/{case_id}/preflight", response_model=ManagerTicketPreflightResponse)
+@router.get(
+    "/tickets/{case_id}/preflight", response_model=ManagerTicketPreflightResponse
+)
 def manager_ticket_preflight(
-    case_id: str, case_number: str, _: Annotated[UserAuthRecord, Depends(require_manager_role)],
+    case_id: str,
+    case_number: str,
+    _: Annotated[UserAuthRecord, Depends(require_manager_role)],
     omnidesk: Annotated[OmnideskTicketClient, Depends(get_omnidesk_ticket_client)],
 ) -> ManagerTicketPreflightResponse:
     ticket = _manager_ticket(omnidesk, case_id, case_number)
     with db_connection() as connection:
         repository = PostgresCardRepository(connection)
-        can_create = bool(ticket.user_id) and not repository.has_active_card_for_ticket(ticket.number)
-    return ManagerTicketPreflightResponse(case_id=ticket.case_id, case_number=ticket.number,
-        status=ticket.status, client_display_name=ticket.client_display_name, can_create=can_create)
+        can_create = bool(ticket.user_id) and not repository.has_active_card_for_ticket(
+            ticket.number
+        )
+    return ManagerTicketPreflightResponse(
+        case_id=ticket.case_id,
+        case_number=ticket.number,
+        status=ticket.status,
+        client_display_name=ticket.client_display_name,
+        can_create=can_create,
+    )
 
 
 @router.get("/l2-options", response_model=ManagerL2OptionsResponse)
 def manager_l2_options(
-    planned_start_at: datetime, planned_duration_minutes: Annotated[int, Query(ge=30, le=720)],
+    planned_start_at: datetime,
+    planned_duration_minutes: Annotated[int, Query(ge=30, le=720)],
     _: Annotated[UserAuthRecord, Depends(require_manager_role)],
 ) -> ManagerL2OptionsResponse:
     if planned_start_at.tzinfo is None or planned_start_at.utcoffset() is None:
-        raise HTTPException(status_code=422, detail="planned_start_at_must_be_timezone_aware")
+        raise HTTPException(
+            status_code=422, detail="planned_start_at_must_be_timezone_aware"
+        )
     try:
-        validate_manager_window(planned_start_at.astimezone(datetime.now().astimezone().tzinfo), planned_duration_minutes)
+        validate_manager_window(
+            planned_start_at.astimezone(datetime.now().astimezone().tzinfo),
+            planned_duration_minutes,
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     start = planned_start_at.astimezone(datetime.now().astimezone().tzinfo)
     end = start + timedelta(minutes=planned_duration_minutes)
     with db_connection() as connection:
         repository = PostgresCardRepository(connection)
-        candidates = {c.user_id: c for c in repository.list_all_l2_candidates(planned_start_at=start, planned_end_at=end)}
+        candidates = {
+            c.user_id: c
+            for c in repository.list_all_l2_candidates(
+                planned_start_at=start, planned_end_at=end
+            )
+        }
         items = []
         from app.assignments.service import _candidate_is_available
+
         for user_id, candidate in candidates.items():
-            available = _candidate_is_available(candidate, planned_start_at=start, planned_end_at=end)
-            items.append(ManagerL2Option(user_id=user_id, display_name=repository.get_user_display_name(user_id) or "L2", available=available, reason_code=None if available else "schedule_or_conflict"))
+            available = _candidate_is_available(
+                candidate, planned_start_at=start, planned_end_at=end
+            )
+            items.append(
+                ManagerL2Option(
+                    user_id=user_id,
+                    display_name=repository.get_user_display_name(user_id) or "L2",
+                    available=available,
+                    reason_code=None if available else "schedule_or_conflict",
+                )
+            )
     return ManagerL2OptionsResponse(items=items)
 
 
 @router.post("/cards", response_model=CardResponse, status_code=201)
 def manager_create_card(
-    payload: ManagerCreateRequest, request: Request,
+    payload: ManagerCreateRequest,
+    request: Request,
     user: Annotated[UserAuthRecord, Depends(require_manager_role)],
     omnidesk: Annotated[OmnideskTicketClient, Depends(get_omnidesk_ticket_client)],
 ) -> CardResponse:
     try:
-        validate_manager_window(payload.planned_start_at, payload.planned_duration_minutes)
+        validate_manager_window(
+            payload.planned_start_at, payload.planned_duration_minutes
+        )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     ticket = _manager_ticket(omnidesk, payload.case_id, payload.case_number)
@@ -186,16 +241,28 @@ def manager_create_card(
         repository = PostgresCardRepository(connection)
         if repository.has_active_card_for_ticket(ticket.number):
             raise HTTPException(status_code=409, detail="active_card_exists_for_ticket")
-        client = repository.get_or_create_client(ClientSyncData(
-            omnidesk_user_id=ticket.user_id, omnidesk_company_id=ticket.company_id,
-            display_name=ticket.client_display_name, preferred_contact_value=ticket.client_contact_value,
-        ))
+        client = repository.get_or_create_client(
+            ClientSyncData(
+                omnidesk_user_id=ticket.user_id,
+                omnidesk_company_id=ticket.company_id,
+                display_name=ticket.client_display_name,
+                preferred_contact_value=ticket.client_contact_value,
+            )
+        )
         try:
-            card = CardService(repository, PostgresNotificationService(connection)).create_card(
-                CardCreateRequest(omnidesk_ticket_number=ticket.number, planned_start_at=payload.planned_start_at,
-                    planned_duration_minutes=payload.planned_duration_minutes, client_id=client.id,
-                    description=payload.description, l2_engineer_id=payload.l2_user_id),
-                actor_user_id=user.id, ip_address=request.client.host if request.client else None,
+            card = CardService(
+                repository, PostgresNotificationService(connection)
+            ).create_card(
+                CardCreateRequest(
+                    omnidesk_ticket_number=ticket.number,
+                    planned_start_at=payload.planned_start_at,
+                    planned_duration_minutes=payload.planned_duration_minutes,
+                    client_id=client.id,
+                    description=payload.description,
+                    l2_engineer_id=payload.l2_user_id,
+                ),
+                actor_user_id=user.id,
+                ip_address=request.client.host if request.client else None,
                 user_agent=request.headers.get("user-agent"),
                 manual_assignment=payload.l2_user_id is not None,
             )
