@@ -157,6 +157,8 @@ class CardRepository(Protocol):
 
     def get_or_create_client(self, data: ClientSyncData) -> ClientRecord: ...
 
+    def get_user_display_name(self, user_id: int) -> str | None: ...
+
     def list_cards_by_ticket(self, omnidesk_ticket_number: str) -> list[CardRecord]: ...
 
     def has_active_card_for_ticket(self, omnidesk_ticket_number: str) -> bool: ...
@@ -207,6 +209,12 @@ class CardRepository(Protocol):
 class PostgresCardRepository:
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
+
+    def get_user_display_name(self, user_id: int) -> str | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT full_name FROM users WHERE id=%(id)s", {"id": user_id})
+            row = cursor.fetchone()
+        return row["full_name"] if row else None
 
     def create_reminder_schedule(
         self,
@@ -455,6 +463,25 @@ class PostgresCardRepository:
                 ),
             )
             for user_id in user_ids
+        ]
+
+    def list_all_l2_candidates(
+        self, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> list[L2DistributionCandidate]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT u.id FROM users u JOIN user_roles ur ON ur.user_id=u.id WHERE u.is_active AND ur.role_id=%(role)s ORDER BY u.id",
+                {"role": int(RoleId.L2)},
+            )
+            ids = [row["id"] for row in cursor.fetchall()]
+        return [
+            L2DistributionCandidate(
+                user_id=user_id,
+                schedules=tuple(self._list_schedule_windows(user_id)),
+                absences=tuple(self._list_absence_intervals(user_id, planned_start_at=planned_start_at, planned_end_at=planned_end_at)),
+                active_cards=tuple(self._list_active_card_intervals(user_id, planned_start_at=planned_start_at, planned_end_at=planned_end_at)),
+            )
+            for user_id in ids
         ]
 
     def list_l1_distribution_candidates(

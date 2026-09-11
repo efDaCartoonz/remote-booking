@@ -158,6 +158,69 @@ class L2DistributionService:
             )
         return updated
 
+    def run_manual_assignment(
+        self, card: CardRecord, *, actor_user_id: int, ip_address: str | None,
+        user_agent: str | None,
+    ) -> CardRecord:
+        if card.l2_engineer_id is None:
+            raise AssignmentDecisionError("l2_engineer_required")
+        end = card.planned_start_at + timedelta(minutes=card.planned_duration_minutes)
+        candidate = next((item for item in self.repository.list_all_l2_candidates(
+            planned_start_at=card.planned_start_at, planned_end_at=end
+        ) if item.user_id == card.l2_engineer_id), None)
+        if candidate is None:
+            raise AssignmentDecisionError("l2_not_active_or_role_missing")
+        if not _candidate_is_available(candidate, planned_start_at=card.planned_start_at, planned_end_at=end):
+            raise AssignmentDecisionError("l2_unavailable")
+        cycle = self.repository.create_assignment_cycle(
+            card_id=card.id,
+            cycle_number=self.repository.get_next_assignment_cycle_number(card.id),
+            status=AssignmentCycleStatus.IN_PROGRESS,
+        )
+        self.repository.add_audit_log(
+            actor_user_id=actor_user_id, actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.CREATE, entity_type="assignment_cycle", entity_id=cycle.id,
+            old_values=None, new_values={"card_id": card.id, "cycle_number": cycle.cycle_number},
+            ip_address=ip_address, user_agent=user_agent,
+        )
+        attempt = self.repository.create_assignment_attempt(
+            cycle_id=cycle.id, card_id=card.id, l2_engineer_id=card.l2_engineer_id,
+            status=AssignmentAttemptStatus.PENDING,
+        )
+        self.repository.add_audit_log(
+            actor_user_id=actor_user_id, actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.CREATE, entity_type="assignment_attempt", entity_id=attempt.id,
+            old_values=None, new_values=_assignment_attempt_snapshot(attempt),
+            ip_address=ip_address, user_agent=user_agent,
+        )
+        self.repository.update_assignment_cycle_status(cycle_id=cycle.id, status=AssignmentCycleStatus.ASSIGNED)
+        if hasattr(self.repository, "create_reminder_schedule"):
+            self.repository.create_reminder_schedule(
+                card_id=card.id, kind="l2_reminder", owner_id=card.l2_engineer_id,
+                anchor_at=datetime.now(UTC), cycle_id=cycle.id, attempt_id=attempt.id,
+            )
+        event_id = self.repository.add_card_event(
+            card_id=card.id, event_type=CardEventType.ENGINEER_ASSIGNED,
+            actor_user_id=actor_user_id, actor_type=ActorType.INTERNAL_USER,
+            old_values=_card_distribution_snapshot(card), new_values=_card_distribution_snapshot(card),
+            comment="manager_manual_assignment",
+        )
+        self.repository.add_audit_log(
+            actor_user_id=actor_user_id, actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.UPDATE, entity_id=card.id, old_values=None,
+            new_values={"status_code": int(CardStatus.ASSIGNED), "l2_engineer_id": card.l2_engineer_id},
+            ip_address=ip_address, user_agent=user_agent,
+        )
+        if self.notifications is not None:
+            for channel in ("telegram", "bitrix24"):
+                self.notifications.notify(
+                    event="l2_reminder", card_id=card.id, source_event_id=event_id,
+                    source_event_type=int(CardEventType.ENGINEER_ASSIGNED),
+                    recipient_user_id=card.l2_engineer_id, channel=channel,
+                    payload={"card_id": card.id, "assignment": "l2"},
+                )
+        return card
+
     def confirm_current_assignment(
         self,
         card: CardRecord,

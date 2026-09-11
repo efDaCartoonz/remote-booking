@@ -34,6 +34,10 @@ class AssignmentRepository(Protocol):
         self, *, planned_start_at: datetime, planned_end_at: datetime
     ) -> list[L2DistributionCandidate]: ...
 
+    def list_all_l2_candidates(
+        self, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> list[L2DistributionCandidate]: ...
+
     def get_distribution_last_user_id_for_update(
         self, pool: DistributionPool
     ) -> int | None: ...

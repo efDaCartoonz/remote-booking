@@ -7,7 +7,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import get_current_user, require_roles
 from app.auth.store import UserAuthRecord
 from app.cards.constants import RoleId
 from app.cards.repository import CardRecord, CardRepository, PostgresCardRepository
@@ -28,6 +28,7 @@ from app.db import get_db
 from app.notifications import PostgresNotificationService
 
 router = APIRouter(prefix="/api/v1/cards", tags=["cards"])
+require_manager_role = require_roles(int(RoleId.MANAGER))
 
 
 def get_card_repository(
@@ -51,15 +52,11 @@ def get_card_service(
 def create_card(
     payload: CardCreateRequest,
     request: Request,
-    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    user: Annotated[UserAuthRecord, Depends(require_manager_role)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
-    card = service.create_card(
-        payload,
-        actor_user_id=user.id,
-        ip_address=_client_ip(request),
-        user_agent=request.headers.get("user-agent"),
-    )
+    card = service.create_card(payload, actor_user_id=user.id,
+        ip_address=_client_ip(request), user_agent=request.headers.get("user-agent"))
     return card_response(card)
 
 
