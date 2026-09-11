@@ -240,8 +240,10 @@ class CardService:
         elif payload.l2_engineer_id is not None and manual_assignment:
             try:
                 card = self.l2_distribution_service.run_manual_assignment(
-                    card, actor_user_id=actor_user_id or 0,
-                    ip_address=ip_address, user_agent=user_agent,
+                    card,
+                    actor_user_id=actor_user_id or 0,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
                 )
             except AssignmentDecisionError as exc:
                 raise InvalidCardTransitionError(exc.detail) from exc

@@ -55,8 +55,12 @@ def create_card(
     user: Annotated[UserAuthRecord, Depends(require_manager_role)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
-    card = service.create_card(payload, actor_user_id=user.id,
-        ip_address=_client_ip(request), user_agent=request.headers.get("user-agent"))
+    card = service.create_card(
+        payload,
+        actor_user_id=user.id,
+        ip_address=_client_ip(request),
+        user_agent=request.headers.get("user-agent"),
+    )
     return card_response(card)
 
 

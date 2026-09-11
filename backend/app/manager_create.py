@@ -37,7 +37,10 @@ class ManagerCreateRequest(BaseModel):
 
     @model_validator(mode="after")
     def one_assignment_method(self):
-        if self.l2_user_id is None and self.assignment_method != ManagerAssignmentMethod.AUTO:
+        if (
+            self.l2_user_id is None
+            and self.assignment_method != ManagerAssignmentMethod.AUTO
+        ):
             raise ValueError("assignment_method_and_l2_user_id_mismatch")
         return self
 

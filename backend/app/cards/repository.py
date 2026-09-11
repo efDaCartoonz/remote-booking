@@ -212,7 +212,9 @@ class PostgresCardRepository:
 
     def get_user_display_name(self, user_id: int) -> str | None:
         with self.connection.cursor() as cursor:
-            cursor.execute("SELECT full_name FROM users WHERE id=%(id)s", {"id": user_id})
+            cursor.execute(
+                "SELECT full_name FROM users WHERE id=%(id)s", {"id": user_id}
+            )
             row = cursor.fetchone()
         return row["full_name"] if row else None
 
@@ -478,8 +480,20 @@ class PostgresCardRepository:
             L2DistributionCandidate(
                 user_id=user_id,
                 schedules=tuple(self._list_schedule_windows(user_id)),
-                absences=tuple(self._list_absence_intervals(user_id, planned_start_at=planned_start_at, planned_end_at=planned_end_at)),
-                active_cards=tuple(self._list_active_card_intervals(user_id, planned_start_at=planned_start_at, planned_end_at=planned_end_at)),
+                absences=tuple(
+                    self._list_absence_intervals(
+                        user_id,
+                        planned_start_at=planned_start_at,
+                        planned_end_at=planned_end_at,
+                    )
+                ),
+                active_cards=tuple(
+                    self._list_active_card_intervals(
+                        user_id,
+                        planned_start_at=planned_start_at,
+                        planned_end_at=planned_end_at,
+                    )
+                ),
             )
             for user_id in ids
         ]
