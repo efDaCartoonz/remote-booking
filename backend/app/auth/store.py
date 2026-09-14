@@ -44,7 +44,9 @@ class AuthSessionRecord:
 class AuthStore(Protocol):
     def get_user_by_username(self, username: str) -> UserAuthRecord | None: ...
 
-    def get_user_by_session_hash(self, session_hash: str) -> AuthSessionRecord | None: ...
+    def get_user_by_session_hash(
+        self, session_hash: str
+    ) -> AuthSessionRecord | None: ...
 
     def create_session(
         self, user_id: int, session_hash: str, expires_at: datetime

@@ -36,7 +36,9 @@ def login(
         )
 
     token = new_session_token()
-    expires_at = datetime.now(UTC) + timedelta(minutes=settings.auth_session_ttl_minutes)
+    expires_at = datetime.now(UTC) + timedelta(
+        minutes=settings.auth_session_ttl_minutes
+    )
     session = store.create_session(
         user_id=user.id,
         session_hash=hash_session_token(token),
