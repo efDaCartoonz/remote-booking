@@ -31,6 +31,14 @@ Production scanner и delivery остаются выключенными.
   Панель поддерживает режимы списка и календаря (день/неделя), локальные
   date-only фильтры и отображение часового пояса; календарная сетка сохраняет
   точное время и длительность карточек.
+- Создание обычной карточки руководителем:
+  - перед созданием сверяет пару `case_id` и номера обращения в Omnidesk;
+  - принимает только разрешённые поля и создаёт lifecycle L2 атомарно;
+  - ручное назначение учитывает график, отсутствие и пересечения L2;
+  - PostgreSQL-конфликты одного активного обращения и пересечения L2 возвращает
+    как безопасные `409`, без частичного lifecycle;
+  - после отказа L2 создаёт follow-up следующему допустимому L2 с новым
+    attempt, schedule, event, audit и notification intents.
 - Локальная авторизация пользователей через HTTP-only session cookie.
 - Внутренний API карточек и базовые переходы жизненного цикла.
 - Клиентский Frame API для тикетов Omnidesk:
@@ -265,6 +273,10 @@ ruff format --check --no-cache
   сетка без округления фактического времени и длительности, date-only период с
   локальными границами суток, responsive-горизонтальная прокрутка и компактная
   login-карточка до авторизации.
+- manager card creation (`abf0580`): безопасный Omnidesk preflight, ручное и
+  автоматическое назначение L2, откат ошибок follow-up и конкурирующие
+  запросы `201/409` без частичных записей. Controlled stage-smoke подтвердил
+  L2-A → L2-B и отдельное automatic assignment; marker-данные удалены.
 
 Распределение и действия L2 проверены изолированными тестовыми данными внутри
 транзакции с rollback. На stage подтверждены успешное подтверждение назначенным
@@ -413,6 +425,17 @@ PostgreSQL/Redis HTTP/UI smoke. Ручная LAN-проверка `nimda` под
 доставке: обе завершились `sent`, `attempts=1`, audit=1 без retry и дублей;
 получение и открытие ссылки подтверждены вручную. Marker-данные удалены,
 queue=0, active schedules=0; scanner и delivery остаются `false`.
+
+Manager card creation подтверждён на stage (`abf0580`). Isolated candidate
+gate включал PostgreSQL lifecycle, rollback при ошибке schedule и обоих intent,
+terminal L1 follow-up, а также реальные двухсоединительные HTTP-гонки с
+ожидаемыми `201/409`. Controlled stage-smoke по выделенному Omnidesk-тикету
+подтвердил ручное назначение L2-A, отказ и назначение L2-B, затем отдельное
+automatic assignment. Две контролируемые доставки для `nimda` (Telegram и
+Bitrix24) завершились `sent`, `attempts=1`, audit=1 без retry и дублей;
+получение и открытие ссылки подтверждены вручную. Synthetic card, source event,
+intents, audit и пользователи удалены по marker. Queue и active schedules равны
+нулю, `REMINDER_SCANNER_ENABLED=false` и `NOTIFICATION_DELIVERY_ENABLED=false`.
 
 ## Завершение Каждого Этапа
 
