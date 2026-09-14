@@ -26,6 +26,7 @@ h3 { margin: 0 0 4px; font-size: 16px; }
 .action-error { margin: 20px 0 0; }
 
 .top { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.top-actions { display: flex; align-items: center; gap: 16px; }
 .secondary { background: #64748b; }
 .secondary:hover:not(:disabled) { background: #475569; }
 .status-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 4px 0 28px; }
@@ -47,6 +48,11 @@ dd { margin: 0; overflow-wrap: anywhere; }
 .preserve { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
 
 .form { display: grid; gap: 14px; }
+fieldset { display: grid; gap: 10px; padding: 16px; border: 1px solid #e2e8f0; border-radius: 12px; }
+legend { padding: 0 6px; font-weight: 700; }
+.choice { display: flex; grid-template-columns: auto 1fr; align-items: center; gap: 8px; font-weight: 500; }
+.choice input { width: auto; }
+select { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 10px; background: #fff; }
 label { display: grid; gap: 6px; font-weight: 600; }
 input, textarea { width: 100%; padding: 10px 12px; border: 1px solid #cbd5e1; border-radius: 10px; color: #172033; background: #fff; }
 input:focus, textarea:focus, button:focus-visible { outline: 3px solid rgba(56, 103, 214, .25); outline-offset: 2px; }
@@ -104,6 +110,7 @@ input:focus, textarea:focus, button:focus-visible { outline: 3px solid rgba(56, 
   dl { grid-template-columns: 1fr; gap: 4px; }
   dd { margin-bottom: 8px; }
   .top { gap: 10px; }
+  .top-actions { align-items: flex-end; flex-direction: column; gap: 8px; }
   .top .secondary { padding: 9px 11px; }
   .inline-form { flex-direction: column; }
   .history li { flex-direction: column; gap: 5px; }

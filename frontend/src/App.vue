@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 
 type Role = { id: number; name: string };
 type User = { id: number; username: string; full_name: string; roles: Role[] };
@@ -34,6 +34,8 @@ type HistoryEntry = { event_label: string; actor_label: string; created_at: stri
 type ApiError = Error & { status: number; detail?: unknown };
 type ManagerCard = { public_id: string; number: string; omnidesk_ticket_number: string; status: string; status_label: string; planned_start_at: string; planned_end_at: string; planned_duration_minutes: number; l1_owner_name: string | null; l2_engineer_name: string | null; urgent: boolean; overdue: boolean; out_of_hours: boolean };
 type ManagerData = { summary: { assigned: number; confirmed: number; rejected: number; overdue: number }; items: ManagerCard[]; limit: number };
+type TicketPreflight = { case_id: string; case_number: string; status: string; client_display_name: string | null; can_create: boolean };
+type L2Option = { user_id: number; display_name: string; available: boolean; reason_code: string | null };
 
 const RETURN_TO_KEY = "rdm.return_to";
 const user = ref<User | null>(null);
@@ -55,6 +57,7 @@ const rescheduleDescription = ref("");
 const cardId = computed(() => location.pathname.match(/^\/cards\/([^/]+)\/?$/)?.[1]);
 const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Moscow";
 const managerPath = location.pathname === "/manager";
+const managerNewPath = location.pathname === "/manager/cards/new";
 const manager = ref<ManagerData | null>(null);
 const managerStatus = ref("");
 const managerFrom = ref("");
@@ -63,6 +66,14 @@ const managerError = ref("");
 const managerView = ref<"list" | "calendar">("list");
 const calendarMode = ref<"day" | "week">("week");
 const managerLoading = ref(false);
+const create = ref({ caseId: "", caseNumber: "", start: "", duration: 60, description: "", assignment: "auto", l2UserId: "" });
+const ticketPreflight = ref<TicketPreflight | null>(null);
+const l2Options = ref<L2Option[]>([]);
+const createLoading = ref(false);
+const createBusy = ref(false);
+const createError = ref("");
+const createNotice = ref("");
+const l2Request = ref(0);
 
 type ManagerPeriod = { periodFrom: string | null; periodTo: string | null };
 
@@ -211,6 +222,54 @@ async function load(): Promise<void> {
     busy.value = false;
   }
 }
+
+function createErrorMessage(error: unknown): string {
+  const status = (error as ApiError).status;
+  const detail = errorDetail(error);
+  const value = detail && typeof detail === "object" && "detail" in detail ? (detail as { detail?: unknown }).detail : detail;
+  const messages: Record<string, string> = {
+    planned_start_too_soon: "Начало должно быть не раньше минимального срока — за 2 часа.",
+    planned_start_too_far: "Начало не может быть дальше горизонта 14 дней.",
+    l2_assignment_conflict: "Выбранный L2 стал недоступен. Обновите варианты и выберите другого.",
+    active_card_exists_for_ticket: "Для этого тикета уже есть активная карточка.",
+    omnidesk_unavailable: "Omnidesk временно недоступен. Повторите попытку позже.",
+  };
+  if (status === 401) return "Сессия завершилась. Войдите снова.";
+  if (status === 403) return "Создание карточек доступно только руководителю (403).";
+  if (status === 409) return typeof value === "string" ? messages[value] ?? "Данные изменились. Проверьте тикет и назначение заново." : "Данные изменились. Проверьте тикет и назначение заново.";
+  if (status === 422) return Array.isArray(value) ? validationMessage(value) : messages[String(value)] ?? "Проверьте данные формы.";
+  if (status === 404) return "Тикет не найден или номер не совпадает.";
+  return "Не удалось выполнить запрос. Повторите попытку.";
+}
+
+function createStartIso(): string { return new Date(create.value.start).toISOString(); }
+async function preflightTicket(): Promise<void> {
+  ticketPreflight.value = null; createNotice.value = "";
+  if (!create.value.caseId || !create.value.caseNumber) return;
+  createLoading.value = true; createError.value = "";
+  try { ticketPreflight.value = await api<TicketPreflight>(`/api/v1/manager/tickets/${encodeURIComponent(create.value.caseId)}/preflight?case_number=${encodeURIComponent(create.value.caseNumber)}`); }
+  catch (error) { createError.value = createErrorMessage(error); if ((error as ApiError).status === 401) handleUnauthorized(); }
+  finally { createLoading.value = false; }
+}
+async function loadL2Options(): Promise<void> {
+  const request = ++l2Request.value; l2Options.value = [];
+  if (!create.value.start || create.value.duration < 30 || create.value.duration > 720) return;
+  createLoading.value = true;
+  try { const data = await api<{ items: L2Option[] }>(`/api/v1/manager/l2-options?planned_start_at=${encodeURIComponent(createStartIso())}&planned_duration_minutes=${create.value.duration}`); if (request === l2Request.value) l2Options.value = data.items; }
+  catch (error) { if (request === l2Request.value) createError.value = createErrorMessage(error); }
+  finally { if (request === l2Request.value) createLoading.value = false; }
+}
+async function submitCreate(): Promise<void> {
+  createBusy.value = true; createError.value = "";
+  try {
+    const payload: Record<string, unknown> = { case_id: create.value.caseId, case_number: create.value.caseNumber, planned_start_at: createStartIso(), planned_duration_minutes: create.value.duration, description: create.value.description || null, assignment_method: "auto" };
+    if (create.value.assignment === "manual") payload.l2_user_id = Number(create.value.l2UserId);
+    const created = await api<Card>("/api/v1/manager/cards", { method: "POST", body: JSON.stringify(payload) });
+    window.location.assign(`/cards/${created.id}`);
+  } catch (error) { createError.value = createErrorMessage(error); if ((error as ApiError).status === 401) handleUnauthorized(); else if ((error as ApiError).status === 409) await loadL2Options(); }
+  finally { createBusy.value = false; }
+}
+watch(() => [create.value.start, create.value.duration], loadL2Options);
 
 async function loadManager(): Promise<void> {
   managerLoading.value = true;
@@ -479,8 +538,22 @@ onMounted(load);
         <footer class="footer muted">Вы вошли как {{ user.full_name || user.username }}.</footer>
       </template>
 
+      <template v-else-if="managerNewPath">
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Новая карточка</h1><p class="muted">Создание доступно только руководителю.</p></div><a class="button-link" href="/manager">← Вернуться к панели</a></header>
+        <p class="hint">Допустимое начало: не раньше чем через 2 часа и не позднее 14 дней. Длительность: 30–720 минут. Часовой пояс: {{ browserTimeZone }}.</p>
+        <form class="form create-form" @submit.prevent="submitCreate">
+          <div class="grid"><label>ID обращения<input v-model.trim="create.caseId" required pattern="[0-9]+" /></label><label>Номер тикета<input v-model.trim="create.caseNumber" required /></label></div>
+          <button type="button" class="secondary" :disabled="createLoading || !create.caseId || !create.caseNumber" @click="preflightTicket">{{ createLoading ? "Проверяем…" : "Проверить тикет" }}</button>
+          <section v-if="ticketPreflight" class="panel"><strong>Тикет {{ ticketPreflight.case_number }}</strong><p class="muted">Статус: {{ ticketPreflight.status }} · Клиент: {{ ticketPreflight.client_display_name || "Не указан" }}</p><p v-if="!ticketPreflight.can_create" class="error">Для этого тикета нельзя создать новую активную карточку.</p></section>
+          <div class="grid"><label>Начало<input v-model="create.start" type="datetime-local" required /></label><label>Длительность, минут<input v-model.number="create.duration" type="number" min="30" max="720" required /></label></div>
+          <label>Описание<textarea v-model="create.description" rows="4"></textarea></label>
+          <fieldset><legend>Назначение L2</legend><label class="choice"><input v-model="create.assignment" type="radio" value="auto" /> Автоматически</label><label class="choice"><input v-model="create.assignment" type="radio" value="manual" /> Конкретный L2</label><select v-if="create.assignment === 'manual'" v-model="create.l2UserId" required><option value="" disabled>Выберите L2</option><option v-for="option in l2Options" :key="option.user_id" :value="String(option.user_id)" :disabled="!option.available">{{ option.display_name }}{{ option.available ? "" : ` — ${option.reason_code === "schedule_or_conflict" ? "занят или вне графика" : "недоступен"}` }}</option></select><p v-if="create.assignment === 'manual' && !l2Options.length" class="hint">Укажите время и длительность, чтобы загрузить список L2.</p></fieldset>
+          <p v-if="createError" class="error" role="alert">{{ createError }}</p><p v-if="createNotice" class="hint">{{ createNotice }}</p>
+          <button :disabled="createBusy || createLoading || !ticketPreflight?.can_create">{{ createBusy ? "Создаём…" : "Создать карточку" }}</button>
+        </form>
+      </template>
       <template v-else-if="managerPath && manager">
-        <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ browserTimeZone }}</p></div><button class="secondary" @click="logout">Выйти</button></header>
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ browserTimeZone }}</p></div><div class="top-actions"><a class="button-link" href="/manager/cards/new">+ Создать карточку</a><button class="secondary" @click="logout">Выйти</button></div></header>
         <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div></div>
         <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>Дата с<input v-model="managerFrom" type="date" /></label><label>Дата по<input v-model="managerTo" type="date" /></label><button>Применить</button></form>
         <p v-if="managerError" class="error" role="alert">{{ managerError }} <button class="secondary" @click="loadManager">Повторить</button></p>
