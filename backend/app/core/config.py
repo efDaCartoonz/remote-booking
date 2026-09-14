@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     omnidesk_staff_email: str = ""
     omnidesk_api_key: str = ""
     omnidesk_timeout_seconds: float = 5.0
+    omnidesk_case_index_enabled: bool = False
+    omnidesk_case_backfill_window_days: int = 1
+    omnidesk_case_backfill_page_size: int = 100
+    omnidesk_case_backfill_max_pages: int = 1000
+    omnidesk_case_backfill_from: str = ""
+    omnidesk_case_backfill_to: str = ""
     notification_max_attempts: int = 3
     notification_retry_seconds: int = 60
     notification_lock_seconds: int = 300
