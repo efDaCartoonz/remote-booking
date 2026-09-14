@@ -39,6 +39,7 @@ from app.cards.repository import (
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService, InvalidCardTransitionError
 from app.main import create_app
+from app.notifications import RecordingNotificationService
 from fastapi.testclient import TestClient
 
 DEFAULT_PLANNED_START_AT = datetime(2026, 9, 7, 10, tzinfo=UTC)
@@ -62,6 +63,7 @@ class FakeCardRepository:
         self.next_client_id = 1
         self.next_cycle_id = 1
         self.next_attempt_id = 1
+        self.schedules: list[dict[str, Any]] = []
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         now = datetime.now(UTC)
@@ -442,6 +444,18 @@ class FakeCardRepository:
             return updated
         raise AssertionError(f"Card {card_id} not found")
 
+    def create_reminder_schedule(self, **data: Any) -> None:
+        self.schedules.append({**data, "closed_at": None})
+
+    def close_reminder_schedules(
+        self, *, card_id: int, kind: str | None = None
+    ) -> None:
+        for schedule in self.schedules:
+            if schedule["card_id"] == card_id and (
+                kind is None or schedule["kind"] == kind
+            ):
+                schedule["closed_at"] = datetime.now(UTC)
+
     def add_card_event(
         self,
         *,
@@ -559,8 +573,11 @@ def seed_l1_candidate(
         repository.l1_candidate_absences[user_id] = [absence]
 
 
-def make_service(repository: FakeCardRepository) -> CardService:
-    return CardService(repository)
+def make_service(
+    repository: FakeCardRepository,
+    notifications: RecordingNotificationService | None = None,
+) -> CardService:
+    return CardService(repository, notifications)
 
 
 def test_card_row_mapping_preserves_client_informed_marker() -> None:
@@ -795,9 +812,10 @@ def test_reject_requires_reason() -> None:
 
 def test_reject_reassigns_next_l2_in_current_cycle() -> None:
     repository = FakeCardRepository()
+    notifications = RecordingNotificationService()
     seed_l2_candidate(repository, 20)
     seed_l2_candidate(repository, 30)
-    service = make_service(repository)
+    service = make_service(repository, notifications)
     card = service.create_card(
         create_payload(),
         actor_user_id=10,
@@ -826,6 +844,40 @@ def test_reject_reassigns_next_l2_in_current_cycle() -> None:
     assert repository.distribution_last_user_id == 30
     assert repository.events[-1]["event_type"] == CardEventType.ENGINEER_ASSIGNED
     assert repository.events[-1]["comment"] == "Занят на аварии"
+    assert [schedule["owner_id"] for schedule in repository.schedules] == [20, 30]
+    assert repository.schedules[0]["closed_at"] is not None
+    assert repository.schedules[1]["closed_at"] is None
+    assert repository.schedules[1]["cycle_id"] == repository.cycles[0].id
+    assert repository.schedules[1]["attempt_id"] == repository.attempts[1].id
+    assert {item.recipient_user_id for item in notifications.notifications} == {30}
+    assert [item.recipient_user_id for item in notifications.notifications].count(
+        30
+    ) == 2
+    assert all(
+        item.source_event_id == len(repository.events)
+        for item in notifications.notifications
+        if item.recipient_user_id == 30
+    )
+    lifecycle_counts = (
+        len(repository.attempts),
+        len(repository.schedules),
+        len(repository.events),
+        len(notifications.notifications),
+    )
+    with pytest.raises(InvalidCardTransitionError):
+        service.reject_card(
+            card.public_id,
+            actor_user_id=20,
+            rejection_reason="Повторный отказ",
+            ip_address=None,
+            user_agent=None,
+        )
+    assert lifecycle_counts == (
+        len(repository.attempts),
+        len(repository.schedules),
+        len(repository.events),
+        len(notifications.notifications),
+    )
 
 
 def test_reject_exhausts_candidates_and_rejects_card() -> None:

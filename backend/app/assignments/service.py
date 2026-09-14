@@ -224,15 +224,6 @@ class L2DistributionService:
         self.repository.update_assignment_cycle_status(
             cycle_id=cycle.id, status=AssignmentCycleStatus.ASSIGNED
         )
-        if hasattr(self.repository, "create_reminder_schedule"):
-            self.repository.create_reminder_schedule(
-                card_id=card.id,
-                kind="l2_reminder",
-                owner_id=card.l2_engineer_id,
-                anchor_at=datetime.now(UTC),
-                cycle_id=cycle.id,
-                attempt_id=attempt.id,
-            )
         event_id = self.repository.add_card_event(
             card_id=card.id,
             event_type=CardEventType.ENGINEER_ASSIGNED,
@@ -255,17 +246,12 @@ class L2DistributionService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        if self.notifications is not None:
-            for channel in ("telegram", "bitrix24"):
-                self.notifications.notify(
-                    event="l2_reminder",
-                    card_id=card.id,
-                    source_event_id=event_id,
-                    source_event_type=int(CardEventType.ENGINEER_ASSIGNED),
-                    recipient_user_id=card.l2_engineer_id,
-                    channel=channel,
-                    payload={"card_id": card.id, "assignment": "l2"},
-                )
+        self._create_assignment_followup(
+            card=card,
+            cycle_id=attempt.cycle_id,
+            attempt_id=attempt.id,
+            event_id=event_id,
+        )
         return card
 
     def confirm_current_assignment(
@@ -443,7 +429,42 @@ class L2DistributionService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        self._create_assignment_followup(
+            card=updated,
+            cycle_id=next_attempt.cycle_id,
+            attempt_id=next_attempt.id,
+            event_id=event_id,
+        )
         return updated
+
+    def _create_assignment_followup(
+        self,
+        *,
+        card: CardRecord,
+        cycle_id: int,
+        attempt_id: int,
+        event_id: int,
+    ) -> None:
+        if hasattr(self.repository, "create_reminder_schedule"):
+            self.repository.create_reminder_schedule(
+                card_id=card.id,
+                kind="l2_reminder",
+                owner_id=card.l2_engineer_id,
+                anchor_at=datetime.now(UTC),
+                cycle_id=cycle_id,
+                attempt_id=attempt_id,
+            )
+        if self.notifications is not None and card.l2_engineer_id is not None:
+            for channel in ("telegram", "bitrix24"):
+                self.notifications.notify(
+                    event="l2_reminder",
+                    card_id=card.id,
+                    source_event_id=event_id,
+                    source_event_type=int(CardEventType.ENGINEER_ASSIGNED),
+                    recipient_user_id=card.l2_engineer_id,
+                    channel=channel,
+                    payload={"card_id": card.id, "assignment": "l2"},
+                )
 
     def _reject_without_candidates(
         self,
