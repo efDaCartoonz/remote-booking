@@ -4,7 +4,6 @@ from app.frame.omnidesk import OmnideskCaseList
 from app.omnidesk_index.backfill import BackfillOptions, run_backfill
 from app.omnidesk_index.repository import CaseIndexItem, CaseIndexValidationError
 
-
 NOW = datetime.now(UTC)
 
 
@@ -49,7 +48,9 @@ class FakeClient:
 
 
 def item(case_id):
-    return CaseIndexItem(case_id, f"123-{case_id}", "user", "open", False, False, NOW, NOW)
+    return CaseIndexItem(
+        case_id, f"123-{case_id}", "user", "open", False, False, NOW, NOW
+    )
 
 
 def options():
@@ -58,9 +59,13 @@ def options():
 
 def test_invalid_row_isolated_and_valid_row_saved(monkeypatch):
     repository = FakeRepository(None)
-    monkeypatch.setattr("app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository)
+    monkeypatch.setattr(
+        "app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository
+    )
     connection = FakeConnection()
-    result = run_backfill(connection, FakeClient([item("valid"), item("invalid")]), options())
+    result = run_backfill(
+        connection, FakeClient([item("valid"), item("invalid")]), options()
+    )
     assert repository.saved == ["valid"]
     assert repository.errors == ["invalid_case_record"]
     assert result["conflicts"] == 1
@@ -69,15 +74,25 @@ def test_invalid_row_isolated_and_valid_row_saved(monkeypatch):
 
 def test_invalid_first_row_does_not_block_valid_second(monkeypatch):
     repository = FakeRepository(None)
-    monkeypatch.setattr("app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository)
-    run_backfill(FakeConnection(), FakeClient([item("invalid"), item("valid")]), options())
+    monkeypatch.setattr(
+        "app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository
+    )
+    run_backfill(
+        FakeConnection(), FakeClient([item("invalid"), item("valid")]), options()
+    )
     assert repository.saved == ["valid"]
 
 
 def test_dry_run_has_no_repository_writes(monkeypatch):
     repository = FakeRepository(None)
-    monkeypatch.setattr("app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository)
-    result = run_backfill(FakeConnection(), FakeClient([item("valid")]), BackfillOptions(**{**options().__dict__, "dry_run": True}))
+    monkeypatch.setattr(
+        "app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository
+    )
+    result = run_backfill(
+        FakeConnection(),
+        FakeClient([item("valid")]),
+        BackfillOptions(**{**options().__dict__, "dry_run": True}),
+    )
     assert repository.saved == []
     assert repository.errors == []
     assert result["records"] == 1

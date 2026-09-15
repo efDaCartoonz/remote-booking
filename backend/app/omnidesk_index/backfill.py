@@ -68,7 +68,9 @@ def run_backfill(connection, client, options: BackfillOptions) -> dict[str, int]
                         NotNullViolation,
                         UniqueViolation,
                     ) as exc:
-                        connection.execute(f"ROLLBACK TO SAVEPOINT backfill_item_{index}")
+                        connection.execute(
+                            f"ROLLBACK TO SAVEPOINT backfill_item_{index}"
+                        )
                         repo.record_error(getattr(exc, "code", "constraint_conflict"))
                         stats["conflicts"] += 1
                     connection.execute(f"RELEASE SAVEPOINT backfill_item_{index}")

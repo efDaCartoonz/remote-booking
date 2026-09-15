@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+
 @dataclass(frozen=True)
 class CaseIndexItem:
     case_id: str
@@ -37,8 +38,8 @@ class CaseIndexRepository:
         number = item.case_number.strip()
         with self.connection.cursor() as cursor:
             cursor.execute(
-                    "SELECT case_id, case_number FROM omnidesk_case_index WHERE case_id = %s OR case_number = %s FOR UPDATE",
-                    (item.case_id, number),
+                "SELECT case_id, case_number FROM omnidesk_case_index WHERE case_id = %s OR case_number = %s FOR UPDATE",
+                (item.case_id, number),
             )
             rows = cursor.fetchall()
             for row in rows:
@@ -49,7 +50,7 @@ class CaseIndexRepository:
                     self._conflict(cursor, "duplicate_case_number", item)
                     return "conflict"
             cursor.execute(
-                    """
+                """
                     INSERT INTO omnidesk_case_index
                     (case_id, case_number, omnidesk_user_id, status, deleted, spam,
                      omnidesk_created_at, omnidesk_updated_at, synced_at)
@@ -62,7 +63,7 @@ class CaseIndexRepository:
                       omnidesk_updated_at = EXCLUDED.omnidesk_updated_at, synced_at = now()
                     WHERE omnidesk_case_index.omnidesk_updated_at <= EXCLUDED.omnidesk_updated_at
                 """,
-                    {**item.__dict__, "case_number": number},
+                {**item.__dict__, "case_number": number},
             )
         return "upserted"
 
@@ -95,7 +96,14 @@ class CaseIndexRepository:
                   AND case_number IS NOT DISTINCT FROM %s AND resolved_at IS NULL
             )
             """,
-            (code, item.case_id, item.case_number, code, item.case_id, item.case_number),
+            (
+                code,
+                item.case_id,
+                item.case_number,
+                code,
+                item.case_id,
+                item.case_number,
+            ),
         )
 
     def save_checkpoint(
@@ -139,9 +147,20 @@ class CaseIndexRepository:
 def validate_item(item: Any) -> None:
     if not isinstance(item, CaseIndexItem):
         raise CaseIndexValidationError("invalid_case_record")
-    for value, code in ((item.case_id, "missing_case_id"), (item.case_number, "missing_case_number"), (item.status, "missing_status")):
+    for value, code in (
+        (item.case_id, "missing_case_id"),
+        (item.case_number, "missing_case_number"),
+        (item.status, "missing_status"),
+    ):
         if not isinstance(value, str) or not value.strip():
             raise CaseIndexValidationError(code)
-    for value, code in ((item.created_at, "invalid_created_at"), (item.updated_at, "invalid_updated_at")):
-        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+    for value, code in (
+        (item.created_at, "invalid_created_at"),
+        (item.updated_at, "invalid_updated_at"),
+    ):
+        if (
+            not isinstance(value, datetime)
+            or value.tzinfo is None
+            or value.utcoffset() is None
+        ):
             raise CaseIndexValidationError(code)
