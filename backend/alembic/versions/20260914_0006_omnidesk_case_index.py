@@ -27,8 +27,12 @@ def upgrade() -> None:
         CONSTRAINT ux_omnidesk_case_index_case_number UNIQUE (case_number)
     )
     """)
-    op.execute("CREATE INDEX ix_omnidesk_case_index_updated_at ON omnidesk_case_index (omnidesk_updated_at, id)")
-    op.execute("CREATE INDEX ix_omnidesk_case_index_number_available ON omnidesk_case_index (case_number) WHERE conflict_code IS NULL AND NOT unavailable")
+    op.execute(
+        "CREATE INDEX ix_omnidesk_case_index_updated_at ON omnidesk_case_index (omnidesk_updated_at, id)"
+    )
+    op.execute(
+        "CREATE INDEX ix_omnidesk_case_index_number_available ON omnidesk_case_index (case_number) WHERE conflict_code IS NULL AND NOT unavailable"
+    )
     op.execute("""
     CREATE TABLE omnidesk_case_index_sync_state (
         sync_name varchar(64) PRIMARY KEY,
@@ -52,7 +56,9 @@ def upgrade() -> None:
         resolved_at timestamptz
     )
     """)
-    op.execute("CREATE INDEX ix_omnidesk_case_index_conflicts_open ON omnidesk_case_index_conflicts (observed_at) WHERE resolved_at IS NULL")
+    op.execute(
+        "CREATE INDEX ix_omnidesk_case_index_conflicts_open ON omnidesk_case_index_conflicts (observed_at) WHERE resolved_at IS NULL"
+    )
 
 
 def downgrade() -> None:

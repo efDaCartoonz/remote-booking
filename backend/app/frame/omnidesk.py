@@ -36,10 +36,17 @@ class OmnideskTicketClient(Protocol):
 
     def reopen_ticket(self, case_id: str) -> OmnideskTicket: ...
 
-    def list_cases(self, *, page: int, limit: int, sort: str,
-                   from_time: datetime | None = None, to_time: datetime | None = None,
-                   from_updated_time: datetime | None = None,
-                   to_updated_time: datetime | None = None) -> OmnideskCaseList: ...
+    def list_cases(
+        self,
+        *,
+        page: int,
+        limit: int,
+        sort: str,
+        from_time: datetime | None = None,
+        to_time: datetime | None = None,
+        from_updated_time: datetime | None = None,
+        to_updated_time: datetime | None = None,
+    ) -> OmnideskCaseList: ...
 
 
 class OmnideskUnavailableError(Exception):
@@ -149,16 +156,26 @@ class HttpOmnideskTicketClient:
             raise OmnideskTicketReopenError("omnidesk_reopened_ticket_id_mismatch")
         return reopened
 
-    def list_cases(self, *, page: int, limit: int, sort: str,
-                   from_time: datetime | None = None, to_time: datetime | None = None,
-                   from_updated_time: datetime | None = None,
-                   to_updated_time: datetime | None = None) -> OmnideskCaseList:
+    def list_cases(
+        self,
+        *,
+        page: int,
+        limit: int,
+        sort: str,
+        from_time: datetime | None = None,
+        to_time: datetime | None = None,
+        from_updated_time: datetime | None = None,
+        to_updated_time: datetime | None = None,
+    ) -> OmnideskCaseList:
         if page < 1 or not 1 <= limit <= 100:
             raise ValueError("invalid_case_list_pagination")
         params: dict[str, Any] = {"page": page, "limit": limit, "sort": sort}
-        for name, value in (("from_time", from_time), ("to_time", to_time),
-                            ("from_updated_time", from_updated_time),
-                            ("to_updated_time", to_updated_time)):
+        for name, value in (
+            ("from_time", from_time),
+            ("to_time", to_time),
+            ("from_updated_time", from_updated_time),
+            ("to_updated_time", to_updated_time),
+        ):
             if value is not None:
                 params[name] = value.isoformat()
         payload = self._request("GET", "/api/cases.json", params=params)
@@ -167,21 +184,24 @@ class HttpOmnideskTicketClient:
         if not isinstance(cases, list) or not isinstance(total, int):
             raise OmnideskInvalidResponseError
         from app.omnidesk_index.repository import CaseIndexItem
+
         items = []
         for case in cases:
             if not isinstance(case, dict):
                 raise OmnideskInvalidResponseError
             try:
-                items.append(CaseIndexItem(
-                    case_id=_required_string(case.get("case_id")),
-                    case_number=_required_string(case.get("case_number")),
-                    user_id=_optional_string(case.get("user_id")),
-                    status=_required_string(case.get("status")),
-                    deleted=_optional_bool(case.get("deleted")),
-                    spam=_optional_bool(case.get("spam")),
-                    created_at=_required_datetime(case.get("created_at")),
-                    updated_at=_required_datetime(case.get("updated_at")),
-                ))
+                items.append(
+                    CaseIndexItem(
+                        case_id=_required_string(case.get("case_id")),
+                        case_number=_required_string(case.get("case_number")),
+                        user_id=_optional_string(case.get("user_id")),
+                        status=_required_string(case.get("status")),
+                        deleted=_optional_bool(case.get("deleted")),
+                        spam=_optional_bool(case.get("spam")),
+                        created_at=_required_datetime(case.get("created_at")),
+                        updated_at=_required_datetime(case.get("updated_at")),
+                    )
+                )
             except (TypeError, ValueError) as exc:
                 raise OmnideskInvalidResponseError from exc
         return OmnideskCaseList(items=items, total_count=total)

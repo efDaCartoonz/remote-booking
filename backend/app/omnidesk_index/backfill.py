@@ -34,7 +34,13 @@ def run_backfill(connection, client, options: BackfillOptions) -> dict[str, int]
         page = resume_page if checkpoint and current < checkpoint_to else 1
         pages = 0
         while page <= options.max_pages:
-            payload = client.list_cases(page=page, limit=options.page_size, sort="updated_at", from_time=current, to_time=window_to)
+            payload = client.list_cases(
+                page=page,
+                limit=options.page_size,
+                sort="updated_at",
+                from_time=current,
+                to_time=window_to,
+            )
             total = payload.total_count
             pages += 1
             stats["pages"] += 1
@@ -45,7 +51,14 @@ def run_backfill(connection, client, options: BackfillOptions) -> dict[str, int]
                 result = repo.upsert(item)
                 stats[result] += 1
             if not options.dry_run:
-                repo.save_checkpoint(name="manual_backfill", window_from=current, window_to=window_to, page=page + 1, pages=pages, total=total)
+                repo.save_checkpoint(
+                    name="manual_backfill",
+                    window_from=current,
+                    window_to=window_to,
+                    page=page + 1,
+                    pages=pages,
+                    total=total,
+                )
                 connection.commit()
             if page * options.page_size >= total or not payload.items:
                 break
@@ -54,5 +67,12 @@ def run_backfill(connection, client, options: BackfillOptions) -> dict[str, int]
         current = window_to
         resume_page = 1
         checkpoint = None
-    logger.info("Omnidesk case index backfill completed: windows=%d pages=%d records=%d upserted=%d conflicts=%d", stats["windows"], stats["pages"], stats["records"], stats["upserted"], stats["conflicts"])
+    logger.info(
+        "Omnidesk case index backfill completed: windows=%d pages=%d records=%d upserted=%d conflicts=%d",
+        stats["windows"],
+        stats["pages"],
+        stats["records"],
+        stats["upserted"],
+        stats["conflicts"],
+    )
     return stats
