@@ -69,8 +69,15 @@ class CaseIndexRepository:
     def record_error(self, code: str) -> None:
         with self.connection.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO omnidesk_case_index_conflicts (conflict_code) VALUES (%s)",
-                (code,),
+                """
+                INSERT INTO omnidesk_case_index_conflicts (conflict_code)
+                SELECT %s WHERE NOT EXISTS (
+                    SELECT 1 FROM omnidesk_case_index_conflicts
+                    WHERE conflict_code = %s AND case_id IS NULL
+                      AND case_number IS NULL AND resolved_at IS NULL
+                )
+                """,
+                (code, code),
             )
 
     def _conflict(self, cursor: Any, code: str, item: CaseIndexItem) -> None:
@@ -79,8 +86,16 @@ class CaseIndexRepository:
             (code, item.case_id, item.case_number),
         )
         cursor.execute(
-            "INSERT INTO omnidesk_case_index_conflicts (conflict_code, case_id, case_number) VALUES (%s, %s, %s)",
-            (code, item.case_id, item.case_number),
+            """
+            INSERT INTO omnidesk_case_index_conflicts (conflict_code, case_id, case_number)
+            SELECT %s, %s, %s
+            WHERE NOT EXISTS (
+                SELECT 1 FROM omnidesk_case_index_conflicts
+                WHERE conflict_code = %s AND case_id IS NOT DISTINCT FROM %s
+                  AND case_number IS NOT DISTINCT FROM %s AND resolved_at IS NULL
+            )
+            """,
+            (code, item.case_id, item.case_number, code, item.case_id, item.case_number),
         )
 
     def save_checkpoint(
