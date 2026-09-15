@@ -42,10 +42,15 @@ class FakeConnection:
         self.operations.append("COMMIT")
 
 
+class CheckpointFailure(Exception):
+    pass
+
+
 class FakeRepository:
-    def __init__(self, connection):
+    def __init__(self, connection, checkpoint_failure=False):
         self.saved = []
         self.errors = []
+        self.checkpoint_failure = checkpoint_failure
 
     def get_checkpoint(self, name):
         return None
@@ -60,6 +65,8 @@ class FakeRepository:
         self.errors.append(code)
 
     def save_checkpoint(self, **kwargs):
+        if self.checkpoint_failure:
+            raise CheckpointFailure("checkpoint_failed")
         self.checkpoint = kwargs
 
 
@@ -107,6 +114,31 @@ def test_invalid_first_row_does_not_block_valid_second(monkeypatch):
     assert repository.saved == ["valid"]
 
 
+def test_checkpoint_failure_rolls_back_page_and_does_not_commit(monkeypatch):
+    repository = FakeRepository(None, checkpoint_failure=True)
+    monkeypatch.setattr(
+        "app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository
+    )
+    connection = FakeConnection()
+
+    try:
+        run_backfill(connection, FakeClient([item("valid")]), options())
+    except CheckpointFailure:
+        pass
+    else:
+        raise AssertionError("checkpoint failure must propagate")
+
+    assert repository.saved == ["valid"]
+    assert not hasattr(repository, "checkpoint")
+    assert connection.operations == [
+        "SAVEPOINT backfill_page",
+        "SAVEPOINT backfill_item_0",
+        "RELEASE SAVEPOINT backfill_item_0",
+        "ROLLBACK TO SAVEPOINT backfill_page",
+        "RELEASE SAVEPOINT backfill_page",
+    ]
+
+
 def test_dry_run_has_no_repository_writes(monkeypatch):
     repository = FakeRepository(None)
     monkeypatch.setattr(
@@ -120,6 +152,20 @@ def test_dry_run_has_no_repository_writes(monkeypatch):
     assert repository.saved == []
     assert repository.errors == []
     assert result["records"] == 1
+
+
+def test_successful_page_saves_checkpoint_after_page_records(monkeypatch):
+    repository = FakeRepository(None)
+    monkeypatch.setattr(
+        "app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository
+    )
+    connection = FakeConnection()
+
+    run_backfill(connection, FakeClient([item("valid")]), options())
+
+    assert repository.saved == ["valid"]
+    assert repository.checkpoint["page"] == 2
+    assert connection.operations[-2:] == ["RELEASE SAVEPOINT backfill_page", "COMMIT"]
 
 
 def test_checkpoint_types_nullable_error_parameter(monkeypatch):

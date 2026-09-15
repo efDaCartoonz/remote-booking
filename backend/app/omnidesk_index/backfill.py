@@ -74,22 +74,22 @@ def run_backfill(connection, client, options: BackfillOptions) -> dict[str, int]
                         repo.record_error(getattr(exc, "code", "constraint_conflict"))
                         stats["conflicts"] += 1
                     connection.execute(f"RELEASE SAVEPOINT backfill_item_{index}")
+                if not options.dry_run:
+                    repo.save_checkpoint(
+                        name="manual_backfill",
+                        window_from=current,
+                        window_to=window_to,
+                        page=page + 1,
+                        pages=pages,
+                        total=total,
+                    )
+                    connection.execute("RELEASE SAVEPOINT backfill_page")
+                    connection.commit()
             except Exception:
                 if not options.dry_run:
                     connection.execute("ROLLBACK TO SAVEPOINT backfill_page")
                     connection.execute("RELEASE SAVEPOINT backfill_page")
                 raise
-            if not options.dry_run:
-                connection.execute("RELEASE SAVEPOINT backfill_page")
-                repo.save_checkpoint(
-                    name="manual_backfill",
-                    window_from=current,
-                    window_to=window_to,
-                    page=page + 1,
-                    pages=pages,
-                    total=total,
-                )
-                connection.commit()
             if page * options.page_size >= total or not payload.items:
                 break
             page += 1
