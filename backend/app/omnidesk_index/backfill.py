@@ -4,7 +4,13 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from app.omnidesk_index.repository import CaseIndexRepository
+from psycopg.errors import CheckViolation, NotNullViolation, UniqueViolation
+
+from app.omnidesk_index.repository import (
+    CaseIndexConflict,
+    CaseIndexRepository,
+    CaseIndexValidationError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -44,13 +50,35 @@ def run_backfill(connection, client, options: BackfillOptions) -> dict[str, int]
             total = payload.total_count
             pages += 1
             stats["pages"] += 1
-            for item in payload.items:
-                stats["records"] += 1
-                if options.dry_run:
-                    continue
-                result = repo.upsert(item)
-                stats[result] += 1
             if not options.dry_run:
+                connection.execute("SAVEPOINT backfill_page")
+            try:
+                for index, item in enumerate(payload.items):
+                    stats["records"] += 1
+                    if options.dry_run:
+                        continue
+                    connection.execute(f"SAVEPOINT backfill_item_{index}")
+                    try:
+                        result = repo.upsert(item)
+                        stats[result] += 1
+                    except (
+                        CaseIndexConflict,
+                        CaseIndexValidationError,
+                        CheckViolation,
+                        NotNullViolation,
+                        UniqueViolation,
+                    ) as exc:
+                        connection.execute(f"ROLLBACK TO SAVEPOINT backfill_item_{index}")
+                        repo.record_error(getattr(exc, "code", "constraint_conflict"))
+                        stats["conflicts"] += 1
+                    connection.execute(f"RELEASE SAVEPOINT backfill_item_{index}")
+            except Exception:
+                if not options.dry_run:
+                    connection.execute("ROLLBACK TO SAVEPOINT backfill_page")
+                    connection.execute("RELEASE SAVEPOINT backfill_page")
+                raise
+            if not options.dry_run:
+                connection.execute("RELEASE SAVEPOINT backfill_page")
                 repo.save_checkpoint(
                     name="manual_backfill",
                     window_from=current,
