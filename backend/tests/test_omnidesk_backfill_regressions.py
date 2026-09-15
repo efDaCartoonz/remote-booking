@@ -7,6 +7,30 @@ from app.omnidesk_index.repository import CaseIndexItem, CaseIndexValidationErro
 NOW = datetime.now(UTC)
 
 
+class CheckpointCursor:
+    def __init__(self):
+        self.sql = None
+        self.params = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, sql, params):
+        self.sql = sql
+        self.params = params
+
+
+class CheckpointConnection:
+    def __init__(self):
+        self.cursor_instance = CheckpointCursor()
+
+    def cursor(self):
+        return self.cursor_instance
+
+
 class FakeConnection:
     def __init__(self):
         self.operations = []
@@ -96,3 +120,20 @@ def test_dry_run_has_no_repository_writes(monkeypatch):
     assert repository.saved == []
     assert repository.errors == []
     assert result["records"] == 1
+
+
+def test_checkpoint_types_nullable_error_parameter(monkeypatch):
+    from app.omnidesk_index.repository import CaseIndexRepository
+
+    connection = CheckpointConnection()
+    CaseIndexRepository(connection).save_checkpoint(
+        name="manual_backfill",
+        window_from=NOW,
+        window_to=NOW + timedelta(days=1),
+        page=2,
+        pages=1,
+        total=1,
+        error=None,
+    )
+    assert "CASE WHEN %s::text IS NULL" in connection.cursor_instance.sql
+    assert connection.cursor_instance.params[-2:] == (None, None)

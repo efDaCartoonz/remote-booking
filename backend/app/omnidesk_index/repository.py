@@ -122,7 +122,7 @@ class CaseIndexRepository:
                 """
                 INSERT INTO omnidesk_case_index_sync_state
                 (sync_name, window_from, window_to, page, pages_processed, total_count, last_success_at, last_error_code)
-                VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s IS NULL THEN now() ELSE NULL END, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, CASE WHEN %s::text IS NULL THEN now() ELSE NULL END, %s)
                 ON CONFLICT (sync_name) DO UPDATE SET window_from=EXCLUDED.window_from,
                   window_to=EXCLUDED.window_to, page=EXCLUDED.page,
                   pages_processed=EXCLUDED.pages_processed, total_count=EXCLUDED.total_count,
