@@ -4,7 +4,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from app.omnidesk_index.repository import CaseIndexItem, CaseIndexRepository
+from app.omnidesk_index.repository import CaseIndexRepository
 
 logger = logging.getLogger(__name__)
 

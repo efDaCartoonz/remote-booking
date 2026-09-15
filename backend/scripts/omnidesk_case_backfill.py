@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 from datetime import UTC, datetime
 
-from app.db import db_connection
 from app.core.config import settings
+from app.db import db_connection
 from app.frame.omnidesk import get_omnidesk_ticket_client
 from app.omnidesk_index.backfill import BackfillOptions, run_backfill
 

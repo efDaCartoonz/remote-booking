@@ -292,7 +292,7 @@ def _required_string(value: Any) -> str:
 
 def _required_datetime(value: Any) -> datetime:
     if not isinstance(value, str):
-        raise ValueError("datetime_required")
+        raise TypeError("datetime_required")
     result = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if result.tzinfo is None or result.utcoffset() is None:
         raise ValueError("datetime_timezone_required")
