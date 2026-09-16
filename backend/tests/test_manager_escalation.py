@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 import pytest
+
 from app.assignments.manager_escalation import (
     ManagerEscalationService,
     ManagerRecipient,

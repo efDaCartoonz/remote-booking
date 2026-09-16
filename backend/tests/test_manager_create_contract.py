@@ -1,8 +1,9 @@
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from app.manager_create import ManagerCreateRequest, validate_manager_window
 from pydantic import ValidationError
+
+from app.manager_create import ManagerCreateRequest, validate_manager_window
 
 
 def valid_payload(**overrides):

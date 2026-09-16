@@ -1,6 +1,7 @@
 from dataclasses import replace
 
 import pytest
+
 from app.api.manager import _manager_ticket
 from app.frame.omnidesk import OmnideskTicket
 

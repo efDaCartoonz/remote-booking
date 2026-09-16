@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from datetime import time, timedelta
 
+from test_cards import (
+    DEFAULT_PLANNED_START_AT,
+    FakeCardRepository,
+    create_payload,
+    seed_l2_candidate,
+)
+
 from app.assignments.types import TimeInterval
 from app.cards.constants import (
     AssignmentAttemptStatus,
@@ -11,12 +18,6 @@ from app.cards.constants import (
     CardStatus,
 )
 from app.cards.service import CardService
-from test_cards import (
-    DEFAULT_PLANNED_START_AT,
-    FakeCardRepository,
-    create_payload,
-    seed_l2_candidate,
-)
 
 
 def test_initial_l2_distribution_assigns_available_candidate() -> None:

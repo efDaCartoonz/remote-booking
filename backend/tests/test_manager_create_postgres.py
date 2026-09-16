@@ -3,15 +3,16 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 
-import app.api.manager as manager_api
 import psycopg
 import pytest
+from fastapi.testclient import TestClient
+from psycopg.rows import dict_row
+
+import app.api.manager as manager_api
 from app.auth.store import RoleRecord, UserAuthRecord
 from app.cards.repository import PostgresCardRepository
 from app.frame.omnidesk import OmnideskTicket
 from app.main import create_app
-from fastapi.testclient import TestClient
-from psycopg.rows import dict_row
 
 pytestmark = pytest.mark.skipif(
     os.getenv("RDM_PG_INTEGRATION") != "1", reason="PostgreSQL integration runner only"
