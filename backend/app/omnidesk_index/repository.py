@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
+
+CaseIndexUpsertResult = Literal["upserted", "conflicts"]
 
 
 @dataclass(frozen=True)
@@ -33,7 +35,7 @@ class CaseIndexRepository:
     def __init__(self, connection: Any):
         self.connection = connection
 
-    def upsert(self, item: CaseIndexItem) -> str:
+    def upsert(self, item: CaseIndexItem) -> CaseIndexUpsertResult:
         validate_item(item)
         number = item.case_number.strip()
         with self.connection.cursor() as cursor:
@@ -45,10 +47,10 @@ class CaseIndexRepository:
             for row in rows:
                 if row[0] == item.case_id and row[1] != number:
                     self._conflict(cursor, "case_id_number_changed", item)
-                    return "conflict"
+                    return "conflicts"
                 if row[1] == number and row[0] != item.case_id:
                     self._conflict(cursor, "duplicate_case_number", item)
-                    return "conflict"
+                    return "conflicts"
             cursor.execute(
                 """
                     INSERT INTO omnidesk_case_index

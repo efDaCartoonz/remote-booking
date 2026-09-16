@@ -2,7 +2,11 @@ from datetime import UTC, datetime, timedelta
 
 from app.frame.omnidesk import OmnideskCaseList
 from app.omnidesk_index.backfill import BackfillOptions, run_backfill
-from app.omnidesk_index.repository import CaseIndexItem, CaseIndexValidationError
+from app.omnidesk_index.repository import (
+    CaseIndexItem,
+    CaseIndexRepository,
+    CaseIndexValidationError,
+)
 
 NOW = datetime.now(UTC)
 
@@ -26,6 +30,31 @@ class CheckpointCursor:
 class CheckpointConnection:
     def __init__(self):
         self.cursor_instance = CheckpointCursor()
+
+    def cursor(self):
+        return self.cursor_instance
+
+
+class ConflictCursor:
+    def __init__(self):
+        self.statements = []
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def execute(self, sql, params):
+        self.statements.append((sql, params))
+
+    def fetchall(self):
+        return [("existing-id", "shared-number")]
+
+
+class ConflictConnection:
+    def __init__(self):
+        self.cursor_instance = ConflictCursor()
 
     def cursor(self):
         return self.cursor_instance
@@ -58,6 +87,7 @@ class FakeRepository:
     def __init__(self, connection, checkpoint_failure=False):
         self.saved = []
         self.errors = []
+        self.error_codes = set()
         self.checkpoint_failure = checkpoint_failure
 
     def get_checkpoint(self, name):
@@ -66,6 +96,11 @@ class FakeRepository:
     def upsert(self, item):
         if item.case_id == "invalid":
             raise CaseIndexValidationError("invalid_case_record")
+        if item.case_id == "conflict":
+            if "duplicate_case_number" not in self.error_codes:
+                self.error_codes.add("duplicate_case_number")
+                self.errors.append("duplicate_case_number")
+            return "conflicts"
         self.saved.append(item.case_id)
         return "upserted"
 
@@ -103,9 +138,16 @@ class CommitFailureConnection(FakeConnection):
         raise CommitFailure("commit_failed")
 
 
-def item(case_id):
+def item(case_id, case_number=None):
     return CaseIndexItem(
-        case_id, f"123-{case_id}", "user", "open", False, False, NOW, NOW
+        case_id,
+        case_number or f"123-{case_id}",
+        "user",
+        "open",
+        False,
+        False,
+        NOW,
+        NOW,
     )
 
 
@@ -137,6 +179,32 @@ def test_invalid_first_row_does_not_block_valid_second(monkeypatch):
         FakeConnection(), FakeClient([item("invalid"), item("valid")]), options()
     )
     assert repository.saved == ["valid"]
+
+
+def test_repository_case_number_conflict_returns_stats_counter():
+    connection = ConflictConnection()
+    result = CaseIndexRepository(connection).upsert(item("new-id", "shared-number"))
+
+    assert result == "conflicts"
+
+
+def test_expected_conflict_does_not_block_checkpoint_or_duplicate_ledger(monkeypatch):
+    repository = FakeRepository(None)
+    monkeypatch.setattr(
+        "app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository
+    )
+    connection = FakeConnection()
+    page = FakeClient([item("conflict"), item("valid")])
+
+    result = run_backfill(connection, page, options())
+    result_repeat = run_backfill(connection, page, options())
+
+    assert result["conflicts"] == 1
+    assert result["upserted"] == 1
+    assert result_repeat["conflicts"] == 1
+    assert repository.saved == ["valid", "valid"]
+    assert repository.errors == ["duplicate_case_number"]
+    assert repository.checkpoint["page"] == 2
 
 
 def test_checkpoint_failure_rolls_back_page_and_does_not_commit(monkeypatch):
