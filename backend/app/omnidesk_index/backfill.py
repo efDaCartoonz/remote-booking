@@ -50,8 +50,10 @@ def run_backfill(connection, client, options: BackfillOptions) -> dict[str, int]
             total = payload.total_count
             pages += 1
             stats["pages"] += 1
+            page_savepoint_active = False
             if not options.dry_run:
                 connection.execute("SAVEPOINT backfill_page")
+                page_savepoint_active = True
             try:
                 for index, item in enumerate(payload.items):
                     stats["records"] += 1
@@ -84,9 +86,10 @@ def run_backfill(connection, client, options: BackfillOptions) -> dict[str, int]
                         total=total,
                     )
                     connection.execute("RELEASE SAVEPOINT backfill_page")
+                    page_savepoint_active = False
                     connection.commit()
             except Exception:
-                if not options.dry_run:
+                if page_savepoint_active:
                     connection.execute("ROLLBACK TO SAVEPOINT backfill_page")
                     connection.execute("RELEASE SAVEPOINT backfill_page")
                 raise

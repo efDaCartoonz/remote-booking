@@ -46,6 +46,14 @@ class CheckpointFailure(Exception):
     pass
 
 
+class CommitFailure(Exception):
+    pass
+
+
+class ReleasedSavepointRollback(Exception):
+    pass
+
+
 class FakeRepository:
     def __init__(self, connection, checkpoint_failure=False):
         self.saved = []
@@ -76,6 +84,23 @@ class FakeClient:
 
     def list_cases(self, **kwargs):
         return OmnideskCaseList(self.items, len(self.items))
+
+
+class CommitFailureConnection(FakeConnection):
+    def __init__(self):
+        super().__init__()
+        self.page_released = False
+
+    def execute(self, sql):
+        if sql == "RELEASE SAVEPOINT backfill_page":
+            self.page_released = True
+        if sql == "ROLLBACK TO SAVEPOINT backfill_page" and self.page_released:
+            raise ReleasedSavepointRollback("savepoint_already_released")
+        super().execute(sql)
+
+    def commit(self):
+        self.operations.append("COMMIT")
+        raise CommitFailure("commit_failed")
 
 
 def item(case_id):
@@ -166,6 +191,33 @@ def test_successful_page_saves_checkpoint_after_page_records(monkeypatch):
     assert repository.saved == ["valid"]
     assert repository.checkpoint["page"] == 2
     assert connection.operations[-2:] == ["RELEASE SAVEPOINT backfill_page", "COMMIT"]
+
+
+def test_commit_failure_preserves_original_error(monkeypatch):
+    repository = FakeRepository(None)
+    monkeypatch.setattr(
+        "app.omnidesk_index.backfill.CaseIndexRepository", lambda _: repository
+    )
+    connection = CommitFailureConnection()
+
+    try:
+        run_backfill(connection, FakeClient([item("valid")]), options())
+    except CommitFailure:
+        pass
+    except ReleasedSavepointRollback as exc:
+        raise AssertionError("commit failure was masked by rollback") from exc
+    else:
+        raise AssertionError("commit failure must propagate")
+
+    assert repository.saved == ["valid"]
+    assert repository.checkpoint["page"] == 2
+    assert connection.operations == [
+        "SAVEPOINT backfill_page",
+        "SAVEPOINT backfill_item_0",
+        "RELEASE SAVEPOINT backfill_item_0",
+        "RELEASE SAVEPOINT backfill_page",
+        "COMMIT",
+    ]
 
 
 def test_checkpoint_types_nullable_error_parameter(monkeypatch):
