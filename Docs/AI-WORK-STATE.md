@@ -16,14 +16,18 @@ Baseline: `origin/main` = `7ab7f38b16ce9b40204ad80b06e94e6f0d452666`.
   `rdm-fi01-6909fb6-r2`; stage checkout, `.env`, работающие services и volumes
   не изменялись. После проверки временные containers, volumes и `/tmp` каталог
   отсутствуют.
+- **WS-02 / DB-01 — Schema-contract reconciliation и миграционный gate: DONE.**
+  `make verify-migrations` теперь проверяет на изолированном PostgreSQL 16
+  `0001 → head → 0001 → head`, сохранность seeded baseline data и invariants
+  active-ticket, L2-overlap и active reminder schedule. README фиксирует head
+  `20260904_0005`.
 
 ## Следующий разрешённый фокус
 
-- **CURRENT WORKSTREAM:** Database.
-- **CURRENT MILESTONE:** DB-01 — Schema-contract reconciliation и
-  миграционный gate.
-- **NEXT MILESTONE:** BE-01 — безопасный case-number-only manager-create;
-  другой workstream, не начинать до завершения DB-01.
+- **CURRENT WORKSTREAM:** Backend core.
+- **CURRENT MILESTONE:** BE-01 — безопасный case-number-only manager-create.
+- **NEXT MILESTONE:** BE-02 — централизованная RBAC и action policy; другой
+  scope, не начинать автоматически.
 
 Полная последовательность и Definition of Done находятся в
 [`RDM-ROADMAP.md`](RDM-ROADMAP.md). Состояние реализации prior baseline и

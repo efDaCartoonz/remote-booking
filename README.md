@@ -186,6 +186,13 @@ docker compose exec backend alembic heads
 
 Текущий migration head: `20260904_0005`.
 
+Migration contract на PostgreSQL 16 входит в `make verify-migrations`: чистая
+БД проходит `20260901_0001 → head → 20260901_0001 → head`. Перед первым
+upgrade до head gate записывает базовые `users` и `connection_cards`, затем
+проверяет их сохранность после каждого перехода и инварианты: один активный
+тикет и отсутствие пересечения активных назначений L2. Проверка использует
+только `.env.example` и удаляет временные containers/volumes после завершения.
+
 ## API
 
 Health:

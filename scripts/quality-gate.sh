@@ -6,7 +6,7 @@ readonly MODE="${1:-all}"
 readonly PYTHON_BIN="${PYTHON_BIN:-python3}"
 readonly NPM_BIN="${NPM_BIN:-npm}"
 readonly COMPOSE_BIN="${COMPOSE_BIN:-docker compose}"
-readonly GATE_PROJECT="${RDM_GATE_PROJECT:-rdm-quality-gate}"
+readonly GATE_PROJECT="${RDM_GATE_PROJECT:-rdm-quality-gate-$$-$RANDOM}"
 readonly GATE_COMPOSE_FILES="-f docker-compose.yml -f docker-compose.quality-gate.yml"
 
 usage() {
@@ -74,7 +74,16 @@ run_migrations() {
             --env-file .env.example up --detach postgres
         RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
             --env-file .env.example run --rm backend sh -ec \
-            'alembic upgrade head && alembic downgrade base && alembic upgrade head && alembic current && alembic heads'
+            'alembic upgrade 20260901_0001 \
+             && python scripts/migration_contract_check.py seed-baseline \
+             && alembic upgrade head \
+             && python scripts/migration_contract_check.py check-head \
+             && alembic downgrade 20260901_0001 \
+             && python scripts/migration_contract_check.py check-baseline \
+             && alembic upgrade head \
+             && python scripts/migration_contract_check.py check-head \
+             && alembic current | grep -qx "20260904_0005 (head)" \
+             && alembic heads | grep -qx "20260904_0005 (head)"'
     )
 }
 

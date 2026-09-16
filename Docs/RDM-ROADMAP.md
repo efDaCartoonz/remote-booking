@@ -61,15 +61,16 @@ source-controlled backend/frontend/migration/Compose gate без ручной
 **Цель:** довести схему PostgreSQL и миграции до всех принятых доменных
 инвариантов, не смешивая schema presence с бизнес-готовностью.
 
-**Статус:** PARTIAL.
+**Статус:** PARTIAL — DB-01 завершён; дальнейшие административные и
+policy-изменения остаются в DB-02.
 
 **Связанные SRS:** DATA-001..056, REQ-FR-028..035, 126..145, 156..165;
 Technical Design §7.
 
 **Уже есть:** миграции `20260901_0001`…`20260904_0005`, таблицы карточек,
 ролей, графиков, распределения, cycles/attempts, audit, notification intents
-и reminders; exclusion constraint L2 (`backend/alembic/versions/`). README
-ошибочно указывает head `20260904_0004`, хотя Git содержит `0005`.
+и reminders; exclusion constraint L2 (`backend/alembic/versions/`). README и
+runtime head согласованы на `20260904_0005`.
 
 **Критерий завершения workstream:** все новые доменные поля и ограничения
 вводятся только миграциями; upgrade/downgrade/re-upgrade проверены на
@@ -81,10 +82,11 @@ Technical Design §7.
   цепочки PostgreSQL 16 и зафиксированные инварианты существующих таблиц.
 - **SRS:** DATA-001..020, NFR-020..029.
 - **Зависимости:** FI-01.
-- **Статус:** PARTIAL — миграции существуют, но их complete gate и документация
-  baseline расходятся.
-- **Definition of Done:** `0001 → head → downgrade → head` проходит на чистой
-  БД; не теряются предшествующие данные; README указывает фактический head.
+- **Статус:** DONE — `make verify-migrations` поднимает изолированный
+  PostgreSQL 16, сохраняет seeded данные baseline через
+  `0001 → head → 0001 → head` и фиксирует active-ticket, L2-overlap и
+  reminder-schedule invariants; README указывает `20260904_0005`.
+- **Definition of Done:** выполнен.
 
 ### DB-02 — Административные данные и планировочные политики
 
@@ -466,6 +468,6 @@ next functional milestone and never substitutes for its tests.
 
 - **CURRENT WORKSTREAM:** Database.
 - **CURRENT MILESTONE:** DB-01 — Schema-contract reconciliation и миграционный
-  gate (PARTIAL; не начат в рамках FI-01).
+  gate (DONE).
 - **NEXT MILESTONE:** BE-01 — безопасный manager-create: case-number-only
-  контракт; он относится к другому workstream и начинается только после DB-01.
+  контракт; другой workstream, не начинать автоматически.
