@@ -1090,7 +1090,10 @@ class PostgresCardRepository:
 
     def get_card_by_id_for_update(self, card_id: int) -> CardRecord | None:
         with self.connection.cursor() as cursor:
-            cursor.execute("SELECT * FROM connection_cards WHERE id=%(id)s FOR UPDATE", {"id": card_id})
+            cursor.execute(
+                "SELECT * FROM connection_cards WHERE id=%(id)s FOR UPDATE",
+                {"id": card_id},
+            )
             row = cursor.fetchone()
         return _card_from_row(row) if row is not None else None
 

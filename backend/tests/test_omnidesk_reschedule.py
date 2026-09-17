@@ -5,7 +5,12 @@ import pytest
 from app.cards.constants import ActorType, CardStatus
 from app.cards.service import CardService, InvalidCardTransitionError
 from app.integrations.omnidesk_reschedule import ConfirmedOmnideskReschedule
-from test_cards import FakeCardRepository, create_payload, seed_l1_candidate, seed_l2_candidate
+from test_cards import (
+    FakeCardRepository,
+    create_payload,
+    seed_l1_candidate,
+    seed_l2_candidate,
+)
 
 
 def test_confirmed_omnidesk_reschedule_closes_l1_and_is_idempotent():
@@ -43,11 +48,16 @@ def test_stale_omnidesk_reschedule_has_no_side_effects():
     repository = FakeCardRepository()
     seed_l2_candidate(repository, 20)
     card = CardService(repository).create_card(
-        create_payload(l2_engineer_id=20), actor_user_id=1, ip_address=None, user_agent=None
+        create_payload(l2_engineer_id=20),
+        actor_user_id=1,
+        ip_address=None,
+        user_agent=None,
     )
     before_events = list(repository.events)
 
-    with pytest.raises(InvalidCardTransitionError, match="stale_omnidesk_reschedule_event"):
+    with pytest.raises(
+        InvalidCardTransitionError, match="stale_omnidesk_reschedule_event"
+    ):
         CardService(repository).apply_confirmed_omnidesk_reschedule(
             ConfirmedOmnideskReschedule(
                 card_id=card.id,

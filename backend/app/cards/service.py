@@ -194,7 +194,10 @@ class CardService:
         comment = f"omnidesk_rescheduled:{command.source_event_id}"
         if self.repository.has_card_event_comment(card_id=card.id, comment=comment):
             return card
-        if CardStatus(card.status_code) != CardStatus.REJECTED or card.l1_owner_id is None:
+        if (
+            CardStatus(card.status_code) != CardStatus.REJECTED
+            or card.l1_owner_id is None
+        ):
             raise InvalidCardTransitionError("stale_omnidesk_reschedule_event")
 
         old = _card_snapshot(card)

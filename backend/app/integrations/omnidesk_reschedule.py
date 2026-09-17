@@ -16,7 +16,10 @@ class ConfirmedOmnideskReschedule:
     def __post_init__(self) -> None:
         if self.card_id <= 0 or not self.source_event_id.strip():
             raise ValueError("invalid_omnidesk_reschedule_event")
-        if self.planned_start_at.tzinfo is None or self.planned_start_at.utcoffset() is None:
+        if (
+            self.planned_start_at.tzinfo is None
+            or self.planned_start_at.utcoffset() is None
+        ):
             raise ValueError("planned_start_at_must_be_timezone_aware")
         if not 30 <= self.planned_duration_minutes <= 720:
             raise ValueError("planned_duration_minutes_out_of_range")
