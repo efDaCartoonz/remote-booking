@@ -17,7 +17,6 @@ from app.assignments.types import (
     ScheduleWindow,
     TimeInterval,
 )
-from app.assignments.manager_escalation import ManagerRecipient
 from app.auth.dependencies import get_auth_store, get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
 from app.cards.constants import (
@@ -224,6 +223,44 @@ class FakeCardRepository:
                 card_end = card_start + timedelta(minutes=card.planned_duration_minutes)
                 if (
                     card.l2_engineer_id == user_id
+                    and CardStatus(card.status_code)
+                    in {
+                        CardStatus.ASSIGNED,
+                        CardStatus.CONFIRMED,
+                        CardStatus.IN_PROGRESS,
+                    }
+                    and card_start < planned_end_at
+                    and planned_start_at < card_end
+                ):
+                    active_cards.append(
+                        TimeInterval(start_at=card_start, end_at=card_end)
+                    )
+            candidates.append(
+                L2DistributionCandidate(
+                    user_id=user_id,
+                    schedules=tuple(self.l2_candidate_schedules[user_id]),
+                    absences=tuple(self.l2_candidate_absences.get(user_id, [])),
+                    active_cards=tuple(active_cards),
+                )
+            )
+        return candidates
+
+    def list_all_l2_candidates(
+        self,
+        *,
+        planned_start_at: datetime,
+        planned_end_at: datetime,
+        exclude_card_id: int | None = None,
+    ) -> list[L2DistributionCandidate]:
+        candidates = []
+        for user_id in sorted(self.l2_candidate_schedules):
+            active_cards = []
+            for card in self.cards.values():
+                card_start = card.planned_start_at
+                card_end = card_start + timedelta(minutes=card.planned_duration_minutes)
+                if (
+                    card.id != exclude_card_id
+                    and card.l2_engineer_id == user_id
                     and CardStatus(card.status_code)
                     in {
                         CardStatus.ASSIGNED,
@@ -522,12 +559,6 @@ class FakeCardRepository:
 
     def advance(self, **data: Any) -> None:
         self.reminder_advances.append(data)
-
-    def list_active_manager_recipients(self) -> list[ManagerRecipient]:
-        return [ManagerRecipient(user_id=99, telegram_chat_id="manager")]
-
-    def has_manager_escalation_audit(self, **_: Any) -> bool:
-        return False
 
     def close_reminder_schedules(
         self, *, card_id: int, kind: str | None = None

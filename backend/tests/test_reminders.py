@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from app.assignments.manager_escalation import ManagerRecipient
 from app.cards.service import CardService
 from app.reminders import DueReminder, ReminderService, _resolve_l1_mode
 from app.worker import celery_app, scan_reminders
@@ -179,7 +180,14 @@ def test_stale_schedule_is_closed_without_notification():
 
 
 def test_overdue_l2_assignment_assigns_l1_once_and_escalates_manager():
-    repository = FakeCardRepository()
+    class OverdueRepository(FakeCardRepository):
+        def list_active_manager_recipients(self):
+            return [ManagerRecipient(user_id=99, telegram_chat_id="manager")]
+
+        def has_manager_escalation_audit(self, **_):
+            return False
+
+    repository = OverdueRepository()
     seed_l2_candidate(repository, 20)
     seed_l1_candidate(repository, 10)
     card = CardService(repository).create_card(
