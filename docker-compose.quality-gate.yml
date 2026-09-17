@@ -11,15 +11,15 @@ services:
   quality-backend:
     build:
       context: ./backend
-    working_dir: /app
+    working_dir: /workspace/backend
     env_file:
       - .env.example
     environment:
-      PYTHONPATH: /app
+      PYTHONPATH: /workspace/backend
       PYTHONDONTWRITEBYTECODE: "1"
       PYTEST_ADDOPTS: -p no:cacheprovider
     volumes:
-      - ./backend:/app
+      - ./:/workspace
     command:
       - sh
       - -ec
