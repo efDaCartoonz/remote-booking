@@ -207,12 +207,8 @@ def test_overdue_l2_assignment_assigns_l1_once_and_escalates_manager():
     repository.due_reminders = [reminder]
     notifications = FakeNotifications()
 
-    ReminderService(repository, notifications).scan(
-        now=datetime.now(UTC), batch_size=1
-    )
-    ReminderService(repository, notifications).scan(
-        now=datetime.now(UTC), batch_size=1
-    )
+    ReminderService(repository, notifications).scan(now=datetime.now(UTC), batch_size=1)
+    ReminderService(repository, notifications).scan(now=datetime.now(UTC), batch_size=1)
 
     updated = repository.get_card_by_public_id(card.public_id)
     assert updated is not None
@@ -220,7 +216,10 @@ def test_overdue_l2_assignment_assigns_l1_once_and_escalates_manager():
     assert updated.l1_owner_id == 10
     assert sum(event["comment"] == "l2_overdue" for event in repository.events) == 1
     assert sum(item["event"] == "l1_followup" for item in notifications.items) == 2
-    assert sum(item["event"] == "manager_escalation" for item in notifications.items) == 1
+    assert (
+        sum(item["event"] == "manager_escalation" for item in notifications.items)
+        == 1
+    )
 
 
 def test_batch_limit_is_clamped_to_500():
