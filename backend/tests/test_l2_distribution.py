@@ -16,6 +16,7 @@ from app.cards.constants import (
     AuditAction,
     CardEventType,
     CardStatus,
+    RoleId,
 )
 from app.cards.service import CardService
 
@@ -73,6 +74,47 @@ def test_initial_l2_distribution_rejects_card_when_no_candidates() -> None:
     assert repository.cycles[0].status_code == int(AssignmentCycleStatus.ALL_REJECTED)
     assert repository.attempts == []
     assert repository.events[-1]["comment"] == "no_available_l2_candidates"
+
+
+def test_manager_manual_reassignment_cancels_old_attempt_and_is_idempotent() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    service = CardService(repository)
+    card = service.create_card(
+        create_payload(), actor_user_id=1, ip_address=None, user_agent=None
+    )
+
+    reassigned = service.assign_card(
+        card.public_id,
+        l2_engineer_id=30,
+        actor_user_id=99,
+        actor_role_ids={int(RoleId.MANAGER)},
+        comment="manager_reassigned",
+        ip_address=None,
+        user_agent=None,
+    )
+    repeated = service.assign_card(
+        reassigned.public_id,
+        l2_engineer_id=30,
+        actor_user_id=99,
+        actor_role_ids={int(RoleId.MANAGER)},
+        comment="manager_reassigned",
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert reassigned.l2_engineer_id == 30
+    assert repeated == reassigned
+    assert [attempt.status_code for attempt in repository.attempts] == [
+        int(AssignmentAttemptStatus.SKIPPED),
+        int(AssignmentAttemptStatus.PENDING),
+    ]
+    assert [cycle.status_code for cycle in repository.cycles] == [
+        int(AssignmentCycleStatus.CANCELLED),
+        int(AssignmentCycleStatus.ASSIGNED),
+    ]
+    assert sum(schedule["closed_at"] is None for schedule in repository.schedules) == 1
 
 
 def test_initial_l2_distribution_excludes_l2_outside_schedule() -> None:

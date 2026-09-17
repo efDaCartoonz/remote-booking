@@ -291,6 +291,7 @@ class CardService:
             try:
                 card = self.l2_distribution_service.run_manual_assignment(
                     card,
+                    l2_engineer_id=l2_engineer_id,
                     actor_user_id=actor_user_id or 0,
                     ip_address=ip_address,
                     user_agent=user_agent,
@@ -322,17 +323,27 @@ class CardService:
         ip_address: str | None,
         user_agent: str | None,
     ) -> CardRecord:
-        return self._change_status(
-            public_id,
-            target_status=CardStatus.ASSIGNED,
-            actor_user_id=actor_user_id,
-            actor_role_ids=actor_role_ids,
-            comment=comment,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            l2_engineer_id=l2_engineer_id,
-            action=CardAction.ASSIGN,
-        )
+        card = self.repository.get_card_by_public_id_for_update(public_id)
+        if card is None:
+            raise CardNotFoundError
+        if actor_role_ids is not None:
+            authorize_card_action(
+                action=CardAction.ASSIGN,
+                card=card,
+                actor_user_id=actor_user_id,
+                actor_role_ids=actor_role_ids,
+                comment=comment,
+            )
+        try:
+            return self.l2_distribution_service.run_manual_assignment(
+                card,
+                l2_engineer_id=l2_engineer_id,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        except AssignmentDecisionError as exc:
+            raise InvalidCardTransitionError(exc.detail) from exc
 
     def confirm_card(
         self,

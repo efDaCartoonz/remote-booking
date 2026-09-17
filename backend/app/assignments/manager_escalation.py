@@ -38,6 +38,7 @@ EVENTS = {
     "all_l2_candidates_rejected",
     "repeated_unsuccessful_l2_cycle",
     "no_available_l1_candidates",
+    "l2_assignment_overdue",
 }
 
 

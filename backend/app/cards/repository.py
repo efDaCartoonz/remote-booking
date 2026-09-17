@@ -183,6 +183,12 @@ class CardRepository(Protocol):
         self, public_id: UUID, data: L1FollowupUpdateData
     ) -> CardRecord | None: ...
 
+    def release_l1_followup(self, *, card_id: int) -> CardRecord | None: ...
+
+    def mark_l2_assignment_overdue(
+        self, *, card_id: int
+    ) -> tuple[CardRecord, int] | None: ...
+
     def add_card_event(
         self,
         *,
@@ -440,6 +446,61 @@ class PostgresCardRepository:
             row = cursor.fetchone()
         return _card_from_row(row) if row is not None else None
 
+    def release_l1_followup(self, *, card_id: int) -> CardRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE connection_cards
+                SET l1_owner_id = NULL, client_informed = FALSE, updated_at = now()
+                WHERE id = %(card_id)s AND l1_owner_id IS NOT NULL
+                RETURNING *
+                """,
+                {"card_id": card_id},
+            )
+            row = cursor.fetchone()
+        return _card_from_row(row) if row is not None else None
+
+    def mark_l2_assignment_overdue(
+        self, *, card_id: int
+    ) -> tuple[CardRecord, int] | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE connection_cards
+                SET overdue_at = now(), updated_at = now()
+                WHERE id = %(card_id)s
+                  AND status_code = %(assigned_status)s
+                  AND overdue_at IS NULL
+                  AND planned_start_at + planned_duration_minutes * interval '1 minute' <= now()
+                RETURNING *
+                """,
+                {"card_id": card_id, "assigned_status": int(CardStatus.ASSIGNED)},
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        card = _card_from_row(row)
+        event_id = self.add_card_event(
+            card_id=card.id,
+            event_type=CardEventType.STATUS_CHANGED,
+            actor_user_id=None,
+            actor_type=ActorType.SYSTEM,
+            old_values={"overdue": False},
+            new_values={"overdue": True},
+            comment="l2_overdue",
+        )
+        self.add_audit_log(
+            actor_user_id=None,
+            actor_type=ActorType.SYSTEM,
+            action=AuditAction.UPDATE,
+            entity_id=card.id,
+            old_values={"overdue": False},
+            new_values={"overdue": True},
+            ip_address=None,
+            user_agent=None,
+        )
+        return card, event_id
+
     def list_l2_distribution_candidates(
         self, *, planned_start_at: datetime, planned_end_at: datetime
     ) -> list[L2DistributionCandidate]:
@@ -565,7 +626,10 @@ class PostgresCardRepository:
                 UPDATE connection_cards
                 SET l1_owner_id = %(owner)s, updated_at = now()
                 WHERE id = %(id)s
-                  AND status_code = %(rejected_status)s
+                  AND (
+                    status_code = %(rejected_status)s
+                    OR (status_code = %(assigned_status)s AND overdue_at IS NOT NULL)
+                  )
                   AND l1_owner_id IS NULL
                 RETURNING *
                 """,
@@ -573,6 +637,7 @@ class PostgresCardRepository:
                     "owner": l1_owner_id,
                     "id": card_id,
                     "rejected_status": int(CardStatus.REJECTED),
+                    "assigned_status": int(CardStatus.ASSIGNED),
                 },
             )
             row = cursor.fetchone()

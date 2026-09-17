@@ -38,7 +38,12 @@ class L1DistributionService:
             _choose_round_robin_candidate,
         )
 
-        if CardStatus(card.status_code) != CardStatus.REJECTED or card.l1_owner_id:
+        status = CardStatus(card.status_code)
+        if (
+            status not in {CardStatus.REJECTED, CardStatus.ASSIGNED}
+            or (status == CardStatus.ASSIGNED and not card.overdue_flag)
+            or card.l1_owner_id
+        ):
             return card
 
         end = card.planned_start_at + timedelta(minutes=card.planned_duration_minutes)

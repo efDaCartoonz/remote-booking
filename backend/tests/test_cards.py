@@ -17,6 +17,7 @@ from app.assignments.types import (
     ScheduleWindow,
     TimeInterval,
 )
+from app.assignments.manager_escalation import ManagerRecipient
 from app.auth.dependencies import get_auth_store, get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
 from app.cards.constants import (
@@ -65,6 +66,8 @@ class FakeCardRepository:
         self.next_cycle_id = 1
         self.next_attempt_id = 1
         self.schedules: list[dict[str, Any]] = []
+        self.due_reminders: list[Any] = []
+        self.reminder_advances: list[dict[str, Any]] = []
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         now = datetime.now(UTC)
@@ -297,7 +300,15 @@ class FakeCardRepository:
         for public_id, card in self.cards.items():
             if card.id != card_id:
                 continue
-            if CardStatus(card.status_code) != CardStatus.REJECTED or card.l1_owner_id:
+            if (
+                CardStatus(card.status_code)
+                not in {CardStatus.REJECTED, CardStatus.ASSIGNED}
+                or (
+                    CardStatus(card.status_code) == CardStatus.ASSIGNED
+                    and not card.overdue_flag
+                )
+                or card.l1_owner_id
+            ):
                 return None
             updated = replace(
                 card, l1_owner_id=l1_owner_id, updated_at=datetime.now(UTC)
@@ -305,6 +316,52 @@ class FakeCardRepository:
             self.cards[public_id] = updated
             return updated
         raise AssertionError(f"Card {card_id} not found")
+
+    def release_l1_followup(self, *, card_id: int) -> CardRecord | None:
+        for public_id, card in self.cards.items():
+            if card.id != card_id or card.l1_owner_id is None:
+                continue
+            updated = replace(
+                card,
+                l1_owner_id=None,
+                client_informed=False,
+                updated_at=datetime.now(UTC),
+            )
+            self.cards[public_id] = updated
+            return updated
+        return None
+
+    def mark_l2_assignment_overdue(self, *, card_id: int):
+        for public_id, card in self.cards.items():
+            if (
+                card.id != card_id
+                or CardStatus(card.status_code) != CardStatus.ASSIGNED
+                or card.overdue_flag
+            ):
+                continue
+            updated = replace(card, overdue_flag=True, updated_at=datetime.now(UTC))
+            self.cards[public_id] = updated
+            event_id = self.add_card_event(
+                card_id=card_id,
+                event_type=CardEventType.STATUS_CHANGED,
+                actor_user_id=None,
+                actor_type=ActorType.SYSTEM,
+                old_values={"overdue": False},
+                new_values={"overdue": True},
+                comment="l2_overdue",
+            )
+            self.add_audit_log(
+                actor_user_id=None,
+                actor_type=ActorType.SYSTEM,
+                action=AuditAction.UPDATE,
+                entity_id=card_id,
+                old_values={"overdue": False},
+                new_values={"overdue": True},
+                ip_address=None,
+                user_agent=None,
+            )
+            return updated, event_id
+        return None
 
     def get_next_assignment_cycle_number(self, card_id: int) -> int:
         return (
@@ -447,6 +504,30 @@ class FakeCardRepository:
 
     def create_reminder_schedule(self, **data: Any) -> None:
         self.schedules.append({**data, "closed_at": None})
+
+    def claim_due(self, **_: Any) -> list[Any]:
+        return self.due_reminders
+
+    def current(self, _: Any) -> bool:
+        return True
+
+    def record_timer_event(self, **_: Any) -> int:
+        return len(self.events) + 1
+
+    def recipients(self, **_: Any) -> list[tuple[str, str]]:
+        return []
+
+    def managers(self) -> list[tuple[int, str, str]]:
+        return []
+
+    def advance(self, **data: Any) -> None:
+        self.reminder_advances.append(data)
+
+    def list_active_manager_recipients(self) -> list[ManagerRecipient]:
+        return [ManagerRecipient(user_id=99, telegram_chat_id="manager")]
+
+    def has_manager_escalation_audit(self, **_: Any) -> bool:
+        return False
 
     def close_reminder_schedules(
         self, *, card_id: int, kind: str | None = None

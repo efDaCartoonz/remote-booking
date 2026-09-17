@@ -8,6 +8,10 @@ from typing import Protocol
 
 from psycopg.types.json import Jsonb
 
+from app.assignments.l1_service import L1DistributionService
+from app.assignments.manager_escalation import ManagerEscalationService
+from app.cards.constants import CardEventType
+from app.cards.repository import PostgresCardRepository
 from app.notifications import NotificationService
 
 
@@ -45,6 +49,8 @@ class ReminderRepository(Protocol):
         close: bool = False,
     ) -> None: ...
 
+    def mark_l2_assignment_overdue(self, *, card_id: int): ...
+
 
 class ReminderService:
     def __init__(
@@ -73,6 +79,34 @@ class ReminderService:
     def _scan_one(self, reminder: DueReminder, now: datetime) -> int:
         created = 0
         l1_mode = _resolve_l1_mode(reminder)
+        if reminder.kind == "l2_reminder":
+            mark_overdue = getattr(self.repository, "mark_l2_assignment_overdue", None)
+            overdue = mark_overdue(card_id=reminder.card_id) if mark_overdue else None
+            if overdue is not None:
+                card, source_event_id = overdue
+                assigned = L1DistributionService(
+                    self.repository, self.notifications
+                ).assign(card, ip_address=None, user_agent=None)
+                if assigned.l1_owner_id is not None:
+                    result = ManagerEscalationService(
+                        self.repository, self.notifications
+                    ).escalate(
+                        card=assigned,
+                        source_event_id=source_event_id,
+                        source_event_type=CardEventType.STATUS_CHANGED,
+                        reason="l2_assignment_overdue",
+                        ip_address=None,
+                        user_agent=None,
+                    )
+                    created += result.created_intents
+                self.repository.advance(
+                    reminder_id=reminder.id,
+                    next_due_at=now,
+                    count=reminder.last_count,
+                    escalation_sent=reminder.escalation_sent,
+                    close=True,
+                )
+                return created
         if not self.repository.current(reminder):
             self.repository.advance(
                 reminder_id=reminder.id,
@@ -146,7 +180,7 @@ class ReminderService:
         return created
 
 
-class PostgresReminderRepository:
+class PostgresReminderRepository(PostgresCardRepository):
     def __init__(self, connection):
         self.connection = connection
 
@@ -164,21 +198,6 @@ class PostgresReminderRepository:
 
     def current(self, reminder: DueReminder) -> bool:
         with self.connection.cursor() as cursor:
-            if reminder.kind == "l2_reminder":
-                cursor.execute(
-                    "UPDATE connection_cards SET overdue_at = now() WHERE id = %(card)s AND status_code = 1 AND overdue_at IS NULL AND planned_start_at + planned_duration_minutes * interval '1 minute' <= now() RETURNING id",
-                    {"card": reminder.card_id},
-                )
-                if cursor.fetchone() is not None:
-                    cursor.execute(
-                        "INSERT INTO card_events (card_id, event_type_code, actor_type_code, new_values, comment) VALUES (%(card)s, 4, 2, %(values)s, 'l2_overdue')",
-                        {"card": reminder.card_id, "values": Jsonb({"overdue": True})},
-                    )
-                    cursor.execute(
-                        "INSERT INTO audit_log (actor_type_code, action_code, entity_type, entity_id, new_values) VALUES (2, 1, 'connection_card', %(card)s, %(values)s)",
-                        {"card": reminder.card_id, "values": Jsonb({"overdue": True})},
-                    )
-                    return False
             cursor.execute(
                 "SELECT EXISTS (SELECT 1 FROM connection_cards c WHERE c.id = %(card)s AND c.status_code IN (1, 4) AND ((%(kind)s = 'l2_reminder' AND c.l2_engineer_id = %(owner)s) OR (%(kind)s = 'l1_reminder' AND c.l1_owner_id = %(owner)s))) AS active",
                 {

@@ -1,8 +1,15 @@
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from app.cards.service import CardService
 from app.reminders import DueReminder, ReminderService, _resolve_l1_mode
 from app.worker import celery_app, scan_reminders
+from test_cards import (
+    FakeCardRepository,
+    create_payload,
+    seed_l1_candidate,
+    seed_l2_candidate,
+)
 
 
 class FakeNotifications:
@@ -169,6 +176,43 @@ def test_stale_schedule_is_closed_without_notification():
     )
     assert not notifications.items
     assert repo.advanced[0]["close"] is True
+
+
+def test_overdue_l2_assignment_assigns_l1_once_and_escalates_manager():
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l1_candidate(repository, 10)
+    card = CardService(repository).create_card(
+        create_payload(), actor_user_id=1, ip_address=None, user_agent=None
+    )
+    reminder = DueReminder(
+        1,
+        card.id,
+        "l2_reminder",
+        20,
+        datetime(2020, 1, 1, tzinfo=UTC),
+        600,
+        2,
+        0,
+        False,
+    )
+    repository.due_reminders = [reminder]
+    notifications = FakeNotifications()
+
+    ReminderService(repository, notifications).scan(
+        now=datetime.now(UTC), batch_size=1
+    )
+    ReminderService(repository, notifications).scan(
+        now=datetime.now(UTC), batch_size=1
+    )
+
+    updated = repository.get_card_by_public_id(card.public_id)
+    assert updated is not None
+    assert updated.overdue_flag is True
+    assert updated.l1_owner_id == 10
+    assert sum(event["comment"] == "l2_overdue" for event in repository.events) == 1
+    assert sum(item["event"] == "l1_followup" for item in notifications.items) == 2
+    assert sum(item["event"] == "manager_escalation" for item in notifications.items) == 1
 
 
 def test_batch_limit_is_clamped_to_500():

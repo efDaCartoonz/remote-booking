@@ -163,12 +163,11 @@ class L2DistributionService:
         self,
         card: CardRecord,
         *,
+        l2_engineer_id: int,
         actor_user_id: int,
         ip_address: str | None,
         user_agent: str | None,
     ) -> CardRecord:
-        if card.l2_engineer_id is None:
-            raise AssignmentDecisionError("l2_engineer_required")
         end = card.planned_start_at + timedelta(minutes=card.planned_duration_minutes)
         candidate = next(
             (
@@ -178,7 +177,7 @@ class L2DistributionService:
                     planned_end_at=end,
                     exclude_card_id=card.id,
                 )
-                if item.user_id == card.l2_engineer_id
+                if item.user_id == l2_engineer_id
             ),
             None,
         )
@@ -188,6 +187,55 @@ class L2DistributionService:
             candidate, planned_start_at=card.planned_start_at, planned_end_at=end
         ):
             raise AssignmentDecisionError("l2_unavailable")
+
+        current_cycle = self.repository.get_current_assignment_cycle_for_update(card.id)
+        if (
+            card.status_code == int(CardStatus.ASSIGNED)
+            and card.l2_engineer_id == l2_engineer_id
+            and current_cycle is not None
+            and self.repository.get_pending_assignment_attempt_for_update(
+                card_id=card.id, l2_engineer_id=l2_engineer_id
+            )
+            is not None
+        ):
+            return card
+
+        if current_cycle is not None:
+            if card.l2_engineer_id is not None:
+                pending = self.repository.get_pending_assignment_attempt_for_update(
+                    card_id=card.id, l2_engineer_id=card.l2_engineer_id
+                )
+                if pending is not None:
+                    skipped = self.repository.update_assignment_attempt_response(
+                        attempt_id=pending.id,
+                        status=AssignmentAttemptStatus.SKIPPED,
+                        actor_user_id=actor_user_id,
+                        rejection_reason="manager_reassigned",
+                    )
+                    if skipped is not None:
+                        self._record_assignment_attempt_update(
+                            old_attempt=pending,
+                            updated_attempt=skipped,
+                            ip_address=ip_address,
+                            user_agent=user_agent,
+                        )
+            self.repository.update_assignment_cycle_status(
+                cycle_id=current_cycle.id, status=AssignmentCycleStatus.CANCELLED
+            )
+        if hasattr(self.repository, "close_reminder_schedules"):
+            self.repository.close_reminder_schedules(card_id=card.id)
+
+        old_card = card
+        card = self.repository.update_card_distribution_result(
+            card_id=card.id,
+            status=CardStatus.ASSIGNED,
+            l2_engineer_id=l2_engineer_id,
+            increment_unsuccessful_cycle_count=False,
+        )
+        if hasattr(self.repository, "release_l1_followup"):
+            released = self.repository.release_l1_followup(card_id=card.id)
+            if released is not None:
+                card = released
         cycle = self.repository.create_assignment_cycle(
             card_id=card.id,
             cycle_number=self.repository.get_next_assignment_cycle_number(card.id),
@@ -207,7 +255,7 @@ class L2DistributionService:
         attempt = self.repository.create_assignment_attempt(
             cycle_id=cycle.id,
             card_id=card.id,
-            l2_engineer_id=card.l2_engineer_id,
+            l2_engineer_id=l2_engineer_id,
             status=AssignmentAttemptStatus.PENDING,
         )
         self.repository.add_audit_log(
@@ -229,7 +277,7 @@ class L2DistributionService:
             event_type=CardEventType.ENGINEER_ASSIGNED,
             actor_user_id=actor_user_id,
             actor_type=ActorType.INTERNAL_USER,
-            old_values=_card_distribution_snapshot(card),
+            old_values=_card_distribution_snapshot(old_card),
             new_values=_card_distribution_snapshot(card),
             comment="manager_manual_assignment",
         )
@@ -238,10 +286,10 @@ class L2DistributionService:
             actor_type=ActorType.INTERNAL_USER,
             action=AuditAction.UPDATE,
             entity_id=card.id,
-            old_values=None,
+            old_values=_card_distribution_snapshot(old_card),
             new_values={
                 "status_code": int(CardStatus.ASSIGNED),
-                "l2_engineer_id": card.l2_engineer_id,
+                "l2_engineer_id": l2_engineer_id,
             },
             ip_address=ip_address,
             user_agent=user_agent,
