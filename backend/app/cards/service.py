@@ -17,6 +17,7 @@ from app.cards.constants import (
     CreatedSource,
     RoleId,
 )
+from app.cards.create_policy import RoleCreatePlan
 from app.cards.policy import CardAction, authorize_card_action
 from app.cards.repository import (
     CardHistoryRecord,
@@ -192,19 +193,45 @@ class CardService:
         actor_type: ActorType = ActorType.INTERNAL_USER,
         created_source: CreatedSource = CreatedSource.INTERNAL,
         manual_assignment: bool = False,
+        role_create_plan: RoleCreatePlan | None = None,
     ) -> CardRecord:
-        status = (
-            CardStatus.ASSIGNED
-            if payload.l2_engineer_id is not None
-            else CardStatus.CREATED
-        )
-        assignment_method_code = payload.assignment_method_code
-        if assignment_method_code is None:
-            assignment_method_code = (
-                int(AssignmentMethod.MANAGER)
+        if role_create_plan is None:
+            status = (
+                CardStatus.ASSIGNED
                 if payload.l2_engineer_id is not None
-                else int(AssignmentMethod.AUTO)
+                else CardStatus.CREATED
             )
+            assignment_method_code = payload.assignment_method_code
+            if assignment_method_code is None:
+                assignment_method_code = (
+                    int(AssignmentMethod.MANAGER)
+                    if payload.l2_engineer_id is not None
+                    else int(AssignmentMethod.AUTO)
+                )
+            l2_engineer_id = payload.l2_engineer_id
+            urgency_code = payload.urgency_code
+            urgent_reason = payload.urgent_reason
+            retroactive_flag = payload.retroactive_flag
+            actual_start_at = None
+            actual_end_at = None
+            result_code = None
+            engineer_report = None
+        else:
+            status = role_create_plan.status
+            assignment_method_code = role_create_plan.assignment_method_code
+            l2_engineer_id = (
+                actor_user_id
+                if role_create_plan.l2_engineer_id is None
+                and status != CardStatus.CREATED
+                else role_create_plan.l2_engineer_id
+            )
+            urgency_code = role_create_plan.urgency_code
+            urgent_reason = role_create_plan.urgent_reason
+            retroactive_flag = role_create_plan.retroactive_flag
+            actual_start_at = role_create_plan.actual_start_at
+            actual_end_at = role_create_plan.actual_end_at
+            result_code = role_create_plan.result_code
+            engineer_report = role_create_plan.engineer_report
 
         card = self.repository.create_card(
             CreateCardData(
@@ -215,19 +242,23 @@ class CardService:
                 status=status,
                 client_id=payload.client_id,
                 criticality_code=payload.criticality_code,
-                urgency_code=payload.urgency_code,
+                urgency_code=urgency_code,
                 client_timezone_at_creation=payload.client_timezone_at_creation,
                 timezone_source_code=payload.timezone_source_code,
                 l1_owner_id=payload.l1_owner_id,
-                l2_engineer_id=payload.l2_engineer_id,
+                l2_engineer_id=l2_engineer_id,
                 assignment_method_code=assignment_method_code,
                 client_contact_type_code=payload.client_contact_type_code,
                 client_contact_value=payload.client_contact_value,
                 description=payload.description,
-                urgent_reason=payload.urgent_reason,
+                urgent_reason=urgent_reason,
                 out_of_hours_flag=payload.out_of_hours_flag,
-                retroactive_flag=payload.retroactive_flag,
+                retroactive_flag=retroactive_flag,
                 created_source_code=int(created_source),
+                actual_start_at=actual_start_at,
+                actual_end_at=actual_end_at,
+                result_code=result_code,
+                engineer_report=engineer_report,
             )
         )
         snapshot = _card_snapshot(card)
@@ -256,7 +287,7 @@ class CardService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
-        elif payload.l2_engineer_id is not None and manual_assignment:
+        elif l2_engineer_id is not None and manual_assignment:
             try:
                 card = self.l2_distribution_service.run_manual_assignment(
                     card,

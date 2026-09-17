@@ -9,8 +9,13 @@ from fastapi.testclient import TestClient
 from psycopg.rows import dict_row
 
 import app.api.manager as manager_api
+import app.omnidesk_index.resolver as ticket_resolver
+from app.auth.dependencies import get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
+from app.cards.create_policy import CreateScenario, validate_role_create
 from app.cards.repository import PostgresCardRepository
+from app.cards.schemas import CardCreateRequest
+from app.cards.service import CardService
 from app.frame.omnidesk import OmnideskTicket
 from app.main import create_app
 
@@ -157,7 +162,7 @@ def test_http_two_connection_race_returns_one_success_and_one_409(
             return case_number.rsplit("-", maxsplit=1)[1]
 
     app = create_app()
-    app.dependency_overrides[manager_api.require_manager_role] = lambda: UserAuthRecord(
+    manager = UserAuthRecord(
         id=91000,
         username="manager",
         password_hash="test",
@@ -165,9 +170,10 @@ def test_http_two_connection_race_returns_one_success_and_one_409(
         email=None,
         roles=(RoleRecord(id=3, name="Руководитель"),),
     )
+    app.dependency_overrides[get_current_user] = lambda: manager
     app.dependency_overrides[manager_api.get_omnidesk_ticket_client] = OmnideskStub
     monkeypatch.setattr(manager_api, "db_connection", isolated_connection)
-    monkeypatch.setattr(manager_api, "CaseIndexRepository", CaseIndexStub)
+    monkeypatch.setattr(ticket_resolver, "CaseIndexRepository", CaseIndexStub)
     planned_start = datetime.now(UTC) + timedelta(hours=2, minutes=5)
     with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
         for user_id in (91001, 91002):
@@ -222,3 +228,86 @@ def test_http_two_connection_race_returns_one_success_and_one_409(
                 else "SELECT count(*) FROM audit_log WHERE entity_id IN (SELECT id FROM connection_cards WHERE omnidesk_ticket_number LIKE '910-00000%')"
             )
             assert cursor.fetchone()[0] >= 1
+
+
+def test_postgres_role_create_plans_persist_each_role_contract(
+    database_url: str,
+) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO users (id, username, password_hash, full_name) VALUES (91000, 'pg-l1', 'test', 'PG L1') ON CONFLICT (id) DO NOTHING"
+            )
+            cursor.execute(
+                "INSERT INTO users (id, username, password_hash, full_name) VALUES (91001, 'pg-l2', 'test', 'PG L2') ON CONFLICT (id) DO NOTHING"
+            )
+            cursor.execute(
+                "INSERT INTO user_roles (user_id, role_id) VALUES (91000, 1), (91001, 2) ON CONFLICT DO NOTHING"
+            )
+            cursor.execute(
+                "INSERT INTO distribution_members (user_id, pool_code, is_enabled) VALUES (91001, 2, true) ON CONFLICT (user_id, pool_code) DO UPDATE SET is_enabled=true"
+            )
+            for weekday in range(1, 8):
+                cursor.execute(
+                    "INSERT INTO schedules (user_id, weekday, start_time, end_time, timezone) VALUES (91001, %s, '00:00', '23:59:59.999999', 'UTC')",
+                    (weekday,),
+                )
+
+        service = CardService(PostgresCardRepository(connection))
+
+        def create(*, ticket: str, scenario: CreateScenario, start: datetime, **kwargs):
+            return service.create_card(
+                CardCreateRequest(
+                    omnidesk_ticket_number=ticket,
+                    planned_start_at=start,
+                    planned_duration_minutes=60,
+                ),
+                actor_user_id=91000 if scenario == CreateScenario.L1 else 91001,
+                ip_address=None,
+                user_agent=None,
+                role_create_plan=validate_role_create(
+                    scenario=scenario,
+                    planned_start_at=start,
+                    planned_duration_minutes=60,
+                    now=now,
+                    **kwargs,
+                ),
+            )
+
+        l1 = create(
+            ticket="910-000010",
+            scenario=CreateScenario.L1,
+            start=now + timedelta(hours=3),
+        )
+        l2 = create(
+            ticket="910-000011",
+            scenario=CreateScenario.L2_SELF,
+            start=now + timedelta(hours=5),
+        )
+        urgent = create(
+            ticket="910-000012",
+            scenario=CreateScenario.L2_URGENT,
+            start=now + timedelta(minutes=5),
+            urgent_reason="incident",
+        )
+        retroactive = create(
+            ticket="910-000013",
+            scenario=CreateScenario.L2_RETROACTIVE,
+            start=now - timedelta(hours=2),
+            result_code=0,
+            engineer_report="completed retroactively",
+        )
+        connection.commit()
+
+        assert l1.created_by_id == 91000
+        assert l2.status_code == 1 and l2.l2_engineer_id == 91001
+        assert urgent.status_code == 1 and urgent.urgent_reason == "incident"
+        assert retroactive.status_code == 5
+        assert retroactive.actual_end_at == now - timedelta(hours=1)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT actor_user_id FROM audit_log WHERE entity_id=%s AND action_code=0",
+                (retroactive.id,),
+            )
+            assert cursor.fetchone()["actor_user_id"] == 91001

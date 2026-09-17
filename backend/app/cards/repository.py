@@ -119,6 +119,10 @@ class CreateCardData:
     out_of_hours_flag: bool = False
     retroactive_flag: bool = False
     created_source_code: int = int(CreatedSource.INTERNAL)
+    actual_start_at: datetime | None = None
+    actual_end_at: datetime | None = None
+    result_code: int | None = None
+    engineer_report: str | None = None
 
 
 @dataclass(frozen=True)
@@ -342,7 +346,11 @@ class PostgresCardRepository:
                     out_of_hours_flag,
                     retroactive_flag,
                     created_source_code,
-                    created_by_id
+                    created_by_id,
+                    actual_start_at,
+                    actual_end_at,
+                    result_code,
+                    engineer_report
                 )
                 VALUES (
                     NULL,
@@ -365,7 +373,11 @@ class PostgresCardRepository:
                     %(out_of_hours_flag)s,
                     %(retroactive_flag)s,
                     %(created_source_code)s,
-                    %(created_by_id)s
+                    %(created_by_id)s,
+                    %(actual_start_at)s,
+                    %(actual_end_at)s,
+                    %(result_code)s,
+                    %(engineer_report)s
                 )
                 RETURNING *
                 """,
@@ -390,6 +402,10 @@ class PostgresCardRepository:
                     "retroactive_flag": data.retroactive_flag,
                     "created_source_code": data.created_source_code,
                     "created_by_id": data.created_by_id,
+                    "actual_start_at": data.actual_start_at,
+                    "actual_end_at": data.actual_end_at,
+                    "result_code": data.result_code,
+                    "engineer_report": data.engineer_report,
                 },
             )
             row = cursor.fetchone()

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.cards.constants import (
     ACTOR_TYPE_LABELS,
@@ -46,6 +46,41 @@ class CardCreateRequest(BaseModel):
         if value.tzinfo is None or value.utcoffset() is None:
             raise ValueError("planned_start_at_must_be_timezone_aware")
         return value
+
+
+class RoleCardCreateRequest(BaseModel):
+    """Public create payload shared by the role-specific endpoints."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    case_number: TicketNumber
+    planned_start_at: datetime
+    planned_duration_minutes: int = Field(default=60, ge=30, le=720)
+    description: str | None = Field(default=None, max_length=4000)
+
+    @field_validator("planned_start_at")
+    @classmethod
+    def planned_start_must_be_timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("planned_start_at_must_be_timezone_aware")
+        return value
+
+
+class L1CardCreateRequest(RoleCardCreateRequest):
+    pass
+
+
+class L2SelfCreateRequest(RoleCardCreateRequest):
+    pass
+
+
+class L2UrgentCreateRequest(RoleCardCreateRequest):
+    urgent_reason: str = Field(min_length=1, max_length=2000)
+
+
+class L2RetroactiveCreateRequest(RoleCardCreateRequest):
+    result_code: int | None = Field(default=None, ge=0)
+    engineer_report: str | None = Field(default=None, max_length=4000)
 
 
 class CardAssignRequest(BaseModel):

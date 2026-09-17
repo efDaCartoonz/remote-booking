@@ -14,7 +14,13 @@ from app.cards.policy import (
     authorize_create,
     role_ids,
 )
-from app.cards.repository import CardRecord, CardRepository, PostgresCardRepository
+from app.cards.create_policy import CreateScenario, validate_role_create
+from app.cards.repository import (
+    CardRecord,
+    CardRepository,
+    ClientSyncData,
+    PostgresCardRepository,
+)
 from app.cards.schemas import (
     CardAssignRequest,
     CardCompleteRequest,
@@ -23,13 +29,26 @@ from app.cards.schemas import (
     CardRejectRequest,
     CardResponse,
     CardStatusChangeRequest,
+    L1CardCreateRequest,
     L1RescheduleRequest,
+    L2RetroactiveCreateRequest,
+    L2SelfCreateRequest,
+    L2UrgentCreateRequest,
     card_history_response,
     card_response,
 )
 from app.cards.service import CardNotFoundError, CardService, InvalidCardTransitionError
-from app.db import get_db
+from app.db import db_connection, get_db
+from app.frame.omnidesk import OmnideskTicketClient, get_omnidesk_ticket_client
+from app.manager_create import (
+    ManagerCreateConflictError,
+    run_manager_create_transaction,
+)
 from app.notifications import PostgresNotificationService
+from app.omnidesk_index.resolver import (
+    PublicTicketResolutionError,
+    resolve_ticket_by_case_number,
+)
 
 router = APIRouter(prefix="/api/v1/cards", tags=["cards"])
 
@@ -51,21 +70,72 @@ def get_card_service(
     return CardService(repository, notifications)
 
 
-@router.post("", response_model=CardResponse, status_code=status.HTTP_201_CREATED)
-def create_card(
-    payload: CardCreateRequest,
+@router.post("/l1", response_model=CardResponse, status_code=status.HTTP_201_CREATED)
+def create_l1_card(
+    payload: L1CardCreateRequest,
     request: Request,
     user: Annotated[UserAuthRecord, Depends(get_current_user)],
-    service: Annotated[CardService, Depends(get_card_service)],
+    omnidesk: Annotated[OmnideskTicketClient, Depends(get_omnidesk_ticket_client)],
 ) -> CardResponse:
-    _authorize_create(user)
-    card = service.create_card(
-        payload,
-        actor_user_id=user.id,
-        ip_address=_client_ip(request),
-        user_agent=request.headers.get("user-agent"),
+    return _create_role_card(
+        payload=payload,
+        scenario=CreateScenario.L1,
+        request=request,
+        user=user,
+        omnidesk=omnidesk,
     )
-    return card_response(card)
+
+
+@router.post("/l2", response_model=CardResponse, status_code=status.HTTP_201_CREATED)
+def create_l2_self_card(
+    payload: L2SelfCreateRequest,
+    request: Request,
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    omnidesk: Annotated[OmnideskTicketClient, Depends(get_omnidesk_ticket_client)],
+) -> CardResponse:
+    return _create_role_card(
+        payload=payload,
+        scenario=CreateScenario.L2_SELF,
+        request=request,
+        user=user,
+        omnidesk=omnidesk,
+    )
+
+
+@router.post(
+    "/l2/urgent", response_model=CardResponse, status_code=status.HTTP_201_CREATED
+)
+def create_l2_urgent_card(
+    payload: L2UrgentCreateRequest,
+    request: Request,
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    omnidesk: Annotated[OmnideskTicketClient, Depends(get_omnidesk_ticket_client)],
+) -> CardResponse:
+    return _create_role_card(
+        payload=payload,
+        scenario=CreateScenario.L2_URGENT,
+        request=request,
+        user=user,
+        omnidesk=omnidesk,
+    )
+
+
+@router.post(
+    "/l2/retroactive", response_model=CardResponse, status_code=status.HTTP_201_CREATED
+)
+def create_l2_retroactive_card(
+    payload: L2RetroactiveCreateRequest,
+    request: Request,
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    omnidesk: Annotated[OmnideskTicketClient, Depends(get_omnidesk_ticket_client)],
+) -> CardResponse:
+    return _create_role_card(
+        payload=payload,
+        scenario=CreateScenario.L2_RETROACTIVE,
+        request=request,
+        user=user,
+        omnidesk=omnidesk,
+    )
 
 
 @router.get("/{card_id}", response_model=CardResponse)
@@ -281,6 +351,85 @@ def _authorize_create(user: UserAuthRecord) -> None:
         authorize_create(actor_role_ids=role_ids(user.roles))
     except CardActionPolicyError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+def _create_role_card(
+    *,
+    payload: L1CardCreateRequest
+    | L2SelfCreateRequest
+    | L2UrgentCreateRequest
+    | L2RetroactiveCreateRequest,
+    scenario: CreateScenario,
+    request: Request,
+    user: UserAuthRecord,
+    omnidesk: OmnideskTicketClient,
+) -> CardResponse:
+    try:
+        authorize_create(actor_role_ids=role_ids(user.roles), scenario=scenario)
+    except CardActionPolicyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+    try:
+        plan = validate_role_create(
+            scenario=scenario,
+            planned_start_at=payload.planned_start_at,
+            planned_duration_minutes=payload.planned_duration_minutes,
+            urgent_reason=getattr(payload, "urgent_reason", None),
+            result_code=getattr(payload, "result_code", None),
+            engineer_report=getattr(payload, "engineer_report", None),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    try:
+        with db_connection() as connection:
+            try:
+                ticket = resolve_ticket_by_case_number(
+                    connection, omnidesk, payload.case_number
+                )
+            except PublicTicketResolutionError as exc:
+                raise HTTPException(
+                    status_code=exc.status_code, detail=exc.detail
+                ) from exc
+            if not ticket.user_id:
+                raise HTTPException(status_code=422, detail="ticket_client_missing")
+            repository = PostgresCardRepository(connection)
+            if repository.has_active_card_for_ticket(ticket.number):
+                raise HTTPException(
+                    status_code=409, detail="active_card_exists_for_ticket"
+                )
+            client = repository.get_or_create_client(
+                ClientSyncData(
+                    omnidesk_user_id=ticket.user_id,
+                    omnidesk_company_id=ticket.company_id,
+                    display_name=ticket.client_display_name,
+                    preferred_contact_value=ticket.client_contact_value,
+                )
+            )
+            try:
+                card = run_manager_create_transaction(
+                    lambda: CardService(
+                        repository, PostgresNotificationService(connection)
+                    ).create_card(
+                        CardCreateRequest(
+                            omnidesk_ticket_number=ticket.number,
+                            planned_start_at=payload.planned_start_at,
+                            planned_duration_minutes=payload.planned_duration_minutes,
+                            client_id=client.id,
+                            description=payload.description,
+                        ),
+                        actor_user_id=user.id,
+                        ip_address=_client_ip(request),
+                        user_agent=request.headers.get("user-agent"),
+                        role_create_plan=plan,
+                    ),
+                    rollback=connection.rollback,
+                )
+            except InvalidCardTransitionError as exc:
+                raise HTTPException(status_code=409, detail=exc.detail) from exc
+    except ManagerCreateConflictError as exc:
+        raise HTTPException(status_code=409, detail=exc.detail) from exc
+    return card_response(card)
 
 
 def _client_ip(request: Request) -> str | None:

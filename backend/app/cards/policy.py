@@ -5,6 +5,7 @@ from enum import StrEnum
 from typing import Protocol
 
 from app.cards.constants import CardStatus, RoleId
+from app.cards.create_policy import CreateScenario
 
 
 class CardAction(StrEnum):
@@ -36,8 +37,29 @@ def role_ids(roles: Collection[object]) -> frozenset[int]:
     return frozenset(int(getattr(role, "id")) for role in roles)
 
 
-def authorize_create(*, actor_role_ids: Collection[int]) -> None:
-    if int(RoleId.MANAGER) not in actor_role_ids:
+def authorize_create(
+    *,
+    actor_role_ids: Collection[int],
+    scenario: CreateScenario | None = None,
+) -> None:
+    roles = frozenset(actor_role_ids)
+    if scenario is None:
+        if int(RoleId.MANAGER) in roles:
+            return
+        _forbidden()
+    if scenario == CreateScenario.L1 and int(RoleId.L1) in roles:
+        return
+    if (
+        scenario
+        in {
+            CreateScenario.L2_SELF,
+            CreateScenario.L2_URGENT,
+            CreateScenario.L2_RETROACTIVE,
+        }
+        and int(RoleId.L2) in roles
+    ):
+        return
+    if scenario is not None:
         _forbidden()
 
 

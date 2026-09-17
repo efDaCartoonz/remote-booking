@@ -24,12 +24,7 @@ from app.cards.service import CardService, InvalidCardTransitionError
 from app.db import db_connection
 from app.frame.omnidesk import (
     OmnideskTicketClient,
-    OmnideskTicketClientChangedError,
-    OmnideskTicketMismatchError,
-    OmnideskTicketNotFoundError,
-    OmnideskTicketReopenError,
     get_omnidesk_ticket_client,
-    validate_ticket_response,
 )
 from app.manager_create import (
     ManagerCreateConflictError,
@@ -41,10 +36,10 @@ from app.manager_create import (
     validate_manager_window,
 )
 from app.notifications import PostgresNotificationService
-from app.omnidesk_index.repository import (
-    CaseIndexRepository,
-    CaseIndexTicketAmbiguous,
-    CaseIndexTicketNotFound,
+from app.omnidesk_index.resolver import (
+    PublicTicketResolutionError,
+    resolve_ticket_by_case_id,
+    resolve_ticket_by_case_number,
 )
 
 router = APIRouter(prefix="/api/v1/manager", tags=["manager"])
@@ -126,54 +121,18 @@ require_manager_role = require_roles(int(RoleId.MANAGER))
 
 def _manager_ticket(client: OmnideskTicketClient, case_id: str, case_number: str):
     try:
-        ticket = client.get_ticket_by_case_id(case_id)
-    except (OmnideskTicketNotFoundError, OmnideskTicketMismatchError) as exc:
-        raise HTTPException(
-            status_code=404, detail="omnidesk_ticket_not_found"
-        ) from exc
-    try:
-        ticket = validate_ticket_response(
-            ticket, case_id=case_id, case_number=case_number
-        )
-    except OmnideskTicketMismatchError as exc:
-        raise HTTPException(status_code=404, detail=exc.detail) from exc
-    except OmnideskTicketNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=exc.detail) from exc
-    original_user_id = ticket.user_id
-    if ticket.status == "closed":
-        try:
-            client.reopen_ticket(case_id)
-            ticket = validate_ticket_response(
-                client.get_ticket_by_case_id(case_id),
-                case_id=case_id,
-                case_number=case_number,
-                expected_user_id=original_user_id,
-                require_open=True,
-            )
-        except (
-            OmnideskTicketNotFoundError,
-            OmnideskTicketMismatchError,
-            OmnideskTicketReopenError,
-            OmnideskTicketClientChangedError,
-        ) as exc:
-            raise HTTPException(status_code=409, detail=exc.detail) from exc
-    return ticket
+        return resolve_ticket_by_case_id(client, case_id, case_number)
+    except PublicTicketResolutionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 def _manager_ticket_by_number(
     connection, client: OmnideskTicketClient, case_number: str
 ):
     try:
-        case_id = CaseIndexRepository(connection).resolve_case_id(case_number)
-    except CaseIndexTicketNotFound as exc:
-        raise HTTPException(
-            status_code=404, detail="omnidesk_ticket_not_found"
-        ) from exc
-    except CaseIndexTicketAmbiguous as exc:
-        raise HTTPException(
-            status_code=409, detail="omnidesk_ticket_ambiguous"
-        ) from exc
-    return _manager_ticket(client, case_id, case_number)
+        return resolve_ticket_by_case_number(connection, client, case_number)
+    except PublicTicketResolutionError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.get(

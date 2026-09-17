@@ -81,8 +81,8 @@ class FakeCardRepository:
             planned_duration_minutes=data.planned_duration_minutes,
             client_timezone_at_creation=data.client_timezone_at_creation,
             timezone_source_code=data.timezone_source_code,
-            actual_start_at=None,
-            actual_end_at=None,
+            actual_start_at=data.actual_start_at,
+            actual_end_at=data.actual_end_at,
             l1_owner_id=data.l1_owner_id,
             l2_engineer_id=data.l2_engineer_id,
             assignment_method_code=data.assignment_method_code,
@@ -94,8 +94,8 @@ class FakeCardRepository:
             out_of_hours_flag=data.out_of_hours_flag,
             retroactive_flag=data.retroactive_flag,
             overdue_flag=False,
-            result_code=None,
-            engineer_report=None,
+            result_code=data.result_code,
+            engineer_report=data.engineer_report,
             created_source_code=data.created_source_code,
             created_by_id=data.created_by_id,
             created_at=now,
@@ -1050,14 +1050,11 @@ def test_cards_api_requires_authorized_internal_user() -> None:
         },
     )
 
-    assert response.status_code == 401
-    assert response.json()["detail"] == "not_authenticated"
+    assert response.status_code == 404
 
 
-def test_cards_api_creates_and_reads_card() -> None:
-    repository = FakeCardRepository()
+def test_generic_cards_create_endpoint_is_not_available() -> None:
     app = create_app()
-    app.dependency_overrides[get_card_repository] = lambda: repository
     app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
         id=10,
         username="manager",
@@ -1078,16 +1075,7 @@ def test_cards_api_creates_and_reads_card() -> None:
         },
     )
 
-    assert create_response.status_code == 201
-    created_body = create_response.json()
-    assert created_body["status"] == "assigned"
-    assert created_body["status_label"] == "Назначено"
-    assert created_body["l2_engineer_id"] == 20
-
-    read_response = client.get(f"/api/v1/cards/{created_body['id']}")
-
-    assert read_response.status_code == 200
-    assert read_response.json()["id"] == created_body["id"]
+    assert create_response.status_code == 404
 
 
 def test_cards_api_returns_safe_card_history() -> None:

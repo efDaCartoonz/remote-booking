@@ -1,5 +1,7 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
 from app.api.cards import router as cards_router
@@ -25,6 +27,20 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_response(
+        _: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        # Pydantic's default 422 body mirrors rejected input.  Keep validation
+        # locations and messages but never reflect a browser-supplied internal id.
+        detail = []
+        for error in exc.errors():
+            safe_error = {key: value for key, value in error.items() if key != "input"}
+            if "case_id" in safe_error.get("loc", ()):
+                safe_error["loc"] = ("body",)
+            detail.append(safe_error)
+        return JSONResponse(status_code=422, content={"detail": detail})
 
     app.include_router(health_router)
     app.include_router(auth_router)

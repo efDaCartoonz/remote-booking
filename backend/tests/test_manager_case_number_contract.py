@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import app.api.manager as manager_api
+import app.omnidesk_index.resolver as ticket_resolver
 from app.auth.dependencies import get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
 from app.frame.omnidesk import OmnideskTicket
@@ -107,7 +108,7 @@ def test_case_index_refuses_ambiguous_or_unavailable_ticket(rows, error):
 
 
 def test_case_index_resolver_failure_is_safe_and_never_leaks_internal_id(monkeypatch):
-    monkeypatch.setattr(manager_api, "CaseIndexRepository", IndexStub)
+    monkeypatch.setattr(ticket_resolver, "CaseIndexRepository", IndexStub)
     client = OmnideskStub()
     for number, status, detail in (
         ("404-000001", 404, "omnidesk_ticket_not_found"),
@@ -122,7 +123,7 @@ def test_case_index_resolver_failure_is_safe_and_never_leaks_internal_id(monkeyp
 
 
 def test_resolved_ticket_is_revalidated_against_public_number(monkeypatch):
-    monkeypatch.setattr(manager_api, "CaseIndexRepository", IndexStub)
+    monkeypatch.setattr(ticket_resolver, "CaseIndexRepository", IndexStub)
     with pytest.raises(HTTPException) as error:
         manager_api._manager_ticket_by_number(object(), OmnideskStub(), "999-000001")
     assert error.value.status_code == 404
