@@ -161,11 +161,15 @@ self-create, urgent и retroactive L2; общая validation policy для 120 �
 14 дней, длительности и creator restrictions.
 - **SRS:** REQ-FR-023..035, 099..109, 119..125, 156..160.
 - **Зависимости:** BE-01, BE-02, DB-02.
-- **Статус:** NOT STARTED — существуют client Frame и manager create, остальные
-  role-specific contracts отсутствуют.
-- **Definition of Done:** невозможны создание L2 за другого сотрудника и
-обход time/urgent/retroactive policy; endpoint, service и PostgreSQL tests
-покрывают каждую роль.
+- **Статус:** DONE — отдельные public contracts `/cards/l1`, `/cards/l2`,
+  `/cards/l2/urgent` и `/cards/l2/retroactive` принимают только публичный
+  номер тикета; generic create route удалён. Общий server-side policy
+  применяет role/self-create, 120 минут, 14 дней, duration, urgent reason и
+  retrospective result/report rules до записи. Commit `587accb`.
+- **Definition of Done:** выполнен в `587accb`: API/service/PostgreSQL tests
+  покрывают L1, L2 self, urgent и retroactive scenarios, негативные RBAC/
+  validation/conflict paths, audit actor, BE-01 privacy boundary и BE-02
+  policy reuse. Isolated Docker quality and migration contracts прошли.
 
 ## 4. Backend business logic
 
@@ -469,8 +473,7 @@ next functional milestone and never substitutes for its tests.
 
 ## Текущий фокус
 
-- **CURRENT WORKSTREAM:** Database.
-- **CURRENT MILESTONE:** DB-01 — Schema-contract reconciliation и миграционный
-  gate (DONE).
-- **NEXT MILESTONE:** BE-01 — безопасный manager-create: case-number-only
-  контракт; другой workstream, не начинать автоматически.
+- **CURRENT WORKSTREAM:** Backend core.
+- **CURRENT MILESTONE:** BE-03 — контракты создания по ролям (DONE).
+- **NEXT MILESTONE:** BL-01 — полное назначение, переназначение и overdue
+  L2/L1; другой workstream, не начинать автоматически.
