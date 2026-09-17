@@ -69,6 +69,18 @@ def assert_head_invariants(connection: psycopg.Connection) -> None:
         """
     ).fetchone()
     assert case_index == ("ux_omnidesk_case_index_case_number",), case_index
+    extension_setting = connection.execute(
+        "SELECT value FROM system_settings WHERE key = 'session_extension_interval_seconds'"
+    ).fetchone()
+    assert extension_setting == (900,), extension_setting
+    result_catalog = connection.execute(
+        "SELECT count(*) FROM connection_results WHERE is_active"
+    ).fetchone()
+    assert result_catalog[0] > 0, result_catalog
+    extension_table = connection.execute(
+        "SELECT to_regclass('session_extensions')"
+    ).fetchone()
+    assert extension_table == ("session_extensions",), extension_table
     overdue_at = connection.execute(
         """
         SELECT column_name
@@ -100,6 +112,7 @@ def assert_head_invariants(connection: psycopg.Connection) -> None:
                '2030-01-01T10:01:00Z', '{}'::jsonb
         FROM connection_cards
         WHERE omnidesk_ticket_number = %s
+        ON CONFLICT DO NOTHING
         """,
         (BASELINE_TICKET,),
     )

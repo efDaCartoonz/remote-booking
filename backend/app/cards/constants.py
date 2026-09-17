@@ -76,6 +76,7 @@ class CardEventType(IntEnum):
     ENGINEER_ASSIGNED = 2
     L1_CLIENT_INFORMED = 3
     DETAILS_UPDATED = 4
+    SESSION_EXTENDED = 9
 
 
 CARD_EVENT_LABELS: dict[CardEventType, str] = {
@@ -84,6 +85,7 @@ CARD_EVENT_LABELS: dict[CardEventType, str] = {
     CardEventType.ENGINEER_ASSIGNED: "Назначен ответственный",
     CardEventType.L1_CLIENT_INFORMED: "Клиент проинформирован",
     CardEventType.DETAILS_UPDATED: "Данные карточки изменены",
+    CardEventType.SESSION_EXTENDED: "Сессия продлена",
 }
 
 

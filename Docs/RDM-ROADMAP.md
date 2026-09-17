@@ -95,11 +95,14 @@ runtime head согласованы на `20260904_0005`.
 настроек продления с audit constraints.
 - **SRS:** REQ-FR-034, 038, 113..118, 126..145, 156..160; DATA-037..041.
 - **Зависимости:** DB-01, BE-02.
-- **Статус:** NOT STARTED — часть таблиц есть, но нет завершённого
-административного контракта и покрытия.
-- **Definition of Done:** invariants и audit проверены PostgreSQL tests;
-каждая бизнес-политика имеет один источник данных и миграционную rollback
-проверку.
+- **Статус:** DONE — migration `20260917_0007`, repository boundary и audit
+  constraints закрывают каталог результатов, calendar/schedules/absences,
+  distribution membership и session-extension policy. Isolated Docker gate
+  подтвердил backend/frontend/Compose и migration contract; DB-02 PostgreSQL
+  integration tests прошли на PostgreSQL 16.
+- **Definition of Done:** выполнен в DB-02 commit: database invariants и audit
+  покрыты PostgreSQL tests; каждая business policy имеет один storage source и
+  migration rollback/re-upgrade проверку.
 
 ## 3. Backend core
 

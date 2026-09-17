@@ -77,8 +77,8 @@ run_migrations() {
              && PYTHONPATH=/app python scripts/migration_contract_check.py check-baseline \
              && alembic upgrade head \
              && PYTHONPATH=/app python scripts/migration_contract_check.py check-head \
-             && alembic current | grep -qx "20260914_0006 (head)" \
-             && alembic heads | grep -qx "20260914_0006 (head)"'
+             && alembic current | grep -qx "20260917_0007 (head)" \
+             && alembic heads | grep -qx "20260917_0007 (head)"'
     )
 }
 
