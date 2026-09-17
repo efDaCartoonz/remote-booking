@@ -18,7 +18,7 @@ def test_makefile_exposes_all_quality_gate_parts() -> None:
         assert target in makefile
 
 
-def test_quality_gate_uses_template_env_and_isolated_migration_project() -> None:
+def test_quality_gate_uses_template_env_and_isolated_docker_project() -> None:
     script = (ROOT_DIR / "scripts" / "quality-gate.sh").read_text(encoding="utf-8")
 
     assert "--env-file .env.example" in script
@@ -31,6 +31,22 @@ def test_quality_gate_uses_template_env_and_isolated_migration_project() -> None
     assert script.count("migration_contract_check.py check-head") == 2
     assert "rdm-quality-gate-$$-$RANDOM" in script
     assert script.count('grep -qx "20260914_0006 (head)"') == 2
+
+
+def test_docker_quality_path_does_not_require_host_python_or_npm() -> None:
+    script = (ROOT_DIR / "scripts" / "quality-gate.sh").read_text(encoding="utf-8")
+    gate_compose = (ROOT_DIR / "docker-compose.quality-gate.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "PYTHON_BIN" not in script
+    assert "NPM_BIN" not in script
+    assert "run --build --rm quality-backend" in script
+    assert "run --build --rm quality-frontend" in script
+    assert "quality-backend:" in gate_compose
+    assert "quality-frontend:" in gate_compose
+    assert "pytest tests" in gate_compose
+    assert "npm ci && npm run test && npm run build" in gate_compose
 
 
 def test_migration_contract_check_preserves_baseline_data_and_checks_invariants() -> (

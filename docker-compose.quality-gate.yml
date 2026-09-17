@@ -7,3 +7,31 @@ services:
     ports: !reset []
   frontend:
     ports: !reset []
+
+  quality-backend:
+    build:
+      context: ./backend
+    working_dir: /app
+    env_file:
+      - .env.example
+    volumes:
+      - ./backend:/app
+    command:
+      - sh
+      - -ec
+      - >-
+        pytest tests
+        && ruff check --no-cache app tests
+        && ruff format --check --no-cache app tests
+
+  quality-frontend:
+    build:
+      context: ./frontend
+      target: build
+    working_dir: /app
+    volumes:
+      - ./frontend:/app
+    command:
+      - sh
+      - -ec
+      - npm ci && npm run test && npm run build
