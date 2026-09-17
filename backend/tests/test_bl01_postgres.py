@@ -35,7 +35,7 @@ def _seed(connection):
             cursor.execute("INSERT INTO users (id, username, password_hash, full_name) VALUES (%s, %s, 'test', %s)", (user_id, f"bl01-{user_id}", f"BL01 {user_id}"))
             cursor.execute("INSERT INTO user_roles (user_id, role_id) VALUES (%s, %s)", (user_id, int(role)))
         for user_id, pool in ((92001, 1), (92002, 2), (92003, 2)):
-            cursor.execute("INSERT INTO distribution_members (user_id, pool_code) VALUES (%s, %s)", (user_id, pool))
+            cursor.execute("INSERT INTO distribution_members (user_id, pool_code, is_enabled) VALUES (%s, %s, true)", (user_id, pool))
             for weekday in range(1, 8):
                 cursor.execute("INSERT INTO schedules (user_id, weekday, start_time, end_time, timezone) VALUES (%s, %s, '00:00', '23:59:59', 'UTC')", (user_id, weekday))
 
