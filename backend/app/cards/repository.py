@@ -173,6 +173,10 @@ class CardRepository(Protocol):
         self, public_id: UUID
     ) -> CardRecord | None: ...
 
+    def get_card_by_id_for_update(self, card_id: int) -> CardRecord | None: ...
+
+    def has_card_event_comment(self, *, card_id: int, comment: str) -> bool: ...
+
     def list_card_history(self, public_id: UUID) -> list[CardHistoryRecord] | None: ...
 
     def update_card_status(
@@ -1083,6 +1087,20 @@ class PostgresCardRepository:
 
     def get_card_by_public_id_for_update(self, public_id: UUID) -> CardRecord | None:
         return self._get_card(public_id, lock=True)
+
+    def get_card_by_id_for_update(self, card_id: int) -> CardRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT * FROM connection_cards WHERE id=%(id)s FOR UPDATE", {"id": card_id})
+            row = cursor.fetchone()
+        return _card_from_row(row) if row is not None else None
+
+    def has_card_event_comment(self, *, card_id: int, comment: str) -> bool:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT EXISTS (SELECT 1 FROM card_events WHERE card_id=%(card_id)s AND comment=%(comment)s) AS exists",
+                {"card_id": card_id, "comment": comment},
+            )
+            return bool(cursor.fetchone()["exists"])
 
     def list_card_history(self, public_id: UUID) -> list[CardHistoryRecord] | None:
         with self.connection.cursor() as cursor:

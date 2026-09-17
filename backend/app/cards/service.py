@@ -28,6 +28,7 @@ from app.cards.repository import (
     StatusUpdateData,
 )
 from app.cards.schemas import CardCreateRequest
+from app.integrations.omnidesk_reschedule import ConfirmedOmnideskReschedule
 from app.notifications import NotificationService
 
 
@@ -181,6 +182,56 @@ class CardService:
             self.repository.close_reminder_schedules(card_id=updated.id)
         return self.l2_distribution_service.run_initial_distribution(
             updated, ip_address=ip_address, user_agent=user_agent
+        )
+
+    def apply_confirmed_omnidesk_reschedule(
+        self, command: ConfirmedOmnideskReschedule
+    ) -> CardRecord:
+        """Apply a trusted integration fact; Frame and public APIs cannot call this."""
+        card = self.repository.get_card_by_id_for_update(command.card_id)
+        if card is None:
+            raise CardNotFoundError
+        comment = f"omnidesk_rescheduled:{command.source_event_id}"
+        if self.repository.has_card_event_comment(card_id=card.id, comment=comment):
+            return card
+        if CardStatus(card.status_code) != CardStatus.REJECTED or card.l1_owner_id is None:
+            raise InvalidCardTransitionError("stale_omnidesk_reschedule_event")
+
+        old = _card_snapshot(card)
+        updated = self.repository.update_l1_followup(
+            card.public_id,
+            L1FollowupUpdateData(
+                planned_start_at=command.planned_start_at,
+                planned_duration_minutes=command.planned_duration_minutes,
+                reset_for_new_cycle=True,
+            ),
+        )
+        if updated is None:
+            raise InvalidCardTransitionError("stale_omnidesk_reschedule_event")
+        self.repository.add_card_event(
+            card_id=updated.id,
+            event_type=CardEventType.DETAILS_UPDATED,
+            actor_user_id=None,
+            actor_type=ActorType.OMNIDESK,
+            old_values=old,
+            new_values=_card_snapshot(updated),
+            comment=comment,
+        )
+        self.repository.add_audit_log(
+            actor_user_id=None,
+            actor_type=ActorType.OMNIDESK,
+            action=AuditAction.UPDATE,
+            entity_type="omnidesk_reschedule",
+            entity_id=updated.id,
+            old_values=old,
+            new_values=_card_snapshot(updated),
+            ip_address=None,
+            user_agent=None,
+        )
+        if hasattr(self.repository, "close_reminder_schedules"):
+            self.repository.close_reminder_schedules(card_id=updated.id)
+        return self.l2_distribution_service.run_initial_distribution(
+            updated, ip_address=None, user_agent=None
         )
 
     def create_card(

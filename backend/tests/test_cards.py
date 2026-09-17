@@ -142,6 +142,15 @@ class FakeCardRepository:
     def get_card_by_public_id_for_update(self, public_id: UUID) -> CardRecord | None:
         return self.cards.get(public_id)
 
+    def get_card_by_id_for_update(self, card_id: int) -> CardRecord | None:
+        return next((card for card in self.cards.values() if card.id == card_id), None)
+
+    def has_card_event_comment(self, *, card_id: int, comment: str) -> bool:
+        return any(
+            event["card_id"] == card_id and event["comment"] == comment
+            for event in self.events
+        )
+
     def list_card_history(self, public_id: UUID) -> list[CardHistoryRecord] | None:
         card = self.cards.get(public_id)
         if card is None:
