@@ -45,6 +45,10 @@ def test_docker_quality_path_does_not_require_host_python_or_npm() -> None:
     assert "run --build --rm quality-frontend" in script
     assert "quality-backend:" in gate_compose
     assert "quality-frontend:" in gate_compose
+    assert "PYTHONPATH: /app" in gate_compose
+    assert "PYTEST_ADDOPTS: -p no:cacheprovider" in gate_compose
+    assert "quality-frontend-node-modules:/app/node_modules" in gate_compose
+    assert "quality-frontend-dist:/app/dist" in gate_compose
     assert "pytest tests" in gate_compose
     assert "npm ci && npm run test && npm run build" in gate_compose
 

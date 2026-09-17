@@ -14,6 +14,10 @@ services:
     working_dir: /app
     env_file:
       - .env.example
+    environment:
+      PYTHONPATH: /app
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTEST_ADDOPTS: -p no:cacheprovider
     volumes:
       - ./backend:/app
     command:
@@ -31,7 +35,13 @@ services:
     working_dir: /app
     volumes:
       - ./frontend:/app
+      - quality-frontend-node-modules:/app/node_modules
+      - quality-frontend-dist:/app/dist
     command:
       - sh
       - -ec
       - npm ci && npm run test && npm run build
+
+volumes:
+  quality-frontend-node-modules:
+  quality-frontend-dist:
