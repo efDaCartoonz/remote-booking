@@ -159,7 +159,7 @@ def test_l2_overdue_persists_l1_followup_and_deduplicates_escalation(database_ur
             assert cursor.fetchone()["count"] == 1
             cursor.execute("SELECT count(*) FROM reminder_schedules WHERE card_id=%s AND kind='l1_reminder' AND closed_at IS NULL", (card.id,))
             assert cursor.fetchone()["count"] == 1
-            cursor.execute("SELECT count(*) FROM card_events WHERE card_id=%s AND comment='l2_assignment_overdue'", (card.id,))
+            cursor.execute("SELECT count(*) FROM card_events WHERE card_id=%s AND comment='l2_overdue'", (card.id,))
             assert cursor.fetchone()["count"] == 1
             cursor.execute("SELECT count(*) FROM audit_log WHERE entity_type='manager_escalation' AND entity_id=%s", (card.id,))
             assert cursor.fetchone()["count"] == 1
