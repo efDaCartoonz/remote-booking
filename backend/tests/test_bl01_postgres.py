@@ -33,8 +33,10 @@ def cleanup(database_url):
 def _seed(connection):
     with connection.cursor() as cursor:
         for user_id, role in (
-            (92000, RoleId.MANAGER), (92001, RoleId.L1),
-            (92002, RoleId.L2), (92003, RoleId.L2),
+            (92000, RoleId.MANAGER),
+            (92001, RoleId.L1),
+            (92002, RoleId.L2),
+            (92003, RoleId.L2),
         ):
             cursor.execute(
                 "INSERT INTO users (id, username, password_hash, full_name) VALUES (%s, %s, 'test', %s)",
@@ -88,7 +90,8 @@ def test_omnidesk_reschedule_persists_l1_closure_and_deduplicates(database_url):
                 "UPDATE distribution_members SET is_enabled=true WHERE user_id IN (92002,92003)"
             )
         command = ConfirmedOmnideskReschedule(
-            card_id=rejected.id, source_event_id="od-920-1",
+            card_id=rejected.id,
+            source_event_id="od-920-1",
             planned_start_at=rejected.planned_start_at + timedelta(hours=1),
             planned_duration_minutes=90,
         )
@@ -99,7 +102,11 @@ def test_omnidesk_reschedule_persists_l1_closure_and_deduplicates(database_url):
                 "SELECT status_code, l1_owner_id, planned_duration_minutes FROM connection_cards WHERE id=%s",
                 (rejected.id,),
             )
-            assert dict(cursor.fetchone()) == {"status_code": 1, "l1_owner_id": None, "planned_duration_minutes": 90}
+            assert dict(cursor.fetchone()) == {
+                "status_code": 1,
+                "l1_owner_id": None,
+                "planned_duration_minutes": 90,
+            }
             cursor.execute(
                 "SELECT count(*) FROM card_events WHERE card_id=%s AND comment='omnidesk_rescheduled:od-920-1'",
                 (rejected.id,),
@@ -120,7 +127,10 @@ def test_omnidesk_reschedule_persists_l1_closure_and_deduplicates(database_url):
                 (rejected.id,),
             )
             assert cursor.fetchone()["count"] == 1
-            cursor.execute("SELECT count(*) FROM assignment_cycles WHERE card_id=%s", (rejected.id,))
+            cursor.execute(
+                "SELECT count(*) FROM assignment_cycles WHERE card_id=%s",
+                (rejected.id,),
+            )
             assert cursor.fetchone()["count"] == 2
             cursor.execute(
                 "SELECT count(*) FROM assignment_attempts WHERE card_id=%s AND status_code=0",
@@ -130,7 +140,8 @@ def test_omnidesk_reschedule_persists_l1_closure_and_deduplicates(database_url):
         with pytest.raises(InvalidCardTransitionError):
             service.apply_confirmed_omnidesk_reschedule(
                 ConfirmedOmnideskReschedule(
-                    card_id=rejected.id, source_event_id="od-920-stale",
+                    card_id=rejected.id,
+                    source_event_id="od-920-stale",
                     planned_start_at=rejected.planned_start_at,
                     planned_duration_minutes=60,
                 )
@@ -219,12 +230,17 @@ def test_l2_overdue_persists_l1_followup_and_deduplicates_escalation(database_ur
         assert card.l2_engineer_id == 92002
         now = datetime.now(UTC)
         with connection.cursor() as cursor:
-            cursor.execute("UPDATE connection_cards SET planned_start_at=%s WHERE id=%s", (now - timedelta(hours=2), card.id))
+            cursor.execute(
+                "UPDATE connection_cards SET planned_start_at=%s WHERE id=%s",
+                (now - timedelta(hours=2), card.id),
+            )
             cursor.execute(
                 "UPDATE reminder_schedules SET next_due_at=%s WHERE card_id=%s AND kind='l2_reminder' AND closed_at IS NULL",
                 (now - timedelta(minutes=1), card.id),
             )
-        scanner = ReminderService(PostgresReminderRepository(connection), _NoopNotifications())
+        scanner = ReminderService(
+            PostgresReminderRepository(connection), _NoopNotifications()
+        )
         assert scanner.scan(now=now, batch_size=10) == 0
         assert scanner.scan(now=now, batch_size=10) == 0
         with connection.cursor() as cursor:
@@ -247,7 +263,10 @@ def test_l2_overdue_persists_l1_followup_and_deduplicates_escalation(database_ur
                 (card.id,),
             )
             assert cursor.fetchone()["count"] == 1
-            cursor.execute("SELECT count(*) FROM card_events WHERE card_id=%s AND comment='l2_overdue'", (card.id,))
+            cursor.execute(
+                "SELECT count(*) FROM card_events WHERE card_id=%s AND comment='l2_overdue'",
+                (card.id,),
+            )
             assert cursor.fetchone()["count"] == 1
             cursor.execute(
                 "SELECT count(*) FROM audit_log WHERE entity_type='manager_escalation' AND entity_id=%s",
