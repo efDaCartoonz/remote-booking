@@ -471,7 +471,7 @@ class PostgresCardRepository:
             cursor.execute(
                 """
                 UPDATE connection_cards
-                SET overdue_at = now(), updated_at = now()
+                SET overdue_at = now(), overdue_flag = TRUE, updated_at = now()
                 WHERE id = %(card_id)s
                   AND status_code = %(assigned_status)s
                   AND overdue_at IS NULL
