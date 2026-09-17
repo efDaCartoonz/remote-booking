@@ -31,6 +31,14 @@ class CaseIndexValidationError(Exception):
         super().__init__(code)
 
 
+class CaseIndexTicketNotFound(Exception):
+    pass
+
+
+class CaseIndexTicketAmbiguous(Exception):
+    pass
+
+
 class CaseIndexRepository:
     def __init__(self, connection: Any):
         self.connection = connection
@@ -68,6 +76,35 @@ class CaseIndexRepository:
                 {**item.__dict__, "case_number": number},
             )
         return "upserted"
+
+    def resolve_case_id(self, case_number: str) -> str:
+        number = case_number.strip()
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM omnidesk_case_index_conflicts
+                WHERE case_number = %s AND resolved_at IS NULL
+                LIMIT 1
+                """,
+                (number,),
+            )
+            if cursor.fetchone() is not None:
+                raise CaseIndexTicketAmbiguous
+            cursor.execute(
+                """
+                SELECT case_id, deleted, spam, unavailable, conflict_code
+                FROM omnidesk_case_index
+                WHERE case_number = %s
+                """,
+                (number,),
+            )
+            row = cursor.fetchone()
+        if row is None or row[1] or row[2] or row[3]:
+            raise CaseIndexTicketNotFound
+        if row[4] is not None:
+            raise CaseIndexTicketAmbiguous
+        return row[0]
 
     def record_error(self, code: str) -> None:
         with self.connection.cursor() as cursor:

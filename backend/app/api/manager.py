@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi import status as http_status
 from pydantic import BaseModel
 
@@ -40,6 +40,11 @@ from app.manager_create import (
     validate_manager_window,
 )
 from app.notifications import PostgresNotificationService
+from app.omnidesk_index.repository import (
+    CaseIndexRepository,
+    CaseIndexTicketAmbiguous,
+    CaseIndexTicketNotFound,
+)
 
 router = APIRouter(prefix="/api/v1/manager", tags=["manager"])
 
@@ -154,23 +159,38 @@ def _manager_ticket(client: OmnideskTicketClient, case_id: str, case_number: str
     return ticket
 
 
+def _manager_ticket_by_number(
+    connection, client: OmnideskTicketClient, case_number: str
+):
+    try:
+        case_id = CaseIndexRepository(connection).resolve_case_id(case_number)
+    except CaseIndexTicketNotFound as exc:
+        raise HTTPException(
+            status_code=404, detail="omnidesk_ticket_not_found"
+        ) from exc
+    except CaseIndexTicketAmbiguous as exc:
+        raise HTTPException(
+            status_code=409, detail="omnidesk_ticket_ambiguous"
+        ) from exc
+    return _manager_ticket(client, case_id, case_number)
+
+
 @router.get(
-    "/tickets/{case_id}/preflight", response_model=ManagerTicketPreflightResponse
+    "/tickets/{case_number}/preflight",
+    response_model=ManagerTicketPreflightResponse,
 )
 def manager_ticket_preflight(
-    case_id: str,
-    case_number: str,
+    case_number: Annotated[str, Path(pattern=r"^[0-9]{3}-[0-9]{6}$")],
     _: Annotated[UserAuthRecord, Depends(require_manager_role)],
     omnidesk: Annotated[OmnideskTicketClient, Depends(get_omnidesk_ticket_client)],
 ) -> ManagerTicketPreflightResponse:
-    ticket = _manager_ticket(omnidesk, case_id, case_number)
     with db_connection() as connection:
+        ticket = _manager_ticket_by_number(connection, omnidesk, case_number)
         repository = PostgresCardRepository(connection)
         can_create = bool(ticket.user_id) and not repository.has_active_card_for_ticket(
             ticket.number
         )
     return ManagerTicketPreflightResponse(
-        case_id=ticket.case_id,
         case_number=ticket.number,
         status=ticket.status,
         client_display_name=ticket.client_display_name,
@@ -236,11 +256,13 @@ def manager_create_card(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    ticket = _manager_ticket(omnidesk, payload.case_id, payload.case_number)
-    if not ticket.user_id:
-        raise HTTPException(status_code=422, detail="ticket_client_missing")
     try:
         with db_connection() as connection:
+            ticket = _manager_ticket_by_number(
+                connection, omnidesk, payload.case_number
+            )
+            if not ticket.user_id:
+                raise HTTPException(status_code=422, detail="ticket_client_missing")
             repository = PostgresCardRepository(connection)
             if repository.has_active_card_for_ticket(ticket.number):
                 raise HTTPException(

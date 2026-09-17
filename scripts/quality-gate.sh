@@ -82,8 +82,8 @@ run_migrations() {
              && python scripts/migration_contract_check.py check-baseline \
              && alembic upgrade head \
              && python scripts/migration_contract_check.py check-head \
-             && alembic current | grep -qx "20260904_0005 (head)" \
-             && alembic heads | grep -qx "20260904_0005 (head)"'
+             && alembic current | grep -qx "20260914_0006 (head)" \
+             && alembic heads | grep -qx "20260914_0006 (head)"'
     )
 }
 

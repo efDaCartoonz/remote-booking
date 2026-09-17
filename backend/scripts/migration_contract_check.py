@@ -60,6 +60,15 @@ def seed_baseline(connection: psycopg.Connection) -> None:
 
 def assert_head_invariants(connection: psycopg.Connection) -> None:
     assert_baseline_data(connection)
+    case_index = connection.execute(
+        """
+        SELECT indexname
+        FROM pg_indexes
+        WHERE tablename = 'omnidesk_case_index'
+          AND indexname = 'ux_omnidesk_case_index_case_number'
+        """
+    ).fetchone()
+    assert case_index == ("ux_omnidesk_case_index_case_number",), case_index
     overdue_at = connection.execute(
         """
         SELECT column_name

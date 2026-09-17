@@ -149,6 +149,13 @@ def test_http_two_connection_race_returns_one_success_and_one_409(
         def reopen_ticket(self, case_id):
             raise AssertionError("open ticket must not be reopened")
 
+    class CaseIndexStub:
+        def __init__(self, connection):
+            self.connection = connection
+
+        def resolve_case_id(self, case_number):
+            return case_number.rsplit("-", maxsplit=1)[1]
+
     app = create_app()
     app.dependency_overrides[manager_api.require_manager_role] = lambda: UserAuthRecord(
         id=91000,
@@ -160,6 +167,7 @@ def test_http_two_connection_race_returns_one_success_and_one_409(
     )
     app.dependency_overrides[manager_api.get_omnidesk_ticket_client] = OmnideskStub
     monkeypatch.setattr(manager_api, "db_connection", isolated_connection)
+    monkeypatch.setattr(manager_api, "CaseIndexRepository", CaseIndexStub)
     planned_start = datetime.now(UTC) + timedelta(hours=2, minutes=5)
     with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
         for user_id in (91001, 91002):
@@ -169,13 +177,12 @@ def test_http_two_connection_race_returns_one_success_and_one_409(
                     (user_id, weekday),
                 )
     payload = {
-        "case_id": "000004",
         "case_number": "910-000004",
         "planned_start_at": planned_start.isoformat(),
         "planned_duration_minutes": 60,
         "l2_user_id": 91001,
     }
-    payloads = [payload, {**payload, "case_id": "000005", "case_number": "910-000005"}]
+    payloads = [payload, {**payload, "case_number": "910-000005"}]
     if same_ticket:
         payloads[1] = {**payload, "l2_user_id": 91002}
 

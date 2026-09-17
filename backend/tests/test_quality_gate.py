@@ -30,7 +30,7 @@ def test_quality_gate_uses_template_env_and_isolated_migration_project() -> None
     assert "migration_contract_check.py seed-baseline" in script
     assert script.count("migration_contract_check.py check-head") == 2
     assert "rdm-quality-gate-$$-$RANDOM" in script
-    assert script.count('grep -qx "20260904_0005 (head)"') == 2
+    assert script.count('grep -qx "20260914_0006 (head)"') == 2
 
 
 def test_migration_contract_check_preserves_baseline_data_and_checks_invariants() -> (
@@ -47,6 +47,7 @@ def test_migration_contract_check_preserves_baseline_data_and_checks_invariants(
     assert "NON_OVERLAPPING_TICKET" in checker
     assert "ExclusionViolation" in checker
     assert "UniqueViolation" in checker
+    assert "ux_omnidesk_case_index_case_number" in checker
     assert "COPY scripts ./scripts" in dockerfile
 
 

@@ -8,7 +8,6 @@ from app.manager_create import ManagerCreateRequest, validate_manager_window
 
 def valid_payload(**overrides):
     payload = {
-        "case_id": "123",
         "case_number": "123-456789",
         "planned_start_at": datetime.now(UTC) + timedelta(hours=3),
         "assignment_method": "auto",
@@ -18,6 +17,8 @@ def valid_payload(**overrides):
 
 
 def test_manager_schema_forbids_server_fields() -> None:
+    with pytest.raises(ValidationError):
+        ManagerCreateRequest(**valid_payload(case_id="123"))
     with pytest.raises(ValidationError):
         ManagerCreateRequest(**valid_payload(client_id=42, status_code=1))
 

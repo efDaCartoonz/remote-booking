@@ -34,7 +34,7 @@ type HistoryEntry = { event_label: string; actor_label: string; created_at: stri
 type ApiError = Error & { status: number; detail?: unknown };
 type ManagerCard = { public_id: string; number: string; omnidesk_ticket_number: string; status: string; status_label: string; planned_start_at: string; planned_end_at: string; planned_duration_minutes: number; l1_owner_name: string | null; l2_engineer_name: string | null; urgent: boolean; overdue: boolean; out_of_hours: boolean };
 type ManagerData = { summary: { assigned: number; confirmed: number; rejected: number; overdue: number }; items: ManagerCard[]; limit: number };
-type TicketPreflight = { case_id: string; case_number: string; status: string; client_display_name: string | null; can_create: boolean };
+type TicketPreflight = { case_number: string; status: string; client_display_name: string | null; can_create: boolean };
 type L2Option = { user_id: number; display_name: string; available: boolean; reason_code: string | null };
 type CreateWindowBounds = { min: Date; max: Date };
 type CreateValidationSuccess = { ok: true; start: Date; duration: number };
@@ -69,7 +69,7 @@ const managerError = ref("");
 const managerView = ref<"list" | "calendar">("list");
 const calendarMode = ref<"day" | "week">("week");
 const managerLoading = ref(false);
-const create = ref({ caseId: "", caseNumber: "", start: "", duration: 60, description: "", assignment: "auto", l2UserId: "" });
+const create = ref({ caseNumber: "", start: "", duration: 60, description: "", assignment: "auto", l2UserId: "" });
 const ticketPreflight = ref<TicketPreflight | null>(null);
 const l2Options = ref<L2Option[]>([]);
 const createLoading = ref(false);
@@ -287,9 +287,9 @@ const createMax = computed(() => localDateTimeInput(createBounds.value.max));
 function createStartIso(start: Date): string { return start.toISOString(); }
 async function preflightTicket(): Promise<void> {
   ticketPreflight.value = null; createNotice.value = "";
-  if (!create.value.caseId || !create.value.caseNumber) return;
+  if (!create.value.caseNumber) return;
   createLoading.value = true; createError.value = "";
-  try { ticketPreflight.value = await api<TicketPreflight>(`/api/v1/manager/tickets/${encodeURIComponent(create.value.caseId)}/preflight?case_number=${encodeURIComponent(create.value.caseNumber)}`); }
+  try { ticketPreflight.value = await api<TicketPreflight>(`/api/v1/manager/tickets/${encodeURIComponent(create.value.caseNumber)}/preflight`); }
   catch (error) { createError.value = createErrorMessage(error); if ((error as ApiError).status === 401) handleUnauthorized(); }
   finally { createLoading.value = false; }
 }
@@ -308,7 +308,7 @@ async function submitCreate(): Promise<void> {
   if (valid === null) return;
   createBusy.value = true; createError.value = "";
   try {
-    const payload: Record<string, unknown> = { case_id: create.value.caseId, case_number: create.value.caseNumber, planned_start_at: createStartIso(valid.start), planned_duration_minutes: valid.duration, description: create.value.description || null, assignment_method: "auto" };
+    const payload: Record<string, unknown> = { case_number: create.value.caseNumber, planned_start_at: createStartIso(valid.start), planned_duration_minutes: valid.duration, description: create.value.description || null, assignment_method: "auto" };
     if (create.value.assignment === "manual") payload.l2_user_id = Number(create.value.l2UserId);
     const created = await api<Card>("/api/v1/manager/cards", { method: "POST", body: JSON.stringify(payload) });
     window.location.assign(`/cards/${created.id}`);
@@ -594,8 +594,8 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <header class="top"><div><p class="eyebrow">RDM</p><h1>Новая карточка</h1><p class="muted">Создание доступно только руководителю.</p></div><a class="button-link" href="/manager">← Вернуться к панели</a></header>
         <p class="hint">Допустимое начало: не раньше чем через 2 часа и не позднее 14 дней. Длительность: 30–720 минут. Часовой пояс: {{ browserTimeZone }}.</p>
         <form class="form create-form" @submit.prevent="submitCreate">
-          <div class="grid"><label>ID обращения<input v-model.trim="create.caseId" required pattern="[0-9]+" /></label><label>Номер тикета<input v-model.trim="create.caseNumber" required /></label></div>
-          <button type="button" class="secondary" :disabled="createLoading || !create.caseId || !create.caseNumber" @click="preflightTicket">{{ createLoading ? "Проверяем…" : "Проверить тикет" }}</button>
+          <label>Номер тикета<input v-model.trim="create.caseNumber" required /></label>
+          <button type="button" class="secondary" :disabled="createLoading || !create.caseNumber" @click="preflightTicket">{{ createLoading ? "Проверяем…" : "Проверить тикет" }}</button>
           <section v-if="ticketPreflight" class="panel"><strong>Тикет {{ ticketPreflight.case_number }}</strong><p class="muted">Статус: {{ ticketPreflight.status }} · Клиент: {{ ticketPreflight.client_display_name || "Не указан" }}</p><p v-if="!ticketPreflight.can_create" class="error">Для этого тикета нельзя создать новую активную карточку.</p></section>
           <div class="grid"><label>Начало<input v-model="create.start" type="datetime-local" step="60" :min="createMin" :max="createMax" required @focus="refreshCreateNow" /></label><label>Длительность, минут<input v-model.number="create.duration" type="number" min="30" max="720" required /></label></div>
           <label>Описание<textarea v-model="create.description" rows="4"></textarea></label>
