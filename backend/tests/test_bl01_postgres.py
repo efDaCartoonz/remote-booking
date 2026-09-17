@@ -61,10 +61,10 @@ def test_omnidesk_reschedule_persists_l1_closure_and_deduplicates(database_url):
             cursor.execute("SELECT status_code, l1_owner_id FROM connection_cards WHERE id=%s", (rejected.id,))
             assert dict(cursor.fetchone()) == {"status_code": 4, "l1_owner_id": 92001}
             cursor.execute("SELECT count(*) FROM card_events WHERE card_id=%s AND comment='omnidesk_rescheduled:od-920-1'", (rejected.id,))
-            assert cursor.fetchone()[0] == 1
+            assert cursor.fetchone()["count"] == 1
             cursor.execute("SELECT count(*) FROM audit_log WHERE entity_type='omnidesk_reschedule' AND entity_id=%s", (rejected.id,))
-            assert cursor.fetchone()[0] == 1
+            assert cursor.fetchone()["count"] == 1
             cursor.execute("SELECT count(*) FROM reminder_schedules WHERE card_id=%s AND kind='l1_reminder' AND closed_at IS NOT NULL", (rejected.id,))
-            assert cursor.fetchone()[0] == 1
+            assert cursor.fetchone()["count"] == 1
         with pytest.raises(InvalidCardTransitionError):
             service.apply_confirmed_omnidesk_reschedule(ConfirmedOmnideskReschedule(card_id=rejected.id, source_event_id="od-920-stale", planned_start_at=rejected.planned_start_at, planned_duration_minutes=60))
