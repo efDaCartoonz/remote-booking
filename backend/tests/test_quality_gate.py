@@ -29,6 +29,7 @@ def test_quality_gate_uses_template_env_and_isolated_docker_project() -> None:
     assert "alembic downgrade 20260901_0001" in script
     assert "migration_contract_check.py seed-baseline" in script
     assert script.count("migration_contract_check.py check-head") == 2
+    assert script.count("PYTHONPATH=/app python scripts/migration_contract_check.py") == 4
     assert "rdm-quality-gate-$$-$RANDOM" in script
     assert script.count('grep -qx "20260914_0006 (head)"') == 2
 

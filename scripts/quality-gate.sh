@@ -70,13 +70,13 @@ run_migrations() {
         RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
             --env-file .env.example run --rm backend sh -ec \
             'alembic upgrade 20260901_0001 \
-             && python scripts/migration_contract_check.py seed-baseline \
+             && PYTHONPATH=/app python scripts/migration_contract_check.py seed-baseline \
              && alembic upgrade head \
-             && python scripts/migration_contract_check.py check-head \
+             && PYTHONPATH=/app python scripts/migration_contract_check.py check-head \
              && alembic downgrade 20260901_0001 \
-             && python scripts/migration_contract_check.py check-baseline \
+             && PYTHONPATH=/app python scripts/migration_contract_check.py check-baseline \
              && alembic upgrade head \
-             && python scripts/migration_contract_check.py check-head \
+             && PYTHONPATH=/app python scripts/migration_contract_check.py check-head \
              && alembic current | grep -qx "20260914_0006 (head)" \
              && alembic heads | grep -qx "20260914_0006 (head)"'
     )
