@@ -4,11 +4,6 @@ from dataclasses import replace
 from datetime import time, timedelta
 
 import pytest
-from app.assignments.l1_service import L1DistributionService
-from app.assignments.types import TimeInterval
-from app.cards.constants import AssignmentAttemptStatus, CardStatus
-from app.cards.service import CardService, InvalidCardTransitionError
-from app.notifications import RecordingNotificationService
 from test_cards import (
     DEFAULT_PLANNED_START_AT,
     FakeCardRepository,
@@ -16,6 +11,12 @@ from test_cards import (
     seed_l1_candidate,
     seed_l2_candidate,
 )
+
+from app.assignments.l1_service import L1DistributionService
+from app.assignments.types import TimeInterval
+from app.cards.constants import AssignmentAttemptStatus, CardStatus
+from app.cards.service import CardService, InvalidCardTransitionError
+from app.notifications import RecordingNotificationService
 
 
 def test_assigned_l1_can_mark_informed_once_and_unauthorized_l1_is_rejected() -> None:

@@ -35,7 +35,7 @@ services:
       context: ./backend
     restart: unless-stopped
     env_file:
-      - .env
+      - ${RDM_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -50,7 +50,7 @@ services:
       context: ./backend
     restart: unless-stopped
     env_file:
-      - .env
+      - ${RDM_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,7 +63,7 @@ services:
       context: ./backend
     restart: unless-stopped
     env_file:
-      - .env
+      - ${RDM_ENV_FILE:-.env}
     depends_on:
       postgres:
         condition: service_healthy

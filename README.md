@@ -184,7 +184,14 @@ docker compose exec backend alembic current
 docker compose exec backend alembic heads
 ```
 
-Текущий migration head: `20260904_0004`.
+Текущий migration head: `20260904_0005`.
+
+Migration contract на PostgreSQL 16 входит в `make verify-migrations`: чистая
+БД проходит `20260901_0001 → head → 20260901_0001 → head`. Перед первым
+upgrade до head gate записывает базовые `users` и `connection_cards`, затем
+проверяет их сохранность после каждого перехода и инварианты: один активный
+тикет и отсутствие пересечения активных назначений L2. Проверка использует
+только `.env.example` и удаляет временные containers/volumes после завершения.
 
 ## API
 
@@ -224,23 +231,33 @@ Frame API:
 
 ## Проверки
 
-Backend-тесты запускаются из директории `backend`:
+Единый quality gate запускается из корня checkout:
 
 ```bash
-cd backend
-pytest tests/test_auth.py tests/test_cards.py tests/test_frame_api.py \
-  tests/test_omnidesk_client.py tests/test_l2_distribution.py tests/test_l1_distribution.py \
-  tests/test_notification_runtime.py
+make verify
 ```
 
-Lint и форматирование запускаются из корня репозитория:
+Он не читает локальный `.env`: использует только `.env.example` и запускает
+четыре независимые части, которые можно повторить по отдельности:
 
 ```bash
-ruff check --no-cache backend/app backend/tests
-ruff format --check --no-cache
+make verify-backend
+make verify-frontend
+make verify-compose
+make verify-migrations
 ```
 
-Перед публикацией нужно проверить staged diff и отслеживаемые файлы на секреты.
+`verify-migrations` создаёт отдельный Docker Compose project
+`rdm-quality-gate` (имя можно переопределить через `RDM_GATE_PROJECT`),
+проверяет `upgrade → downgrade → upgrade` и удаляет созданные контейнеры и
+volumes при выходе. Его `docker-compose.quality-gate.yml` снимает host-port
+bindings, поэтому временный contour не конфликтует с работающими сервисами.
+Для frontend используются `npm ci`, native `node --test` и production build.
+Gate завершается с `UNAVAILABLE`, если нужный runtime не установлен; это не
+считается успешной проверкой.
+
+Перед публикацией также нужно проверить staged diff и отслеживаемые файлы на
+секреты.
 
 ## Статус Stage
 
