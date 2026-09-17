@@ -217,8 +217,7 @@ def test_overdue_l2_assignment_assigns_l1_once_and_escalates_manager():
     assert sum(event["comment"] == "l2_overdue" for event in repository.events) == 1
     assert sum(item["event"] == "l1_followup" for item in notifications.items) == 2
     assert (
-        sum(item["event"] == "manager_escalation" for item in notifications.items)
-        == 1
+        sum(item["event"] == "manager_escalation" for item in notifications.items) == 1
     )
 
 
