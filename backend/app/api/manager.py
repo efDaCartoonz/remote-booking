@@ -9,9 +9,10 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi import status as http_status
 from pydantic import BaseModel
 
-from app.auth.dependencies import require_roles
+from app.auth.dependencies import get_current_user, require_roles
 from app.auth.store import UserAuthRecord
 from app.cards.constants import CardStatus, CardStatusSlug, RoleId, status_slug
+from app.cards.policy import CardActionPolicyError, authorize_create, role_ids
 from app.cards.repository import CardRepository, ClientSyncData, PostgresCardRepository
 from app.cards.schemas import (
     CardCreateRequest,
@@ -247,9 +248,13 @@ def manager_l2_options(
 def manager_create_card(
     payload: ManagerCreateRequest,
     request: Request,
-    user: Annotated[UserAuthRecord, Depends(require_manager_role)],
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
     omnidesk: Annotated[OmnideskTicketClient, Depends(get_omnidesk_ticket_client)],
 ) -> CardResponse:
+    try:
+        authorize_create(actor_role_ids=role_ids(user.roles))
+    except CardActionPolicyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     try:
         validate_manager_window(
             payload.planned_start_at, payload.planned_duration_minutes

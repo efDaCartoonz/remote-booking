@@ -152,7 +152,7 @@ def test_manager_create_rejects_case_id_and_checks_auth_before_index(monkeypatch
     )
 
     app = create_app()
-    app.dependency_overrides[manager_api.require_manager_role] = lambda: MANAGER
+    app.dependency_overrides[get_current_user] = lambda: MANAGER
     response = TestClient(app).post(
         "/api/v1/manager/cards", json={**payload, "case_id": "123"}
     )

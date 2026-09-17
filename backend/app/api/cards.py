@@ -7,9 +7,13 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
-from app.auth.dependencies import get_current_user, require_roles
+from app.auth.dependencies import get_current_user
 from app.auth.store import UserAuthRecord
-from app.cards.constants import RoleId
+from app.cards.policy import (
+    CardActionPolicyError,
+    authorize_create,
+    role_ids,
+)
 from app.cards.repository import CardRecord, CardRepository, PostgresCardRepository
 from app.cards.schemas import (
     CardAssignRequest,
@@ -28,7 +32,6 @@ from app.db import get_db
 from app.notifications import PostgresNotificationService
 
 router = APIRouter(prefix="/api/v1/cards", tags=["cards"])
-require_manager_role = require_roles(int(RoleId.MANAGER))
 
 
 def get_card_repository(
@@ -52,9 +55,10 @@ def get_card_service(
 def create_card(
     payload: CardCreateRequest,
     request: Request,
-    user: Annotated[UserAuthRecord, Depends(require_manager_role)],
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
+    _authorize_create(user)
     card = service.create_card(
         payload,
         actor_user_id=user.id,
@@ -103,6 +107,7 @@ def assign_card(
             card_id,
             l2_engineer_id=payload.l2_engineer_id,
             actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
             comment=payload.comment,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
@@ -118,11 +123,11 @@ def confirm_card(
     user: Annotated[UserAuthRecord, Depends(get_current_user)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
-    _require_l2_role(user)
     return _handle_change(
         lambda: service.confirm_card(
             card_id,
             actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
             comment=payload.comment,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
@@ -138,11 +143,11 @@ def reject_card(
     user: Annotated[UserAuthRecord, Depends(get_current_user)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
-    _require_l2_role(user)
     return _handle_change(
         lambda: service.reject_card(
             card_id,
             actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
             rejection_reason=payload.rejection_reason,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
@@ -162,6 +167,7 @@ def start_card(
         lambda: service.start_card(
             card_id,
             actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
             comment=payload.comment,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
@@ -183,6 +189,7 @@ def complete_card(
             result_code=payload.result_code,
             engineer_report=payload.engineer_report,
             actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
             comment=payload.comment,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
@@ -202,6 +209,7 @@ def cancel_card(
         lambda: service.cancel_card(
             card_id,
             actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
             comment=payload.comment,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
@@ -216,11 +224,11 @@ def mark_client_informed(
     user: Annotated[UserAuthRecord, Depends(get_current_user)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
-    _require_l1_role(user)
     return _handle_change(
         lambda: service.mark_client_informed(
             card_id,
             actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         )
@@ -235,11 +243,11 @@ def reschedule_rejected(
     user: Annotated[UserAuthRecord, Depends(get_current_user)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
-    _require_l1_role(user)
     return _handle_change(
         lambda: service.update_rejected_card(
             card_id,
             actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
             planned_start_at=payload.planned_start_at,
             planned_duration_minutes=payload.planned_duration_minutes,
             description=payload.description,
@@ -259,6 +267,8 @@ def _handle_change(change: Callable[[], CardRecord]) -> CardResponse:
             status_code=status.HTTP_409_CONFLICT,
             detail=exc.detail,
         ) from exc
+    except CardActionPolicyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     return card_response(card)
 
 
@@ -266,20 +276,11 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="card_not_found")
 
 
-def _require_l2_role(user: UserAuthRecord) -> None:
-    if not any(role.id == int(RoleId.L2) for role in user.roles):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="l2_role_required",
-        )
-
-
-def _require_l1_role(user: UserAuthRecord) -> None:
-    if not any(role.id == int(RoleId.L1) for role in user.roles):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="l1_role_required",
-        )
+def _authorize_create(user: UserAuthRecord) -> None:
+    try:
+        authorize_create(actor_role_ids=role_ids(user.roles))
+    except CardActionPolicyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 def _client_ip(request: Request) -> str | None:

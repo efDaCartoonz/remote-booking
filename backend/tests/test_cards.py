@@ -1109,7 +1109,6 @@ def test_cards_api_returns_safe_card_history() -> None:
         ip_address=None,
         user_agent=None,
     )
-
     response = client.get(f"/api/v1/cards/{card.public_id}/history")
 
     assert response.status_code == 200
@@ -1139,7 +1138,7 @@ def test_cards_api_returns_not_found_for_missing_card_history() -> None:
     assert response.json()["detail"] == "card_not_found"
 
 
-def test_cards_api_returns_conflict_for_forbidden_transition() -> None:
+def test_cards_api_forbids_unauthorized_action_before_card_mutation() -> None:
     repository = FakeCardRepository()
     app = create_app()
     app.dependency_overrides[get_card_repository] = lambda: repository
@@ -1158,11 +1157,45 @@ def test_cards_api_returns_conflict_for_forbidden_transition() -> None:
         ip_address=None,
         user_agent=None,
     )
+    event_count = len(repository.events)
+    audit_count = len(repository.audit)
 
     response = client.post(
         f"/api/v1/cards/{card.public_id}/complete",
         json={"result_code": 0, "engineer_report": "Готово"},
     )
 
-    assert response.status_code == 409
-    assert response.json()["detail"] == "status_transition_not_allowed"
+    assert response.status_code == 403
+    assert response.json()["detail"] == "action_forbidden"
+    assert repository.cards[card.public_id] == card
+    assert len(repository.events) == event_count
+    assert len(repository.audit) == audit_count
+
+
+def test_cards_api_manager_action_records_actual_actor() -> None:
+    repository = FakeCardRepository()
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=10,
+        username="manager",
+        password_hash="unused",
+        full_name="Руководитель",
+        email=None,
+        roles=(RoleRecord(id=3, name="Руководитель"),),
+    )
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    response = TestClient(app, base_url="https://testserver").post(
+        f"/api/v1/cards/{card.public_id}/start", json={"comment": "manager_start"}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "in_progress"
+    assert repository.audit[-1]["actor_user_id"] == 10
+    assert repository.events[-1]["actor_user_id"] == 10

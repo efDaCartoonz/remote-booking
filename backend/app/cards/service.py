@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from collections.abc import Collection
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -14,7 +15,9 @@ from app.cards.constants import (
     CardEventType,
     CardStatus,
     CreatedSource,
+    RoleId,
 )
+from app.cards.policy import CardAction, authorize_card_action
 from app.cards.repository import (
     CardHistoryRecord,
     CardRecord,
@@ -56,13 +59,21 @@ class CardService:
         public_id: UUID,
         *,
         actor_user_id: int,
+        actor_role_ids: Collection[int] | None = None,
         ip_address: str | None,
         user_agent: str | None,
     ) -> CardRecord:
         card = self.repository.get_card_by_public_id_for_update(public_id)
         if card is None:
             raise CardNotFoundError
-        if (
+        if actor_role_ids is not None:
+            authorize_card_action(
+                action=CardAction.MARK_CLIENT_INFORMED,
+                card=card,
+                actor_user_id=actor_user_id,
+                actor_role_ids=actor_role_ids,
+            )
+        elif (
             CardStatus(card.status_code) != CardStatus.REJECTED
             or card.l1_owner_id != actor_user_id
         ):
@@ -112,6 +123,7 @@ class CardService:
         public_id: UUID,
         *,
         actor_user_id: int,
+        actor_role_ids: Collection[int] | None = None,
         planned_start_at: datetime,
         planned_duration_minutes: int,
         description: str | None,
@@ -121,7 +133,14 @@ class CardService:
         card = self.repository.get_card_by_public_id_for_update(public_id)
         if card is None:
             raise CardNotFoundError
-        if (
+        if actor_role_ids is not None:
+            authorize_card_action(
+                action=CardAction.RESCHEDULE,
+                card=card,
+                actor_user_id=actor_user_id,
+                actor_role_ids=actor_role_ids,
+            )
+        elif (
             CardStatus(card.status_code) != CardStatus.REJECTED
             or card.l1_owner_id != actor_user_id
         ):
@@ -267,6 +286,7 @@ class CardService:
         *,
         l2_engineer_id: int,
         actor_user_id: int,
+        actor_role_ids: Collection[int] | None = None,
         comment: str | None,
         ip_address: str | None,
         user_agent: str | None,
@@ -275,10 +295,12 @@ class CardService:
             public_id,
             target_status=CardStatus.ASSIGNED,
             actor_user_id=actor_user_id,
+            actor_role_ids=actor_role_ids,
             comment=comment,
             ip_address=ip_address,
             user_agent=user_agent,
             l2_engineer_id=l2_engineer_id,
+            action=CardAction.ASSIGN,
         )
 
     def confirm_card(
@@ -286,6 +308,7 @@ class CardService:
         public_id: UUID,
         *,
         actor_user_id: int,
+        actor_role_ids: Collection[int] | None = None,
         comment: str | None,
         ip_address: str | None,
         user_agent: str | None,
@@ -293,7 +316,19 @@ class CardService:
         card = self.repository.get_card_by_public_id_for_update(public_id)
         if card is None:
             raise CardNotFoundError
-        _validate_l2_assignment_decision(card, actor_user_id=actor_user_id)
+        if actor_role_ids is not None:
+            authorize_card_action(
+                action=CardAction.CONFIRM,
+                card=card,
+                actor_user_id=actor_user_id,
+                actor_role_ids=actor_role_ids,
+            )
+        _validate_l2_assignment_decision(
+            card,
+            actor_user_id=actor_user_id,
+            allow_manager=actor_role_ids is not None
+            and int(RoleId.MANAGER) in actor_role_ids,
+        )
 
         try:
             self.l2_distribution_service.confirm_current_assignment(
@@ -335,6 +370,7 @@ class CardService:
         public_id: UUID,
         *,
         actor_user_id: int,
+        actor_role_ids: Collection[int] | None = None,
         rejection_reason: str,
         ip_address: str | None,
         user_agent: str | None,
@@ -346,7 +382,19 @@ class CardService:
         card = self.repository.get_card_by_public_id_for_update(public_id)
         if card is None:
             raise CardNotFoundError
-        _validate_l2_assignment_decision(card, actor_user_id=actor_user_id)
+        if actor_role_ids is not None:
+            authorize_card_action(
+                action=CardAction.REJECT,
+                card=card,
+                actor_user_id=actor_user_id,
+                actor_role_ids=actor_role_ids,
+            )
+        _validate_l2_assignment_decision(
+            card,
+            actor_user_id=actor_user_id,
+            allow_manager=actor_role_ids is not None
+            and int(RoleId.MANAGER) in actor_role_ids,
+        )
 
         try:
             return self.l2_distribution_service.reject_current_assignment(
@@ -364,6 +412,7 @@ class CardService:
         public_id: UUID,
         *,
         actor_user_id: int,
+        actor_role_ids: Collection[int] | None = None,
         comment: str | None,
         ip_address: str | None,
         user_agent: str | None,
@@ -372,9 +421,11 @@ class CardService:
             public_id,
             target_status=CardStatus.IN_PROGRESS,
             actor_user_id=actor_user_id,
+            actor_role_ids=actor_role_ids,
             comment=comment,
             ip_address=ip_address,
             user_agent=user_agent,
+            action=CardAction.START,
             actual_start_at=datetime.now(UTC),
         )
 
@@ -385,6 +436,7 @@ class CardService:
         result_code: int,
         engineer_report: str,
         actor_user_id: int,
+        actor_role_ids: Collection[int] | None = None,
         comment: str | None,
         ip_address: str | None,
         user_agent: str | None,
@@ -395,12 +447,14 @@ class CardService:
             public_id,
             target_status=CardStatus.COMPLETED,
             actor_user_id=actor_user_id,
+            actor_role_ids=actor_role_ids,
             comment=comment,
             ip_address=ip_address,
             user_agent=user_agent,
             actual_end_at=datetime.now(UTC),
             result_code=result_code,
             engineer_report=engineer_report,
+            action=CardAction.COMPLETE,
         )
 
     def cancel_card(
@@ -408,6 +462,7 @@ class CardService:
         public_id: UUID,
         *,
         actor_user_id: int,
+        actor_role_ids: Collection[int] | None = None,
         comment: str | None,
         ip_address: str | None,
         user_agent: str | None,
@@ -416,9 +471,11 @@ class CardService:
             public_id,
             target_status=CardStatus.CANCELLED,
             actor_user_id=actor_user_id,
+            actor_role_ids=actor_role_ids,
             comment=comment,
             ip_address=ip_address,
             user_agent=user_agent,
+            action=CardAction.CANCEL,
         )
 
     def _change_status(
@@ -427,9 +484,11 @@ class CardService:
         *,
         target_status: CardStatus,
         actor_user_id: int,
+        actor_role_ids: Collection[int] | None,
         comment: str | None,
         ip_address: str | None,
         user_agent: str | None,
+        action: CardAction,
         l2_engineer_id: int | None = None,
         actual_start_at: datetime | None = None,
         actual_end_at: datetime | None = None,
@@ -439,6 +498,15 @@ class CardService:
         card = self.repository.get_card_by_public_id_for_update(public_id)
         if card is None:
             raise CardNotFoundError
+
+        if actor_role_ids is not None:
+            authorize_card_action(
+                action=action,
+                card=card,
+                actor_user_id=actor_user_id,
+                actor_role_ids=actor_role_ids,
+                comment=comment,
+            )
 
         current_status = CardStatus(card.status_code)
         _validate_transition(
@@ -548,12 +616,14 @@ def _validate_transition(
         raise InvalidCardTransitionError("l2_engineer_required")
 
 
-def _validate_l2_assignment_decision(card: CardRecord, *, actor_user_id: int) -> None:
+def _validate_l2_assignment_decision(
+    card: CardRecord, *, actor_user_id: int, allow_manager: bool = False
+) -> None:
     if CardStatus(card.status_code) != CardStatus.ASSIGNED:
         raise InvalidCardTransitionError("status_transition_not_allowed")
     if card.l2_engineer_id is None:
         raise InvalidCardTransitionError("l2_engineer_required")
-    if card.l2_engineer_id != actor_user_id:
+    if not allow_manager and card.l2_engineer_id != actor_user_id:
         raise InvalidCardTransitionError("assigned_l2_required")
 
 
