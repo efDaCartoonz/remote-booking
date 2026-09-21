@@ -315,6 +315,70 @@ def test_postgres_manager_scheduling_exceptions_persist_expected_state(
         assert cursor.fetchone()[0] == 0
 
 
+def test_postgres_manager_reschedule_selected_l2_persists_scheduling_lifecycle(
+    database_url: str,
+) -> None:
+    inside = (datetime.now(UTC) + timedelta(days=9)).replace(
+        hour=10, minute=0, second=0, microsecond=0
+    )
+    outside = inside.replace(hour=20)
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        _seed_manager_and_l2(connection)
+        service = CardService(PostgresCardRepository(connection))
+        card = _manager_create(service, ticket="910-000030", start=inside)
+
+        updated = service.reschedule_card(
+            card.public_id,
+            actor_user_id=91000,
+            actor_role_ids={3},
+            planned_start_at=outside,
+            planned_duration_minutes=90,
+            description="agreed evening window",
+            reason="client_requested",
+            ip_address="127.0.0.1",
+            user_agent="postgres-manager-reschedule-test",
+            selected_l2_engineer_id=91001,
+        )
+
+        assert updated.status_code == 1
+        assert updated.l2_engineer_id == 91001
+        assert updated.out_of_hours_flag is True
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT planned_start_at, planned_duration_minutes, "
+                "l2_engineer_id, out_of_hours_flag FROM connection_cards WHERE id=%s",
+                (card.id,),
+            )
+            assert cursor.fetchone() == {
+                "planned_start_at": outside,
+                "planned_duration_minutes": 90,
+                "l2_engineer_id": 91001,
+                "out_of_hours_flag": True,
+            }
+            cursor.execute(
+                "SELECT status_code FROM assignment_cycles "
+                "WHERE card_id=%s ORDER BY cycle_number",
+                (card.id,),
+            )
+            assert [row["status_code"] for row in cursor.fetchall()] == [3, 1]
+            cursor.execute(
+                "SELECT status_code, rejection_reason FROM assignment_attempts "
+                "WHERE card_id=%s ORDER BY id",
+                (card.id,),
+            )
+            assert [dict(row) for row in cursor.fetchall()] == [
+                {"status_code": 3, "rejection_reason": "rescheduled"},
+                {"status_code": 0, "rejection_reason": None},
+            ]
+            cursor.execute(
+                "SELECT closed_at IS NULL AS is_active FROM reminder_schedules "
+                "WHERE card_id=%s ORDER BY id",
+                (card.id,),
+            )
+            assert [row["is_active"] for row in cursor.fetchall()] == [False, True]
+        connection.commit()
+
+
 @pytest.mark.parametrize("same_ticket", (False, True))
 def test_http_two_connection_race_returns_one_success_and_one_409(
     database_url, monkeypatch, same_ticket
