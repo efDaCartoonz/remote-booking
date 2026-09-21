@@ -1512,7 +1512,11 @@ def test_manager_manual_assignment_never_bypasses_unavailability(reason: str) ->
             allow_out_of_hours=True,
         )
 
-    assert (len(repository.cards), len(repository.cycles), len(repository.attempts)) == before
+    assert (
+        len(repository.cards),
+        len(repository.cycles),
+        len(repository.attempts),
+    ) == before
 
 
 def test_non_exempt_selected_l2_has_no_out_of_hours_side_effects() -> None:

@@ -375,12 +375,10 @@ class CardService:
                 minutes=payload.planned_duration_minutes
             )
             try:
-                out_of_hours_flag = (
-                    self.l2_distribution_service.classify_l2_scheduling(
-                        l2_engineer_id=l2_engineer_id,
-                        planned_start_at=payload.planned_start_at,
-                        planned_end_at=end,
-                    )
+                out_of_hours_flag = self.l2_distribution_service.classify_l2_scheduling(
+                    l2_engineer_id=l2_engineer_id,
+                    planned_start_at=payload.planned_start_at,
+                    planned_end_at=end,
                 )
             except AssignmentDecisionError as exc:
                 raise InvalidCardTransitionError(exc.detail) from exc
