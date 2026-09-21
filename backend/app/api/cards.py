@@ -422,6 +422,7 @@ def _create_role_card(
                         actor_user_id=user.id,
                         ip_address=_client_ip(request),
                         user_agent=request.headers.get("user-agent"),
+                        allow_out_of_hours=scenario == CreateScenario.L2_SELF,
                         role_create_plan=plan,
                     ),
                     rollback=connection.rollback,

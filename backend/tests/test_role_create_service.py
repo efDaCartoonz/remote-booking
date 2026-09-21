@@ -1,6 +1,7 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, time, timedelta
 from uuid import uuid4
 
+from app.assignments.types import L2DistributionCandidate, ScheduleWindow
 from app.cards.constants import CardStatus
 from app.cards.create_policy import CreateScenario, validate_role_create
 from app.cards.repository import CardRecord, CreateCardData
@@ -59,6 +60,26 @@ class RecordingRepository:
 
     def add_audit_log(self, **kwargs):
         self.audit.append(kwargs)
+
+    def list_all_l2_candidates(self, **_kwargs):
+        return [
+            L2DistributionCandidate(
+                user_id=42,
+                schedules=tuple(
+                    ScheduleWindow(
+                        weekday=weekday,
+                        start_time=time.min,
+                        end_time=time.max,
+                        timezone="UTC",
+                        valid_from=None,
+                        valid_to=None,
+                    )
+                    for weekday in range(1, 8)
+                ),
+                absences=(),
+                active_cards=(),
+            )
+        ]
 
 
 def _payload(start: datetime) -> CardCreateRequest:

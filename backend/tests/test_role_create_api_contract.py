@@ -174,5 +174,6 @@ def test_l2_create_is_self_assigned_and_audited_as_actual_actor(monkeypatch) -> 
     response = TestClient(app).post("/api/v1/cards/l2", json=_payload())
     assert response.status_code == 201
     assert captured["actor_user_id"] == L2.id
+    assert captured["allow_out_of_hours"] is True
     assert captured["role_create_plan"].l2_engineer_id is None
     assert "case_id" not in response.text

@@ -29,6 +29,7 @@ from app.cards.constants import (
     DistributionPool,
     RoleId,
 )
+from app.cards.create_policy import CreateScenario, validate_role_create
 from app.cards.policy import CardActionPolicyError
 from app.cards.repository import (
     CardHistoryRecord,
@@ -1474,6 +1475,31 @@ def test_manager_manual_assignment_computes_out_of_hours_flag() -> None:
     assert card.l2_engineer_id == 20
     assert len(repository.cycles) == 1
     assert len(repository.attempts) == 1
+
+
+def test_l2_self_create_allows_out_of_hours_and_marks_card() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20, schedule_end=time(1))
+    plan = validate_role_create(
+        scenario=CreateScenario.L2_SELF,
+        planned_start_at=DEFAULT_PLANNED_START_AT,
+        planned_duration_minutes=60,
+        now=DEFAULT_PLANNED_START_AT - timedelta(hours=3),
+    )
+
+    card = CardService(repository).create_card(
+        create_payload(),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        allow_out_of_hours=True,
+        role_create_plan=plan,
+    )
+
+    assert card.l2_engineer_id == 20
+    assert card.out_of_hours_flag is True
+    assert repository.cycles == []
+    assert repository.attempts == []
 
 
 @pytest.mark.parametrize("reason", ("absence", "collision"))
