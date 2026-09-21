@@ -15,7 +15,7 @@ from app.auth.store import RoleRecord, UserAuthRecord
 from app.cards.create_policy import CreateScenario, validate_role_create
 from app.cards.repository import PostgresCardRepository
 from app.cards.schemas import CardCreateRequest
-from app.cards.service import CardService
+from app.cards.service import CardService, InvalidCardTransitionError
 from app.frame.omnidesk import OmnideskTicket
 from app.main import create_app
 
@@ -34,6 +34,9 @@ def clean_database(database_url: str):
     yield
     with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute("DELETE FROM connection_cards")
+        cursor.execute(
+            "DELETE FROM production_calendar_days WHERE updated_by_id IN (91000, 91001, 91002)"
+        )
         cursor.execute("DELETE FROM users WHERE id IN (91000, 91001, 91002)")
 
 
@@ -57,6 +60,86 @@ def _insert_card(connection, *, ticket: str, l2: int, start: datetime) -> None:
             "INSERT INTO connection_cards (number, omnidesk_ticket_number, status_code, planned_start_at, planned_duration_minutes, l2_engineer_id) VALUES (%s, %s, 1, %s, 60, %s)",
             (f"PG-{l2}-{ticket[-1]}", ticket, start, l2),
         )
+
+
+def _seed_manager_and_l2(
+    connection,
+    *,
+    schedule_start: str = "00:00",
+    schedule_end: str = "23:59:59.999999",
+) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO users (id, username, password_hash, full_name) "
+            "VALUES (91000, 'pg-manager', 'test', 'PG Manager'), "
+            "(91001, 'pg-scheduled-l2', 'test', 'PG Scheduled L2') "
+            "ON CONFLICT (id) DO NOTHING"
+        )
+        cursor.execute(
+            "INSERT INTO user_roles (user_id, role_id) VALUES (91000, 3), "
+            "(91001, 2) ON CONFLICT DO NOTHING"
+        )
+        for weekday in range(1, 8):
+            cursor.execute(
+                "INSERT INTO schedules (user_id, weekday, start_time, end_time, timezone) VALUES (91001, %s, %s, %s, 'UTC')",
+                (weekday, schedule_start, schedule_end),
+            )
+
+
+def _manager_create(
+    service: CardService,
+    *,
+    ticket: str,
+    start: datetime,
+    allow_out_of_hours: bool = True,
+):
+    return service.create_card(
+        CardCreateRequest(
+            omnidesk_ticket_number=ticket,
+            planned_start_at=start,
+            planned_duration_minutes=60,
+            l2_engineer_id=91001,
+        ),
+        actor_user_id=91000,
+        ip_address="127.0.0.1",
+        user_agent="postgres-manager-scheduling-test",
+        manual_assignment=True,
+        allow_out_of_hours=allow_out_of_hours,
+    )
+
+
+def _persisted_lifecycle(cursor, card_id: int) -> None:
+    cursor.execute(
+        "SELECT status_code, l2_engineer_id, out_of_hours_flag "
+        "FROM connection_cards WHERE id=%s",
+        (card_id,),
+    )
+    assert cursor.fetchone() == (1, 91001, False)
+    cursor.execute(
+        "SELECT status_code FROM assignment_cycles WHERE card_id=%s", (card_id,)
+    )
+    assert cursor.fetchone()[0] == 1
+    cursor.execute(
+        "SELECT status_code, l2_engineer_id FROM assignment_attempts WHERE card_id=%s",
+        (card_id,),
+    )
+    assert cursor.fetchone() == (0, 91001)
+    cursor.execute(
+        "SELECT kind, closed_at IS NULL FROM reminder_schedules WHERE card_id=%s",
+        (card_id,),
+    )
+    assert cursor.fetchone() == ("l2_reminder", True)
+    cursor.execute(
+        "SELECT actor_user_id FROM card_events WHERE card_id=%s AND event_type_code=2",
+        (card_id,),
+    )
+    assert cursor.fetchone()[0] == 91000
+    cursor.execute(
+        "SELECT actor_user_id FROM audit_log WHERE entity_type='connection_card' "
+        "AND entity_id=%s AND action_code=1",
+        (card_id,),
+    )
+    assert cursor.fetchone()[0] == 91000
 
 
 def test_postgres_metadata_has_expected_constraints(database_url: str) -> None:
@@ -127,6 +210,104 @@ def test_postgres_two_connection_race_keeps_one_card(database_url: str) -> None:
             "SELECT count(*) FROM connection_cards WHERE omnidesk_ticket_number='910-000003'"
         )
         assert cursor.fetchone()[0] == 1
+
+
+def test_postgres_manager_scheduling_exceptions_persist_expected_state(
+    database_url: str,
+) -> None:
+    inside = (datetime.now(UTC) + timedelta(days=8)).replace(
+        hour=10, minute=0, second=0, microsecond=0
+    )
+    outside = inside.replace(hour=20)
+    with psycopg.connect(database_url) as connection:
+        _seed_manager_and_l2(connection)
+        service = CardService(PostgresCardRepository(connection))
+
+        inside_card = _manager_create(
+            service, ticket="910-000020", start=inside
+        )
+        with connection.cursor() as cursor:
+            _persisted_lifecycle(cursor, inside_card.id)
+
+        outside_card = _manager_create(
+            service, ticket="910-000021", start=outside
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT out_of_hours_flag FROM connection_cards WHERE id=%s",
+                (outside_card.id,),
+            )
+            assert cursor.fetchone()[0] is True
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO production_calendar_days "
+                "(date, day_type_code, updated_by_id) VALUES (%s, 1, 91000)",
+                (inside.date(),),
+            )
+        calendar_card = _manager_create(service, ticket="910-000022", start=inside)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT out_of_hours_flag FROM connection_cards WHERE id=%s",
+                (calendar_card.id,),
+            )
+            assert cursor.fetchone()[0] is True
+
+        absence_start = inside + timedelta(hours=5)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO absences "
+                "(user_id, start_at, end_at, created_by_id, reason) "
+                "VALUES (91001, %s, %s, 91000, 'test absence')",
+                (absence_start, absence_start + timedelta(hours=1)),
+            )
+        with pytest.raises(InvalidCardTransitionError, match="l2_unavailable"):
+            _manager_create(service, ticket="910-000023", start=absence_start)
+
+        collision_start = inside + timedelta(hours=7)
+        _insert_card(connection, ticket="910-000024", l2=91001, start=collision_start)
+        with pytest.raises(InvalidCardTransitionError, match="l2_unavailable"):
+            _manager_create(service, ticket="910-000025", start=collision_start)
+
+        with pytest.raises(
+            InvalidCardTransitionError, match="out_of_hours_not_permitted"
+        ):
+            _manager_create(
+                service,
+                ticket="910-000026",
+                start=outside + timedelta(days=1),
+                allow_out_of_hours=False,
+            )
+        connection.commit()
+
+    with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
+        for ticket in ("910-000023", "910-000025", "910-000026"):
+            cursor.execute(
+                "SELECT count(*) FROM connection_cards WHERE omnidesk_ticket_number=%s",
+                (ticket,),
+            )
+            assert cursor.fetchone()[0] == 0
+        cursor.execute(
+            "SELECT count(*) FROM assignment_cycles c "
+            "JOIN connection_cards card ON card.id=c.card_id "
+            "WHERE card.omnidesk_ticket_number "
+            "IN ('910-000023', '910-000025', '910-000026')"
+        )
+        assert cursor.fetchone()[0] == 0
+        cursor.execute(
+            "SELECT count(*) FROM assignment_attempts a "
+            "JOIN connection_cards card ON card.id=a.card_id "
+            "WHERE card.omnidesk_ticket_number "
+            "IN ('910-000023', '910-000025', '910-000026')"
+        )
+        assert cursor.fetchone()[0] == 0
+        cursor.execute(
+            "SELECT count(*) FROM reminder_schedules r "
+            "JOIN connection_cards card ON card.id=r.card_id "
+            "WHERE card.omnidesk_ticket_number "
+            "IN ('910-000023', '910-000025', '910-000026')"
+        )
+        assert cursor.fetchone()[0] == 0
 
 
 @pytest.mark.parametrize("same_ticket", (False, True))
