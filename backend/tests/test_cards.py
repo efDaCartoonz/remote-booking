@@ -1098,9 +1098,7 @@ def test_known_reschedule_exclusion_is_mapped_to_safe_conflict(monkeypatch) -> N
 
     monkeypatch.setattr(cards_api, "ExclusionViolation", FakeExclusionViolation)
     error = FakeExclusionViolation("database failure")
-    error.diag = SimpleNamespace(
-        constraint_name="ex_connection_cards_l2_no_overlap"
-    )
+    error.diag = SimpleNamespace(constraint_name="ex_connection_cards_l2_no_overlap")
 
     with pytest.raises(HTTPException) as conflict:
         cards_api._handle_change(lambda: (_ for _ in ()).throw(error))
