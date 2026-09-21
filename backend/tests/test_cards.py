@@ -238,7 +238,9 @@ class FakeCardRepository:
             card,
             planned_start_at=data.planned_start_at,
             planned_duration_minutes=data.planned_duration_minutes,
-            description=data.description if data.description is not None else card.description,
+            description=data.description
+            if data.description is not None
+            else card.description,
             status_code=int(CardStatus.CREATED),
             l2_engineer_id=None,
             l1_owner_id=None,
@@ -938,7 +940,9 @@ def test_manager_reschedule_releases_assignment_and_starts_fresh_cycle() -> None
         int(AssignmentAttemptStatus.PENDING),
     ]
     assert repository.attempts[0].rejection_reason == "rescheduled"
-    assert len([item for item in repository.schedules if item["closed_at"] is None]) == 1
+    assert (
+        len([item for item in repository.schedules if item["closed_at"] is None]) == 1
+    )
     assert repository.events[-2]["comment"] == "client_requested"
 
 

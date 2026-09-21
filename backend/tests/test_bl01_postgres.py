@@ -247,7 +247,9 @@ def test_cancel_closes_assignment_lifecycle_and_releases_reservation(database_ur
             cursor.execute(
                 "SELECT status_code FROM assignment_cycles WHERE card_id=%s", (card.id,)
             )
-            assert cursor.fetchone()["status_code"] == int(AssignmentCycleStatus.CANCELLED)
+            assert cursor.fetchone()["status_code"] == int(
+                AssignmentCycleStatus.CANCELLED
+            )
             cursor.execute(
                 "SELECT status_code, actor_user_id, rejection_reason FROM assignment_attempts WHERE card_id=%s",
                 (card.id,),
