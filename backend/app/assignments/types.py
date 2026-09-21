@@ -26,6 +26,7 @@ class L2DistributionCandidate:
     schedules: tuple[ScheduleWindow, ...]
     absences: tuple[TimeInterval, ...]
     active_cards: tuple[TimeInterval, ...]
+    non_working_dates: frozenset[date] = frozenset()
 
 
 @dataclass(frozen=True)

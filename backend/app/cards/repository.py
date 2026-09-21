@@ -590,6 +590,9 @@ class PostgresCardRepository:
                     planned_start_at=planned_start_at,
                     planned_end_at=planned_end_at,
                 ),
+                non_working_dates=self._list_non_working_dates(
+                    planned_start_at=planned_start_at, planned_end_at=planned_end_at
+                ),
             )
             for user_id in user_ids
         ]
@@ -625,6 +628,9 @@ class PostgresCardRepository:
                         planned_end_at=planned_end_at,
                         exclude_card_id=exclude_card_id,
                     )
+                ),
+                non_working_dates=self._list_non_working_dates(
+                    planned_start_at=planned_start_at, planned_end_at=planned_end_at
                 ),
             )
             for user_id in ids
@@ -1369,6 +1375,27 @@ class PostgresCardRepository:
         return tuple(
             TimeInterval(start_at=row["start_at"], end_at=row["end_at"]) for row in rows
         )
+
+    def _list_non_working_dates(
+        self, *, planned_start_at: datetime, planned_end_at: datetime
+    ) -> frozenset[date]:
+        """Return calendar dates relevant to any supported schedule timezone.
+
+        Schedule timezones are IANA zones, so the local date of an aware instant
+        can differ from UTC by at most one day.  The widened query keeps the
+        database calendar as the sole source while avoiding a UTC-date shortcut.
+        """
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT date FROM production_calendar_days
+                WHERE day_type_code <> 0
+                  AND date >= (%(start)s::timestamptz AT TIME ZONE 'UTC')::date - 1
+                  AND date <= (%(end)s::timestamptz AT TIME ZONE 'UTC')::date + 1
+                """,
+                {"start": planned_start_at, "end": planned_end_at},
+            )
+            return frozenset(row["date"] for row in cursor.fetchall())
 
     def _list_active_card_intervals(
         self,

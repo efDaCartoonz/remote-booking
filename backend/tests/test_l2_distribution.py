@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import time, timedelta
+from datetime import date, time, timedelta
 
 from test_cards import (
     DEFAULT_PLANNED_START_AT,
@@ -138,6 +138,23 @@ def test_initial_l2_distribution_excludes_l2_outside_schedule() -> None:
     assert card.status_code == int(CardStatus.ASSIGNED)
     assert card.l2_engineer_id == 30
     assert [attempt.l2_engineer_id for attempt in repository.attempts] == [30]
+
+
+def test_initial_l2_distribution_excludes_l2_on_non_working_calendar_date() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    repository.l2_candidate_non_working_dates[20] = frozenset(
+        {date(2026, 9, 7)}
+    )
+    service = CardService(repository)
+
+    card = service.create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+
+    assert card.status_code == int(CardStatus.ASSIGNED)
+    assert card.l2_engineer_id == 30
 
 
 def test_initial_l2_distribution_excludes_absent_l2() -> None:

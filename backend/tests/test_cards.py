@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, replace
-from datetime import UTC, datetime, time, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -57,6 +57,7 @@ class FakeCardRepository:
         self.audit: list[dict[str, Any]] = []
         self.l2_candidate_schedules: dict[int, list[ScheduleWindow]] = {}
         self.l2_candidate_absences: dict[int, list[TimeInterval]] = {}
+        self.l2_candidate_non_working_dates: dict[int, frozenset[date]] = {}
         self.l1_candidate_schedules: dict[int, list[ScheduleWindow]] = {}
         self.l1_candidate_absences: dict[int, list[TimeInterval]] = {}
         self.distribution_last_user_id: int | None = None
@@ -280,6 +281,9 @@ class FakeCardRepository:
                     schedules=tuple(self.l2_candidate_schedules[user_id]),
                     absences=tuple(self.l2_candidate_absences.get(user_id, [])),
                     active_cards=tuple(active_cards),
+                    non_working_dates=self.l2_candidate_non_working_dates.get(
+                        user_id, frozenset()
+                    ),
                 )
             )
         return candidates
@@ -318,6 +322,9 @@ class FakeCardRepository:
                     schedules=tuple(self.l2_candidate_schedules[user_id]),
                     absences=tuple(self.l2_candidate_absences.get(user_id, [])),
                     active_cards=tuple(active_cards),
+                    non_working_dates=self.l2_candidate_non_working_dates.get(
+                        user_id, frozenset()
+                    ),
                 )
             )
         return candidates

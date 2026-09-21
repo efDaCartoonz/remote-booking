@@ -651,6 +651,8 @@ def _schedule_covers_interval(
         local_date = local_start.date()
         if local_end.date() != local_date:
             continue
+        if local_date in candidate.non_working_dates:
+            continue
         if local_start.isoweekday() != schedule.weekday:
             continue
         if schedule.valid_from is not None and local_date < schedule.valid_from:
