@@ -878,6 +878,34 @@ def test_created_card_cannot_be_cancelled_by_user_action() -> None:
     assert len(repository.audit) == 0
 
 
+def test_cancel_closes_pending_assignment_lifecycle_and_reminders() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+
+    cancelled = service.cancel_card(
+        card.public_id,
+        actor_user_id=10,
+        actor_role_ids={int(RoleId.MANAGER)},
+        comment="client_requested",
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert cancelled.status_code == int(CardStatus.CANCELLED)
+    assert [cycle.status_code for cycle in repository.cycles] == [
+        int(AssignmentCycleStatus.CANCELLED)
+    ]
+    assert [attempt.status_code for attempt in repository.attempts] == [
+        int(AssignmentAttemptStatus.SKIPPED)
+    ]
+    assert repository.attempts[0].rejection_reason == "cancelled"
+    assert all(item["closed_at"] is not None for item in repository.schedules)
+
+
 def test_manager_reschedule_releases_assignment_and_starts_fresh_cycle() -> None:
     repository = FakeCardRepository()
     seed_l2_candidate(repository, 20)

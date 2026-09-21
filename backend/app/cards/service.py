@@ -691,6 +691,26 @@ class CardService:
             new_l2_engineer_id=l2_engineer_id,
         )
 
+        if target_status == CardStatus.CANCELLED:
+            current_cycle = self.repository.get_current_assignment_cycle_for_update(
+                card.id
+            )
+            if current_cycle is not None:
+                if card.l2_engineer_id is not None:
+                    pending = self.repository.get_pending_assignment_attempt_for_update(
+                        card_id=card.id, l2_engineer_id=card.l2_engineer_id
+                    )
+                    if pending is not None:
+                        self.repository.update_assignment_attempt_response(
+                            attempt_id=pending.id,
+                            status=AssignmentAttemptStatus.SKIPPED,
+                            actor_user_id=actor_user_id,
+                            rejection_reason="cancelled",
+                        )
+                self.repository.update_assignment_cycle_status(
+                    cycle_id=current_cycle.id, status=AssignmentCycleStatus.CANCELLED
+                )
+
         old_snapshot = _card_snapshot(card)
         updated = self.repository.update_card_status(
             public_id,

@@ -91,7 +91,7 @@ def test_action_policy_allows_only_role_owner_and_state_combinations(
             CardStatus.CREATED,
             "action_not_allowed_for_status",
         ),
-        (CardAction.CANCEL, ADMIN, 10, CardStatus.REJECTED, "card_owner_required"),
+        (CardAction.CANCEL, ADMIN, 10, CardStatus.REJECTED, "assigned_l2_required"),
     ),
 )
 def test_action_policy_rejects_role_owner_and_state_violations(
