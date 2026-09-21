@@ -368,7 +368,9 @@ class CardService:
             engineer_report = role_create_plan.engineer_report
 
         out_of_hours_flag = False
-        if l2_engineer_id is not None:
+        if l2_engineer_id is not None and (
+            manual_assignment or role_create_plan is not None
+        ):
             end = payload.planned_start_at + timedelta(
                 minutes=payload.planned_duration_minutes
             )
