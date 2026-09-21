@@ -10,6 +10,8 @@ from app.assignments.service import AssignmentDecisionError, L2DistributionServi
 from app.cards.constants import (
     ALLOWED_STATUS_TRANSITIONS,
     ActorType,
+    AssignmentAttemptStatus,
+    AssignmentCycleStatus,
     AssignmentMethod,
     AuditAction,
     CardEventType,
@@ -25,6 +27,7 @@ from app.cards.repository import (
     CardRepository,
     CreateCardData,
     L1FollowupUpdateData,
+    ScheduleUpdateData,
     StatusUpdateData,
 )
 from app.cards.schemas import CardCreateRequest
@@ -180,6 +183,82 @@ class CardService:
         )
         if hasattr(self.repository, "close_reminder_schedules"):
             self.repository.close_reminder_schedules(card_id=updated.id)
+        return self.l2_distribution_service.run_initial_distribution(
+            updated, ip_address=ip_address, user_agent=user_agent
+        )
+
+    def reschedule_card(
+        self,
+        public_id: UUID,
+        *,
+        actor_user_id: int,
+        actor_role_ids: Collection[int],
+        planned_start_at: datetime,
+        planned_duration_minutes: int,
+        description: str | None,
+        reason: str | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> CardRecord:
+        """Release the previous assignment and start a fresh L2 cycle.
+
+        This is deliberately separate from trusted Omnidesk events: browser/API
+        actors are authorized before any persisted lifecycle record is changed.
+        """
+        card = self.repository.get_card_by_public_id_for_update(public_id)
+        if card is None:
+            raise CardNotFoundError
+        authorize_card_action(
+            action=CardAction.RESCHEDULE,
+            card=card,
+            actor_user_id=actor_user_id,
+            actor_role_ids=actor_role_ids,
+            comment=reason,
+        )
+        if (
+            card.planned_start_at == planned_start_at
+            and card.planned_duration_minutes == planned_duration_minutes
+            and (description is None or description == card.description)
+        ):
+            return card
+
+        old = _card_snapshot(card)
+        current_cycle = self.repository.get_current_assignment_cycle_for_update(card.id)
+        if current_cycle is not None:
+            if card.l2_engineer_id is not None:
+                pending = self.repository.get_pending_assignment_attempt_for_update(
+                    card_id=card.id, l2_engineer_id=card.l2_engineer_id
+                )
+                if pending is not None:
+                    self.repository.update_assignment_attempt_response(
+                        attempt_id=pending.id,
+                        status=AssignmentAttemptStatus.SKIPPED,
+                        actor_user_id=actor_user_id,
+                        rejection_reason="rescheduled",
+                    )
+            self.repository.update_assignment_cycle_status(
+                cycle_id=current_cycle.id, status=AssignmentCycleStatus.CANCELLED
+            )
+        if hasattr(self.repository, "close_reminder_schedules"):
+            self.repository.close_reminder_schedules(card_id=card.id)
+        updated = self.repository.reset_card_for_reschedule(
+            public_id,
+            ScheduleUpdateData(
+                planned_start_at=planned_start_at,
+                planned_duration_minutes=planned_duration_minutes,
+                description=description,
+            ),
+        )
+        if updated is None:
+            raise InvalidCardTransitionError("reschedule_conflict")
+        self._record_user_card_update(
+            old_snapshot=old,
+            updated=updated,
+            actor_user_id=actor_user_id,
+            comment=reason,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
         return self.l2_distribution_service.run_initial_distribution(
             updated, ip_address=ip_address, user_agent=user_agent
         )

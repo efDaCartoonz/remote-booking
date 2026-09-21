@@ -314,13 +314,14 @@ def reschedule_rejected(
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
     return _handle_change(
-        lambda: service.update_rejected_card(
+        lambda: service.reschedule_card(
             card_id,
             actor_user_id=user.id,
             actor_role_ids=role_ids(user.roles),
             planned_start_at=payload.planned_start_at,
             planned_duration_minutes=payload.planned_duration_minutes,
             description=payload.description,
+            reason=payload.reason,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
         )

@@ -27,7 +27,9 @@ from app.cards.constants import (
     CardEventType,
     CardStatus,
     DistributionPool,
+    RoleId,
 )
+from app.cards.policy import CardActionPolicyError
 from app.cards.repository import (
     CardHistoryRecord,
     CardRecord,
@@ -35,6 +37,7 @@ from app.cards.repository import (
     ClientSyncData,
     CreateCardData,
     L1FollowupUpdateData,
+    ScheduleUpdateData,
     StatusUpdateData,
     _card_from_row,
 )
@@ -216,6 +219,31 @@ class FakeCardRepository:
             else card.client_informed,
             status_code=0 if data.reset_for_new_cycle else card.status_code,
             l1_owner_id=None if data.reset_for_new_cycle else card.l1_owner_id,
+            updated_at=datetime.now(UTC),
+        )
+        self.cards[public_id] = updated
+        return updated
+
+    def reset_card_for_reschedule(
+        self, public_id: UUID, data: ScheduleUpdateData
+    ) -> CardRecord | None:
+        card = self.cards.get(public_id)
+        if card is None or CardStatus(card.status_code) not in {
+            CardStatus.ASSIGNED,
+            CardStatus.CONFIRMED,
+            CardStatus.REJECTED,
+        }:
+            return None
+        updated = replace(
+            card,
+            planned_start_at=data.planned_start_at,
+            planned_duration_minutes=data.planned_duration_minutes,
+            description=data.description if data.description is not None else card.description,
+            status_code=int(CardStatus.CREATED),
+            l2_engineer_id=None,
+            l1_owner_id=None,
+            client_informed=False,
+            overdue_flag=False,
             updated_at=datetime.now(UTC),
         )
         self.cards[public_id] = updated
@@ -848,6 +876,67 @@ def test_created_card_cannot_be_cancelled_by_user_action() -> None:
 
     assert len(repository.events) == 0
     assert len(repository.audit) == 0
+
+
+def test_manager_reschedule_releases_assignment_and_starts_fresh_cycle() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+
+    rescheduled = service.reschedule_card(
+        card.public_id,
+        actor_user_id=10,
+        actor_role_ids={int(RoleId.MANAGER)},
+        planned_start_at=DEFAULT_PLANNED_START_AT + timedelta(hours=2),
+        planned_duration_minutes=90,
+        description="Новое согласованное время",
+        reason="client_requested",
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert rescheduled.status_code == int(CardStatus.ASSIGNED)
+    assert rescheduled.l2_engineer_id == 20
+    assert rescheduled.planned_duration_minutes == 90
+    assert [cycle.status_code for cycle in repository.cycles] == [
+        int(AssignmentCycleStatus.CANCELLED),
+        int(AssignmentCycleStatus.ASSIGNED),
+    ]
+    assert [attempt.status_code for attempt in repository.attempts] == [
+        int(AssignmentAttemptStatus.SKIPPED),
+        int(AssignmentAttemptStatus.PENDING),
+    ]
+    assert repository.attempts[0].rejection_reason == "rescheduled"
+    assert len([item for item in repository.schedules if item["closed_at"] is None]) == 1
+    assert repository.events[-2]["comment"] == "client_requested"
+
+
+def test_reschedule_policy_failure_has_no_side_effects() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    before = (list(repository.events), list(repository.audit), list(repository.cycles))
+
+    with pytest.raises(CardActionPolicyError, match="assigned_l2_required"):
+        service.reschedule_card(
+            card.public_id,
+            actor_user_id=30,
+            actor_role_ids={int(RoleId.L2)},
+            planned_start_at=DEFAULT_PLANNED_START_AT + timedelta(hours=2),
+            planned_duration_minutes=90,
+            description=None,
+            reason="client_requested",
+            ip_address=None,
+            user_agent=None,
+        )
+
+    assert (repository.events, repository.audit, repository.cycles) == before
 
 
 def test_card_cannot_be_completed_without_in_progress_status() -> None:

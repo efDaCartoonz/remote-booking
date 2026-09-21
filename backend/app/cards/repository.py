@@ -146,6 +146,13 @@ class L1FollowupUpdateData:
     reset_for_new_cycle: bool = False
 
 
+@dataclass(frozen=True)
+class ScheduleUpdateData:
+    planned_start_at: datetime
+    planned_duration_minutes: int
+    description: str | None
+
+
 class CardRepository(Protocol):
     def list_manager_cards(
         self,
@@ -185,6 +192,10 @@ class CardRepository(Protocol):
 
     def update_l1_followup(
         self, public_id: UUID, data: L1FollowupUpdateData
+    ) -> CardRecord | None: ...
+
+    def reset_card_for_reschedule(
+        self, public_id: UUID, data: ScheduleUpdateData
     ) -> CardRecord | None: ...
 
     def release_l1_followup(self, *, card_id: int) -> CardRecord | None: ...
@@ -446,6 +457,41 @@ class PostgresCardRepository:
             cursor.execute(
                 f"UPDATE connection_cards SET {', '.join(fields)} WHERE public_id = %(public_id)s AND status_code = 4 AND l1_owner_id IS NOT NULL RETURNING *",
                 params,
+            )
+            row = cursor.fetchone()
+        return _card_from_row(row) if row is not None else None
+
+    def reset_card_for_reschedule(
+        self, public_id: UUID, data: ScheduleUpdateData
+    ) -> CardRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE connection_cards
+                SET planned_start_at = %(start)s,
+                    planned_duration_minutes = %(duration)s,
+                    description = COALESCE(%(description)s, description),
+                    status_code = %(created)s,
+                    l2_engineer_id = NULL,
+                    l1_owner_id = NULL,
+                    client_informed = FALSE,
+                    overdue_at = NULL,
+                    overdue_flag = FALSE,
+                    updated_at = now()
+                WHERE public_id = %(public_id)s
+                  AND status_code IN (%(assigned)s, %(confirmed)s, %(rejected)s)
+                RETURNING *
+                """,
+                {
+                    "public_id": public_id,
+                    "start": data.planned_start_at,
+                    "duration": data.planned_duration_minutes,
+                    "description": data.description,
+                    "created": int(CardStatus.CREATED),
+                    "assigned": int(CardStatus.ASSIGNED),
+                    "confirmed": int(CardStatus.CONFIRMED),
+                    "rejected": int(CardStatus.REJECTED),
+                },
             )
             row = cursor.fetchone()
         return _card_from_row(row) if row is not None else None

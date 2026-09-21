@@ -107,7 +107,9 @@ def authorize_card_action(
         return
 
     if action == CardAction.CANCEL:
-        _require_manager_or_owner(roles=roles, card=card, actor_user_id=actor_user_id)
+        _require_manager_l1_or_assigned_l2(
+            roles=roles, card=card, actor_user_id=actor_user_id
+        )
         _require_status(
             status, CardStatus.ASSIGNED, CardStatus.CONFIRMED, CardStatus.REJECTED
         )
@@ -118,10 +120,16 @@ def authorize_card_action(
         return
 
     if action == CardAction.RESCHEDULE:
-        _require_manager_or_assigned_l1(
+        _require_manager_l1_or_assigned_l2(
             roles=roles, card=card, actor_user_id=actor_user_id
         )
-        _require_status(status, CardStatus.REJECTED)
+        _require_status(
+            status, CardStatus.ASSIGNED, CardStatus.CONFIRMED, CardStatus.REJECTED
+        )
+        if int(RoleId.MANAGER) not in roles and not (comment or "").strip():
+            raise CardActionPolicyError(
+                status_code=422, detail="reschedule_reason_required"
+            )
         return
 
     if action == CardAction.MARK_CLIENT_INFORMED:
@@ -165,6 +173,16 @@ def _require_manager_or_owner(
     owns_l2 = int(RoleId.L2) in roles and card.l2_engineer_id == actor_user_id
     if not owns_l1 and not owns_l2:
         _forbidden("card_owner_required")
+
+
+def _require_manager_l1_or_assigned_l2(
+    *, roles: Collection[int], card: PolicyCard, actor_user_id: int
+) -> None:
+    if int(RoleId.MANAGER) in roles or int(RoleId.L1) in roles:
+        return
+    if int(RoleId.L2) in roles and card.l2_engineer_id == actor_user_id:
+        return
+    _forbidden("assigned_l2_required")
 
 
 def _require_assigned_l1(

@@ -42,7 +42,7 @@ ADMIN = frozenset({int(RoleId.ADMIN)})
         (CardAction.COMPLETE, L2, 22, CardStatus.IN_PROGRESS),
         (CardAction.CANCEL, L2, 22, CardStatus.ASSIGNED),
         (CardAction.CANCEL, L1, 11, CardStatus.REJECTED),
-        (CardAction.RESCHEDULE, L1, 11, CardStatus.REJECTED),
+        (CardAction.RESCHEDULE, L1, 11, CardStatus.CONFIRMED),
         (CardAction.MARK_CLIENT_INFORMED, L1, 11, CardStatus.REJECTED),
     ),
 )
@@ -57,7 +57,9 @@ def test_action_policy_allows_only_role_owner_and_state_combinations(
         card=PolicyCard(status_code=int(status)),
         actor_user_id=actor_user_id,
         actor_role_ids=roles,
-        comment="client_requested" if action == CardAction.CANCEL else None,
+        comment="client_requested"
+        if action in {CardAction.CANCEL, CardAction.RESCHEDULE}
+        else None,
     )
 
 
@@ -81,12 +83,12 @@ def test_action_policy_allows_only_role_owner_and_state_combinations(
             CardStatus.CONFIRMED,
             "action_not_allowed_for_status",
         ),
-        (CardAction.CANCEL, L1, 33, CardStatus.REJECTED, "card_owner_required"),
+        (CardAction.CANCEL, L2, 33, CardStatus.REJECTED, "assigned_l2_required"),
         (
             CardAction.RESCHEDULE,
             L1,
             11,
-            CardStatus.CONFIRMED,
+            CardStatus.CREATED,
             "action_not_allowed_for_status",
         ),
         (CardAction.CANCEL, ADMIN, 10, CardStatus.REJECTED, "card_owner_required"),

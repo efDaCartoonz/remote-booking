@@ -96,6 +96,7 @@ class L1RescheduleRequest(BaseModel):
     planned_start_at: datetime
     planned_duration_minutes: int = Field(ge=30, le=720)
     description: str | None = None
+    reason: str | None = Field(default=None, max_length=2000)
 
     @field_validator("planned_start_at")
     @classmethod
