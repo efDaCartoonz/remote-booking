@@ -20,7 +20,7 @@ from app.cards.constants import (
     RoleId,
 )
 from app.cards.create_policy import RoleCreatePlan
-from app.cards.policy import CardAction, authorize_card_action
+from app.cards.policy import CardAction, CardActionPolicyError, authorize_card_action
 from app.cards.repository import (
     CardHistoryRecord,
     CardRecord,
@@ -199,6 +199,7 @@ class CardService:
         reason: str | None,
         ip_address: str | None,
         user_agent: str | None,
+        selected_l2_engineer_id: int | None = None,
     ) -> CardRecord:
         """Release the previous assignment and start a fresh L2 cycle.
 
@@ -219,8 +220,33 @@ class CardService:
             card.planned_start_at == planned_start_at
             and card.planned_duration_minutes == planned_duration_minutes
             and (description is None or description == card.description)
+            and (
+                selected_l2_engineer_id is None
+                or selected_l2_engineer_id == card.l2_engineer_id
+            )
         ):
             return card
+
+        out_of_hours_flag = False
+        if selected_l2_engineer_id is not None:
+            if int(RoleId.MANAGER) not in actor_role_ids:
+                raise CardActionPolicyError(
+                    status_code=403, detail="manager_required_for_manual_assignment"
+                )
+            planned_end_at = planned_start_at + timedelta(
+                minutes=planned_duration_minutes
+            )
+            try:
+                out_of_hours_flag = (
+                    self.l2_distribution_service.classify_l2_scheduling(
+                        l2_engineer_id=selected_l2_engineer_id,
+                        planned_start_at=planned_start_at,
+                        planned_end_at=planned_end_at,
+                        exclude_card_id=card.id,
+                    )
+                )
+            except AssignmentDecisionError as exc:
+                raise InvalidCardTransitionError(exc.detail) from exc
 
         old = _card_snapshot(card)
         current_cycle = self.repository.get_current_assignment_cycle_for_update(card.id)
@@ -247,6 +273,7 @@ class CardService:
                 planned_start_at=planned_start_at,
                 planned_duration_minutes=planned_duration_minutes,
                 description=description,
+                out_of_hours_flag=out_of_hours_flag,
             ),
         )
         if updated is None:
@@ -259,6 +286,17 @@ class CardService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        if selected_l2_engineer_id is not None:
+            try:
+                return self.l2_distribution_service.run_manual_assignment(
+                    updated,
+                    l2_engineer_id=selected_l2_engineer_id,
+                    actor_user_id=actor_user_id,
+                    ip_address=ip_address,
+                    user_agent=user_agent,
+                )
+            except AssignmentDecisionError as exc:
+                raise InvalidCardTransitionError(exc.detail) from exc
         return self.l2_distribution_service.run_initial_distribution(
             updated, ip_address=ip_address, user_agent=user_agent
         )

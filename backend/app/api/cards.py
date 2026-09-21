@@ -324,6 +324,7 @@ def reschedule_rejected(
             reason=payload.reason,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
+            selected_l2_engineer_id=payload.l2_engineer_id,
         )
     )
 

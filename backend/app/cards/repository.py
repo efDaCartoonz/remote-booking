@@ -151,6 +151,7 @@ class ScheduleUpdateData:
     planned_start_at: datetime
     planned_duration_minutes: int
     description: str | None
+    out_of_hours_flag: bool = False
 
 
 class CardRepository(Protocol):
@@ -477,6 +478,7 @@ class PostgresCardRepository:
                     client_informed = FALSE,
                     overdue_at = NULL,
                     overdue_flag = FALSE,
+                    out_of_hours_flag = %(out_of_hours_flag)s,
                     updated_at = now()
                 WHERE public_id = %(public_id)s
                   AND status_code IN (%(assigned)s, %(confirmed)s, %(rejected)s)
@@ -487,6 +489,7 @@ class PostgresCardRepository:
                     "start": data.planned_start_at,
                     "duration": data.planned_duration_minutes,
                     "description": data.description,
+                    "out_of_hours_flag": data.out_of_hours_flag,
                     "created": int(CardStatus.CREATED),
                     "assigned": int(CardStatus.ASSIGNED),
                     "confirmed": int(CardStatus.CONFIRMED),

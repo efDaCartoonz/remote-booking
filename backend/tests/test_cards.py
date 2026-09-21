@@ -248,6 +248,7 @@ class FakeCardRepository:
             l1_owner_id=None,
             client_informed=False,
             overdue_flag=False,
+            out_of_hours_flag=data.out_of_hours_flag,
             updated_at=datetime.now(UTC),
         )
         self.cards[public_id] = updated
@@ -952,6 +953,114 @@ def test_manager_reschedule_releases_assignment_and_starts_fresh_cycle() -> None
         len([item for item in repository.schedules if item["closed_at"] is None]) == 1
     )
     assert repository.events[-2]["comment"] == "client_requested"
+
+
+def test_manager_reschedule_to_selected_l2_persists_out_of_hours_flag() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    new_start = DEFAULT_PLANNED_START_AT.replace(hour=20)
+    seed_l2_candidate(
+        repository,
+        20,
+        planned_start_at=new_start,
+        schedule_start=time(9),
+        schedule_end=time(17),
+    )
+
+    rescheduled = service.reschedule_card(
+        card.public_id,
+        actor_user_id=10,
+        actor_role_ids={int(RoleId.MANAGER)},
+        planned_start_at=new_start,
+        planned_duration_minutes=60,
+        description=None,
+        reason="client_requested",
+        ip_address=None,
+        user_agent=None,
+        selected_l2_engineer_id=20,
+    )
+
+    assert rescheduled.status_code == int(CardStatus.ASSIGNED)
+    assert rescheduled.l2_engineer_id == 20
+    assert rescheduled.out_of_hours_flag is True
+    assert [cycle.status_code for cycle in repository.cycles] == [
+        int(AssignmentCycleStatus.CANCELLED),
+        int(AssignmentCycleStatus.ASSIGNED),
+    ]
+
+
+def test_reschedule_selected_l2_rejection_has_no_lifecycle_side_effects() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    new_start = DEFAULT_PLANNED_START_AT + timedelta(hours=2)
+    repository.l2_candidate_absences[20] = [
+        TimeInterval(start_at=new_start, end_at=new_start + timedelta(hours=1))
+    ]
+    before = (
+        list(repository.events),
+        list(repository.audit),
+        list(repository.cycles),
+        list(repository.attempts),
+    )
+
+    with pytest.raises(InvalidCardTransitionError, match="l2_unavailable"):
+        service.reschedule_card(
+            card.public_id,
+            actor_user_id=10,
+            actor_role_ids={int(RoleId.MANAGER)},
+            planned_start_at=new_start,
+            planned_duration_minutes=60,
+            description=None,
+            reason="client_requested",
+            ip_address=None,
+            user_agent=None,
+            selected_l2_engineer_id=20,
+        )
+
+    assert (
+        repository.events,
+        repository.audit,
+        repository.cycles,
+        repository.attempts,
+    ) == before
+    assert repository.cards[card.public_id] == card
+
+
+def test_only_manager_can_select_l2_during_reschedule() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    before = (list(repository.events), list(repository.audit), list(repository.cycles))
+
+    with pytest.raises(
+        CardActionPolicyError, match="manager_required_for_manual_assignment"
+    ):
+        service.reschedule_card(
+            card.public_id,
+            actor_user_id=20,
+            actor_role_ids={int(RoleId.L2)},
+            planned_start_at=DEFAULT_PLANNED_START_AT + timedelta(hours=2),
+            planned_duration_minutes=60,
+            description=None,
+            reason="client_requested",
+            ip_address=None,
+            user_agent=None,
+            selected_l2_engineer_id=20,
+        )
+
+    assert (repository.events, repository.audit, repository.cycles) == before
+    assert repository.cards[card.public_id] == card
 
 
 def test_reschedule_policy_failure_has_no_side_effects() -> None:

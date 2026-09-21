@@ -321,6 +321,7 @@ class L2DistributionService:
         l2_engineer_id: int,
         planned_start_at: datetime,
         planned_end_at: datetime,
+        exclude_card_id: int | None = None,
     ) -> bool:
         candidate = next(
             (
@@ -328,6 +329,7 @@ class L2DistributionService:
                 for item in self.repository.list_all_l2_candidates(
                     planned_start_at=planned_start_at,
                     planned_end_at=planned_end_at,
+                    exclude_card_id=exclude_card_id,
                 )
                 if item.user_id == l2_engineer_id
             ),
