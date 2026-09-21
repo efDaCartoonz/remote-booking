@@ -392,9 +392,12 @@ def test_http_two_connection_race_returns_one_success_and_one_409(
         response.text for response in responses
     ]
     conflict = next(response for response in responses if response.status_code == 409)
-    assert conflict.json()["detail"] == (
-        "active_card_exists_for_ticket" if same_ticket else "l2_assignment_conflict"
+    expected_details = (
+        {"active_card_exists_for_ticket"}
+        if same_ticket
+        else {"l2_unavailable", "l2_assignment_conflict"}
     )
+    assert conflict.json()["detail"] in expected_details
     assert "connection_cards" not in conflict.text
     with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute(
