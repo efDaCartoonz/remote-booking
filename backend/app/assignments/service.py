@@ -183,9 +183,19 @@ class L2DistributionService:
         )
         if candidate is None:
             raise AssignmentDecisionError("l2_not_active_or_role_missing")
-        if not _candidate_is_available(
-            candidate, planned_start_at=card.planned_start_at, planned_end_at=end
+        if _has_overlap(
+            candidate.absences,
+            planned_start_at=card.planned_start_at,
+            planned_end_at=end,
+        ) or _has_overlap(
+            candidate.active_cards,
+            planned_start_at=card.planned_start_at,
+            planned_end_at=end,
         ):
+            raise AssignmentDecisionError("l2_unavailable")
+        if not _schedule_covers_interval(
+            candidate, planned_start_at=card.planned_start_at, planned_end_at=end
+        ) and not card.out_of_hours_flag:
             raise AssignmentDecisionError("l2_unavailable")
 
         current_cycle = self.repository.get_current_assignment_cycle_for_update(card.id)
@@ -301,6 +311,28 @@ class L2DistributionService:
             event_id=event_id,
         )
         return card
+
+    def is_out_of_hours_for_l2(
+        self, *, l2_engineer_id: int, planned_start_at: datetime, planned_end_at: datetime
+    ) -> bool:
+        candidate = next(
+            (
+                item
+                for item in self.repository.list_all_l2_candidates(
+                    planned_start_at=planned_start_at,
+                    planned_end_at=planned_end_at,
+                )
+                if item.user_id == l2_engineer_id
+            ),
+            None,
+        )
+        if candidate is None:
+            raise AssignmentDecisionError("l2_not_active_or_role_missing")
+        return not _schedule_covers_interval(
+            candidate,
+            planned_start_at=planned_start_at,
+            planned_end_at=planned_end_at,
+        )
 
     def confirm_current_assignment(
         self,

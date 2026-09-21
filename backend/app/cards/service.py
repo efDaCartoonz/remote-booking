@@ -326,6 +326,7 @@ class CardService:
         actor_type: ActorType = ActorType.INTERNAL_USER,
         created_source: CreatedSource = CreatedSource.INTERNAL,
         manual_assignment: bool = False,
+        allow_out_of_hours: bool = False,
         role_create_plan: RoleCreatePlan | None = None,
     ) -> CardRecord:
         if role_create_plan is None:
@@ -366,6 +367,24 @@ class CardService:
             result_code = role_create_plan.result_code
             engineer_report = role_create_plan.engineer_report
 
+        out_of_hours_flag = False
+        if l2_engineer_id is not None:
+            end = payload.planned_start_at + timedelta(
+                minutes=payload.planned_duration_minutes
+            )
+            try:
+                out_of_hours_flag = (
+                    self.l2_distribution_service.is_out_of_hours_for_l2(
+                        l2_engineer_id=l2_engineer_id,
+                        planned_start_at=payload.planned_start_at,
+                        planned_end_at=end,
+                    )
+                )
+            except AssignmentDecisionError as exc:
+                raise InvalidCardTransitionError(exc.detail) from exc
+            if out_of_hours_flag and not allow_out_of_hours:
+                raise InvalidCardTransitionError("out_of_hours_not_permitted")
+
         card = self.repository.create_card(
             CreateCardData(
                 omnidesk_ticket_number=payload.omnidesk_ticket_number,
@@ -385,7 +404,7 @@ class CardService:
                 client_contact_value=payload.client_contact_value,
                 description=payload.description,
                 urgent_reason=urgent_reason,
-                out_of_hours_flag=payload.out_of_hours_flag,
+                out_of_hours_flag=out_of_hours_flag,
                 retroactive_flag=retroactive_flag,
                 created_source_code=int(created_source),
                 actual_start_at=actual_start_at,
