@@ -237,13 +237,11 @@ class CardService:
                 minutes=planned_duration_minutes
             )
             try:
-                out_of_hours_flag = (
-                    self.l2_distribution_service.classify_l2_scheduling(
-                        l2_engineer_id=selected_l2_engineer_id,
-                        planned_start_at=planned_start_at,
-                        planned_end_at=planned_end_at,
-                        exclude_card_id=card.id,
-                    )
+                out_of_hours_flag = self.l2_distribution_service.classify_l2_scheduling(
+                    l2_engineer_id=selected_l2_engineer_id,
+                    planned_start_at=planned_start_at,
+                    planned_end_at=planned_end_at,
+                    exclude_card_id=card.id,
                 )
             except AssignmentDecisionError as exc:
                 raise InvalidCardTransitionError(exc.detail) from exc
