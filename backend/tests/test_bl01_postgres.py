@@ -5,7 +5,12 @@ import psycopg
 import pytest
 from psycopg.rows import dict_row
 
-from app.cards.constants import RoleId
+from app.cards.constants import (
+    AssignmentAttemptStatus,
+    AssignmentCycleStatus,
+    CardStatus,
+    RoleId,
+)
 from app.cards.repository import PostgresCardRepository
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService, InvalidCardTransitionError
@@ -220,6 +225,47 @@ def test_manager_reassignment_persists_cycle_attempt_and_reminder_lifecycle(
                 (),
             )
             assert cursor.fetchone()["count"] == 1
+
+
+def test_cancel_closes_assignment_lifecycle_and_releases_reservation(database_url):
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        _seed(connection)
+        service = CardService(PostgresCardRepository(connection))
+        card = _create_rejected(service)
+
+        cancelled = service.cancel_card(
+            card.public_id,
+            actor_user_id=92000,
+            actor_role_ids={int(RoleId.MANAGER)},
+            comment="client_requested",
+            ip_address=None,
+            user_agent=None,
+        )
+
+        assert cancelled.status_code == int(CardStatus.CANCELLED)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT status_code FROM assignment_cycles WHERE card_id=%s", (card.id,)
+            )
+            assert cursor.fetchone()["status_code"] == int(AssignmentCycleStatus.CANCELLED)
+            cursor.execute(
+                "SELECT status_code, actor_user_id, rejection_reason FROM assignment_attempts WHERE card_id=%s",
+                (card.id,),
+            )
+            assert dict(cursor.fetchone()) == {
+                "status_code": int(AssignmentAttemptStatus.SKIPPED),
+                "actor_user_id": 92000,
+                "rejection_reason": "cancelled",
+            }
+            cursor.execute(
+                "SELECT count(*) FROM reminder_schedules WHERE card_id=%s AND closed_at IS NULL",
+                (card.id,),
+            )
+            assert cursor.fetchone()["count"] == 0
+            cursor.execute(
+                "SELECT count(*) FROM connection_cards WHERE l2_engineer_id=92002 AND status_code IN (1, 2, 3)",
+            )
+            assert cursor.fetchone()["count"] == 0
 
 
 def test_l2_overdue_persists_l1_followup_and_deduplicates_escalation(database_url):
