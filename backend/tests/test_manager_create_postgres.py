@@ -65,8 +65,8 @@ def _insert_card(connection, *, ticket: str, l2: int, start: datetime) -> None:
 def _seed_manager_and_l2(
     connection,
     *,
-    schedule_start: str = "00:00",
-    schedule_end: str = "23:59:59.999999",
+    schedule_start: str = "09:00",
+    schedule_end: str = "17:00",
 ) -> None:
     with connection.cursor() as cursor:
         cursor.execute(
@@ -114,32 +114,37 @@ def _persisted_lifecycle(cursor, card_id: int) -> None:
         "FROM connection_cards WHERE id=%s",
         (card_id,),
     )
-    assert cursor.fetchone() == (1, 91001, False)
+    assert cursor.fetchone() == {
+        "status_code": 1,
+        "l2_engineer_id": 91001,
+        "out_of_hours_flag": False,
+    }
     cursor.execute(
         "SELECT status_code FROM assignment_cycles WHERE card_id=%s", (card_id,)
     )
-    assert cursor.fetchone()[0] == 1
+    assert cursor.fetchone()["status_code"] == 1
     cursor.execute(
         "SELECT status_code, l2_engineer_id FROM assignment_attempts WHERE card_id=%s",
         (card_id,),
     )
-    assert cursor.fetchone() == (0, 91001)
+    assert cursor.fetchone() == {"status_code": 0, "l2_engineer_id": 91001}
     cursor.execute(
-        "SELECT kind, closed_at IS NULL FROM reminder_schedules WHERE card_id=%s",
+        "SELECT kind, closed_at IS NULL AS is_active "
+        "FROM reminder_schedules WHERE card_id=%s",
         (card_id,),
     )
-    assert cursor.fetchone() == ("l2_reminder", True)
+    assert cursor.fetchone() == {"kind": "l2_reminder", "is_active": True}
     cursor.execute(
         "SELECT actor_user_id FROM card_events WHERE card_id=%s AND event_type_code=2",
         (card_id,),
     )
-    assert cursor.fetchone()[0] == 91000
+    assert cursor.fetchone()["actor_user_id"] == 91000
     cursor.execute(
         "SELECT actor_user_id FROM audit_log WHERE entity_type='connection_card' "
         "AND entity_id=%s AND action_code=1",
         (card_id,),
     )
-    assert cursor.fetchone()[0] == 91000
+    assert cursor.fetchone()["actor_user_id"] == 91000
 
 
 def test_postgres_metadata_has_expected_constraints(database_url: str) -> None:
@@ -219,7 +224,7 @@ def test_postgres_manager_scheduling_exceptions_persist_expected_state(
         hour=10, minute=0, second=0, microsecond=0
     )
     outside = inside.replace(hour=20)
-    with psycopg.connect(database_url) as connection:
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
         _seed_manager_and_l2(connection)
         service = CardService(PostgresCardRepository(connection))
 
@@ -237,7 +242,7 @@ def test_postgres_manager_scheduling_exceptions_persist_expected_state(
                 "SELECT out_of_hours_flag FROM connection_cards WHERE id=%s",
                 (outside_card.id,),
             )
-            assert cursor.fetchone()[0] is True
+            assert cursor.fetchone()["out_of_hours_flag"] is True
 
         with connection.cursor() as cursor:
             cursor.execute(
@@ -251,7 +256,7 @@ def test_postgres_manager_scheduling_exceptions_persist_expected_state(
                 "SELECT out_of_hours_flag FROM connection_cards WHERE id=%s",
                 (calendar_card.id,),
             )
-            assert cursor.fetchone()[0] is True
+            assert cursor.fetchone()["out_of_hours_flag"] is True
 
         absence_start = inside + timedelta(hours=5)
         with connection.cursor() as cursor:
