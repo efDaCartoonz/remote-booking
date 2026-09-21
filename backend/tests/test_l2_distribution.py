@@ -144,9 +144,7 @@ def test_initial_l2_distribution_excludes_l2_on_non_working_calendar_date() -> N
     repository = FakeCardRepository()
     seed_l2_candidate(repository, 20)
     seed_l2_candidate(repository, 30)
-    repository.l2_candidate_non_working_dates[20] = frozenset(
-        {date(2026, 9, 7)}
-    )
+    repository.l2_candidate_non_working_dates[20] = frozenset({date(2026, 9, 7)})
     service = CardService(repository)
 
     card = service.create_card(
