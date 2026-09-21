@@ -1436,3 +1436,98 @@ def test_cards_api_manager_action_records_actual_actor() -> None:
     assert response.json()["status"] == "in_progress"
     assert repository.audit[-1]["actor_user_id"] == 10
     assert repository.events[-1]["actor_user_id"] == 10
+
+
+def test_manager_manual_assignment_computes_inside_schedule_flag() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+        manual_assignment=True,
+        allow_out_of_hours=True,
+    )
+
+    assert card.out_of_hours_flag is False
+    assert card.l2_engineer_id == 20
+    assert len(repository.cycles) == 1
+    assert len(repository.attempts) == 1
+
+
+def test_manager_manual_assignment_computes_out_of_hours_flag() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20, schedule_end=time(1))
+
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+        manual_assignment=True,
+        allow_out_of_hours=True,
+    )
+
+    assert card.out_of_hours_flag is True
+    assert card.l2_engineer_id == 20
+    assert len(repository.cycles) == 1
+    assert len(repository.attempts) == 1
+
+
+@pytest.mark.parametrize("reason", ("absence", "collision"))
+def test_manager_manual_assignment_never_bypasses_unavailability(reason: str) -> None:
+    repository = FakeCardRepository()
+    start = DEFAULT_PLANNED_START_AT
+    seed_l2_candidate(
+        repository,
+        20,
+        schedule_end=time(1),
+        absence=(
+            TimeInterval(start_at=start, end_at=start + timedelta(minutes=60))
+            if reason == "absence"
+            else None
+        ),
+    )
+    service = CardService(repository)
+    if reason == "collision":
+        service.create_card(
+            create_payload(l2_engineer_id=20, omnidesk_ticket_number="123-456788"),
+            actor_user_id=10,
+            ip_address=None,
+            user_agent=None,
+            manual_assignment=True,
+            allow_out_of_hours=True,
+        )
+    before = (len(repository.cards), len(repository.cycles), len(repository.attempts))
+
+    with pytest.raises(InvalidCardTransitionError, match="l2_unavailable"):
+        service.create_card(
+            create_payload(l2_engineer_id=20),
+            actor_user_id=10,
+            ip_address=None,
+            user_agent=None,
+            manual_assignment=True,
+            allow_out_of_hours=True,
+        )
+
+    assert (len(repository.cards), len(repository.cycles), len(repository.attempts)) == before
+
+
+def test_non_exempt_selected_l2_has_no_out_of_hours_side_effects() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20, schedule_end=time(1))
+
+    with pytest.raises(InvalidCardTransitionError, match="out_of_hours_not_permitted"):
+        CardService(repository).create_card(
+            create_payload(l2_engineer_id=20),
+            actor_user_id=20,
+            ip_address=None,
+            user_agent=None,
+            manual_assignment=True,
+        )
+
+    assert repository.cards == {}
+    assert repository.cycles == []
+    assert repository.attempts == []

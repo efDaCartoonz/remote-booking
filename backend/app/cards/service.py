@@ -374,7 +374,7 @@ class CardService:
             )
             try:
                 out_of_hours_flag = (
-                    self.l2_distribution_service.is_out_of_hours_for_l2(
+                    self.l2_distribution_service.classify_l2_scheduling(
                         l2_engineer_id=l2_engineer_id,
                         planned_start_at=payload.planned_start_at,
                         planned_end_at=end,

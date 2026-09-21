@@ -312,7 +312,7 @@ class L2DistributionService:
         )
         return card
 
-    def is_out_of_hours_for_l2(
+    def classify_l2_scheduling(
         self, *, l2_engineer_id: int, planned_start_at: datetime, planned_end_at: datetime
     ) -> bool:
         candidate = next(
@@ -328,6 +328,16 @@ class L2DistributionService:
         )
         if candidate is None:
             raise AssignmentDecisionError("l2_not_active_or_role_missing")
+        if _has_overlap(
+            candidate.absences,
+            planned_start_at=planned_start_at,
+            planned_end_at=planned_end_at,
+        ) or _has_overlap(
+            candidate.active_cards,
+            planned_start_at=planned_start_at,
+            planned_end_at=planned_end_at,
+        ):
+            raise AssignmentDecisionError("l2_unavailable")
         return not _schedule_covers_interval(
             candidate,
             planned_start_at=planned_start_at,
