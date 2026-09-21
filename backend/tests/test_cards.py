@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 from datetime import UTC, date, datetime, time, timedelta
+from types import SimpleNamespace
 from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
+
+import app.api.cards as cards_api
 
 from app.api.cards import get_card_repository
 from app.assignments.types import (
@@ -1086,6 +1090,35 @@ def test_reschedule_policy_failure_has_no_side_effects() -> None:
         )
 
     assert (repository.events, repository.audit, repository.cycles) == before
+
+
+def test_known_reschedule_exclusion_is_mapped_to_safe_conflict(monkeypatch) -> None:
+    class FakeExclusionViolation(Exception):
+        pass
+
+    monkeypatch.setattr(cards_api, "ExclusionViolation", FakeExclusionViolation)
+    error = FakeExclusionViolation("database failure")
+    error.diag = SimpleNamespace(
+        constraint_name="ex_connection_cards_l2_no_overlap"
+    )
+
+    with pytest.raises(HTTPException) as conflict:
+        cards_api._handle_change(lambda: (_ for _ in ()).throw(error))
+
+    assert conflict.value.status_code == 409
+    assert conflict.value.detail == "l2_assignment_conflict"
+
+
+def test_unknown_reschedule_exclusion_is_not_masked(monkeypatch) -> None:
+    class FakeExclusionViolation(Exception):
+        pass
+
+    monkeypatch.setattr(cards_api, "ExclusionViolation", FakeExclusionViolation)
+    error = FakeExclusionViolation("database failure")
+    error.diag = SimpleNamespace(constraint_name="unexpected_constraint")
+
+    with pytest.raises(FakeExclusionViolation, match="database failure"):
+        cards_api._handle_change(lambda: (_ for _ in ()).throw(error))
 
 
 def test_card_cannot_be_completed_without_in_progress_status() -> None:

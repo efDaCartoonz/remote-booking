@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from psycopg.errors import ExclusionViolation
 
 from app.auth.dependencies import get_current_user
 from app.auth.store import UserAuthRecord
@@ -341,6 +342,14 @@ def _handle_change(change: Callable[[], CardRecord]) -> CardResponse:
         ) from exc
     except CardActionPolicyError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except ExclusionViolation as exc:
+        constraint_name = getattr(getattr(exc, "diag", None), "constraint_name", None)
+        if constraint_name != "ex_connection_cards_l2_no_overlap":
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="l2_assignment_conflict",
+        ) from None
     return card_response(card)
 
 
