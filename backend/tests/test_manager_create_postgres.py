@@ -228,15 +228,11 @@ def test_postgres_manager_scheduling_exceptions_persist_expected_state(
         _seed_manager_and_l2(connection)
         service = CardService(PostgresCardRepository(connection))
 
-        inside_card = _manager_create(
-            service, ticket="910-000020", start=inside
-        )
+        inside_card = _manager_create(service, ticket="910-000020", start=inside)
         with connection.cursor() as cursor:
             _persisted_lifecycle(cursor, inside_card.id)
 
-        outside_card = _manager_create(
-            service, ticket="910-000021", start=outside
-        )
+        outside_card = _manager_create(service, ticket="910-000021", start=outside)
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT out_of_hours_flag FROM connection_cards WHERE id=%s",
