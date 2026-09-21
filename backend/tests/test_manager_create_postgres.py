@@ -379,6 +379,89 @@ def test_postgres_manager_reschedule_selected_l2_persists_scheduling_lifecycle(
         connection.commit()
 
 
+def test_postgres_manager_reschedule_collision_has_no_partial_lifecycle(
+    database_url: str,
+) -> None:
+    inside = (datetime.now(UTC) + timedelta(days=10)).replace(
+        hour=10, minute=0, second=0, microsecond=0
+    )
+    colliding_start = inside + timedelta(hours=2)
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        _seed_manager_and_l2(connection)
+        service = CardService(PostgresCardRepository(connection))
+        first = _manager_create(service, ticket="910-000031", start=inside)
+        second = _manager_create(
+            service, ticket="910-000032", start=colliding_start
+        )
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT planned_start_at, planned_duration_minutes, status_code, "
+                "l2_engineer_id, out_of_hours_flag FROM connection_cards WHERE id=%s",
+                (first.id,),
+            )
+            card_before = cursor.fetchone()
+            cursor.execute(
+                "SELECT count(*) AS count FROM card_events WHERE card_id=%s",
+                (first.id,),
+            )
+            events_before = cursor.fetchone()["count"]
+            cursor.execute(
+                "SELECT count(*) AS count FROM audit_log WHERE entity_id=%s",
+                (first.id,),
+            )
+            audit_before = cursor.fetchone()["count"]
+            cursor.execute(
+                "SELECT count(*) AS count FROM assignment_cycles WHERE card_id=%s",
+                (first.id,),
+            )
+            cycles_before = cursor.fetchone()["count"]
+            cursor.execute(
+                "SELECT count(*) AS count FROM assignment_attempts WHERE card_id=%s",
+                (first.id,),
+            )
+            attempts_before = cursor.fetchone()["count"]
+            cursor.execute(
+                "SELECT count(*) AS count FROM reminder_schedules WHERE card_id=%s",
+                (first.id,),
+            )
+            reminders_before = cursor.fetchone()["count"]
+
+        with pytest.raises(InvalidCardTransitionError, match="l2_unavailable"):
+            service.reschedule_card(
+                first.public_id,
+                actor_user_id=91000,
+                actor_role_ids={3},
+                planned_start_at=colliding_start,
+                planned_duration_minutes=60,
+                description=None,
+                reason="client_requested",
+                ip_address="127.0.0.1",
+                user_agent="postgres-manager-collision-test",
+                selected_l2_engineer_id=91001,
+            )
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT planned_start_at, planned_duration_minutes, status_code, "
+                "l2_engineer_id, out_of_hours_flag FROM connection_cards WHERE id=%s",
+                (first.id,),
+            )
+            assert cursor.fetchone() == card_before
+            for table, key_column, before_count in (
+                ("card_events", "card_id", events_before),
+                ("audit_log", "entity_id", audit_before),
+                ("assignment_cycles", "card_id", cycles_before),
+                ("assignment_attempts", "card_id", attempts_before),
+                ("reminder_schedules", "card_id", reminders_before),
+            ):
+                cursor.execute(
+                    f"SELECT count(*) AS count FROM {table} WHERE {key_column}=%s",
+                    (first.id,),
+                )
+                assert cursor.fetchone()["count"] == before_count
+        connection.commit()
+
+
 @pytest.mark.parametrize("same_ticket", (False, True))
 def test_http_two_connection_race_returns_one_success_and_one_409(
     database_url, monkeypatch, same_ticket

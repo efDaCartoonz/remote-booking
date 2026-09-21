@@ -997,6 +997,112 @@ def test_manager_reschedule_to_selected_l2_persists_out_of_hours_flag() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("initial_status", "expected_attempt_count"),
+    ((CardStatus.CONFIRMED, 2), (CardStatus.REJECTED, 1)),
+)
+def test_manager_reschedule_selected_l2_from_confirmed_or_rejected_has_one_fresh_cycle(
+    initial_status: CardStatus,
+    expected_attempt_count: int,
+) -> None:
+    repository = FakeCardRepository()
+    service = make_service(repository)
+    if initial_status == CardStatus.CONFIRMED:
+        seed_l2_candidate(repository, 20)
+        card = service.create_card(
+            create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+        )
+        card = service.confirm_card(
+            card.public_id,
+            actor_user_id=20,
+            comment="Подтверждаю",
+            ip_address=None,
+            user_agent=None,
+        )
+    else:
+        card = service.create_card(
+            create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+        )
+        assert card.status_code == int(CardStatus.REJECTED)
+        seed_l2_candidate(repository, 20)
+
+    new_start = DEFAULT_PLANNED_START_AT + timedelta(hours=2)
+    rescheduled = service.reschedule_card(
+        card.public_id,
+        actor_user_id=10,
+        actor_role_ids={int(RoleId.MANAGER)},
+        planned_start_at=new_start,
+        planned_duration_minutes=90,
+        description="Новое согласованное время",
+        reason="client_requested",
+        ip_address=None,
+        user_agent=None,
+        selected_l2_engineer_id=20,
+    )
+
+    assert rescheduled.status_code == int(CardStatus.ASSIGNED)
+    assert rescheduled.l2_engineer_id == 20
+    assert rescheduled.planned_duration_minutes == 90
+    assert len(repository.cycles) == 2
+    assert repository.cycles[-1].status_code == int(AssignmentCycleStatus.ASSIGNED)
+    assert len(repository.attempts) == expected_attempt_count
+    assert repository.attempts[-1].status_code == int(AssignmentAttemptStatus.PENDING)
+    assert len([item for item in repository.schedules if item["closed_at"] is None]) == 1
+
+
+def test_manager_reschedule_selected_l2_collision_has_no_lifecycle_side_effects() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    service = make_service(repository)
+    first = service.create_card(
+        create_payload(omnidesk_ticket_number="123-456789"),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    colliding_start = DEFAULT_PLANNED_START_AT + timedelta(hours=2)
+    second = service.create_card(
+        create_payload(
+            omnidesk_ticket_number="123-456788", planned_start_at=colliding_start
+        ),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    before = (
+        repository.cards[first.public_id],
+        list(repository.events),
+        list(repository.audit),
+        list(repository.cycles),
+        list(repository.attempts),
+        list(repository.schedules),
+    )
+
+    with pytest.raises(InvalidCardTransitionError, match="l2_unavailable"):
+        service.reschedule_card(
+            first.public_id,
+            actor_user_id=10,
+            actor_role_ids={int(RoleId.MANAGER)},
+            planned_start_at=colliding_start,
+            planned_duration_minutes=60,
+            description=None,
+            reason="client_requested",
+            ip_address=None,
+            user_agent=None,
+            selected_l2_engineer_id=20,
+        )
+
+    assert repository.cards[first.public_id] == before[0]
+    assert repository.cards[second.public_id].planned_start_at == colliding_start
+    assert (
+        repository.events,
+        repository.audit,
+        repository.cycles,
+        repository.attempts,
+        repository.schedules,
+    ) == before[1:]
+
+
 def test_reschedule_selected_l2_rejection_has_no_lifecycle_side_effects() -> None:
     repository = FakeCardRepository()
     seed_l2_candidate(repository, 20)
