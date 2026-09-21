@@ -250,7 +250,11 @@ def test_postgres_manager_scheduling_exceptions_persist_expected_state(
                 "(date, day_type_code, updated_by_id) VALUES (%s, 1, 91000)",
                 (inside.date(),),
             )
-        calendar_card = _manager_create(service, ticket="910-000022", start=inside)
+        calendar_card = _manager_create(
+            service,
+            ticket="910-000022",
+            start=inside + timedelta(hours=2),
+        )
         with connection.cursor() as cursor:
             cursor.execute(
                 "SELECT out_of_hours_flag FROM connection_cards WHERE id=%s",
