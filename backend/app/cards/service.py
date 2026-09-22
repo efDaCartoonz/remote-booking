@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -54,10 +54,12 @@ class CardService:
         self,
         repository: CardServiceRepository,
         notifications: NotificationService | None = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self.repository = repository
         self.l2_distribution_service = L2DistributionService(repository, notifications)
         self.notifications = notifications
+        self.clock = clock or (lambda: datetime.now(UTC))
 
     def mark_client_informed(
         self,
@@ -207,6 +209,7 @@ class CardService:
         ip_address: str | None,
         user_agent: str | None,
         selected_l2_engineer_id: int | None = None,
+        now: datetime | None = None,
     ) -> CardRecord:
         """Release the previous assignment and start a fresh L2 cycle.
 
@@ -238,6 +241,7 @@ class CardService:
             validate_reschedule_window(
                 planned_start_at=planned_start_at,
                 urgency_code=card.urgency_code,
+                now=self.clock() if now is None else now,
             )
         except ValueError as exc:
             raise CardActionPolicyError(status_code=422, detail=str(exc)) from exc

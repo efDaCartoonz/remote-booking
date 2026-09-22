@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 import app.api.cards as cards_api
 
-from app.api.cards import get_card_repository
+from app.api.cards import get_card_repository, get_card_service
 from app.assignments.types import (
     AssignmentAttemptRecord,
     AssignmentCycleRecord,
@@ -52,6 +52,7 @@ from app.main import create_app
 from app.notifications import RecordingNotificationService
 
 DEFAULT_PLANNED_START_AT = datetime(2026, 9, 7, 10, tzinfo=UTC)
+RESCHEDULE_NOW = DEFAULT_PLANNED_START_AT - timedelta(hours=3)
 
 
 class FakeCardRepository:
@@ -939,6 +940,7 @@ def test_manager_reschedule_releases_assignment_and_starts_fresh_cycle() -> None
         reason="client_requested",
         ip_address=None,
         user_agent=None,
+        now=RESCHEDULE_NOW,
     )
 
     assert rescheduled.status_code == int(CardStatus.ASSIGNED)
@@ -986,6 +988,7 @@ def test_manager_reschedule_to_selected_l2_persists_out_of_hours_flag() -> None:
         ip_address=None,
         user_agent=None,
         selected_l2_engineer_id=20,
+        now=RESCHEDULE_NOW,
     )
 
     assert rescheduled.status_code == int(CardStatus.ASSIGNED)
@@ -1038,6 +1041,7 @@ def test_manager_reschedule_selected_l2_from_confirmed_or_rejected_has_one_fresh
         ip_address=None,
         user_agent=None,
         selected_l2_engineer_id=20,
+        now=RESCHEDULE_NOW,
     )
 
     assert rescheduled.status_code == int(CardStatus.ASSIGNED)
@@ -1094,6 +1098,7 @@ def test_manager_reschedule_selected_l2_collision_has_no_lifecycle_side_effects(
             ip_address=None,
             user_agent=None,
             selected_l2_engineer_id=20,
+            now=RESCHEDULE_NOW,
         )
 
     assert repository.cards[first.public_id] == before[0]
@@ -1137,6 +1142,7 @@ def test_reschedule_selected_l2_rejection_has_no_lifecycle_side_effects() -> Non
             ip_address=None,
             user_agent=None,
             selected_l2_engineer_id=20,
+            now=RESCHEDULE_NOW,
         )
 
     assert (
@@ -1171,6 +1177,7 @@ def test_only_manager_can_select_l2_during_reschedule() -> None:
             ip_address=None,
             user_agent=None,
             selected_l2_engineer_id=20,
+            now=RESCHEDULE_NOW,
         )
 
     assert (repository.events, repository.audit, repository.cycles) == before
@@ -1266,6 +1273,7 @@ def test_service_reschedule_allows_owning_l1_on_rejected_card() -> None:
         reason="client_requested",
         ip_address=None,
         user_agent=None,
+        now=RESCHEDULE_NOW,
     )
 
     assert updated.status_code == int(CardStatus.ASSIGNED)
@@ -1862,7 +1870,7 @@ def test_cards_api_cancel_rejects_forbidden_status_without_mutation(
     )
 
     assert response.status_code == 409
-    assert response.json()["detail"] == "status_transition_not_allowed"
+    assert response.json()["detail"] == "action_not_allowed_for_status"
     assert (
         repository.cards[card.public_id],
         repository.events,
@@ -1933,6 +1941,9 @@ def test_cards_api_reschedule_selected_l2_uses_manual_assignment_contract() -> N
     seed_l2_candidate(repository, 30)
     app = create_app()
     app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_card_service] = lambda: CardService(
+        repository, clock=lambda: RESCHEDULE_NOW
+    )
     app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
         id=10,
         username="manager",
@@ -2012,6 +2023,9 @@ def test_cards_api_reschedule_without_selected_l2_uses_automatic_distribution() 
     seed_l2_candidate(repository, 30)
     app = create_app()
     app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_card_service] = lambda: CardService(
+        repository, clock=lambda: RESCHEDULE_NOW
+    )
     app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
         id=10,
         username="manager",
