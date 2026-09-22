@@ -390,7 +390,7 @@ def test_postgres_manager_reschedule_collision_has_no_partial_lifecycle(
         _seed_manager_and_l2(connection)
         service = CardService(PostgresCardRepository(connection))
         first = _manager_create(service, ticket="910-000031", start=inside)
-        second = _manager_create(
+        _manager_create(
             service, ticket="910-000032", start=colliding_start
         )
         with connection.cursor() as cursor:
