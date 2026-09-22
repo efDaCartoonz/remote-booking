@@ -65,6 +65,7 @@ class CardRecord:
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime
+    actual_duration_minutes: int | None = None
     client_informed: bool = False
     l1_owner_name: str | None = None
     l2_engineer_name: str | None = None
@@ -123,6 +124,7 @@ class CreateCardData:
     actual_end_at: datetime | None = None
     result_code: int | None = None
     engineer_report: str | None = None
+    actual_duration_minutes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,7 @@ class StatusUpdateData:
     actual_end_at: datetime | None = None
     result_code: int | None = None
     engineer_report: str | None = None
+    actual_duration_minutes: int | None = None
 
 
 @dataclass(frozen=True)
@@ -174,6 +177,17 @@ class CardRepository(Protocol):
     def list_cards_by_ticket(self, omnidesk_ticket_number: str) -> list[CardRecord]: ...
 
     def has_active_card_for_ticket(self, omnidesk_ticket_number: str) -> bool: ...
+
+    def has_active_result_code(self, result_code: int) -> bool: ...
+
+    def create_omnidesk_internal_note_intent(
+        self,
+        *,
+        card_id: int,
+        source_event_id: int,
+        omnidesk_ticket_number: str,
+        payload: dict[str, Any],
+    ) -> int: ...
 
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None: ...
 
@@ -372,7 +386,8 @@ class PostgresCardRepository:
                     actual_start_at,
                     actual_end_at,
                     result_code,
-                    engineer_report
+                    engineer_report,
+                    actual_duration_minutes
                 )
                 VALUES (
                     NULL,
@@ -399,7 +414,8 @@ class PostgresCardRepository:
                     %(actual_start_at)s,
                     %(actual_end_at)s,
                     %(result_code)s,
-                    %(engineer_report)s
+                    %(engineer_report)s,
+                    %(actual_duration_minutes)s
                 )
                 RETURNING *
                 """,
@@ -428,6 +444,7 @@ class PostgresCardRepository:
                     "actual_end_at": data.actual_end_at,
                     "result_code": data.result_code,
                     "engineer_report": data.engineer_report,
+                    "actual_duration_minutes": data.actual_duration_minutes,
                 },
             )
             row = cursor.fetchone()
@@ -1137,6 +1154,22 @@ class PostgresCardRepository:
             row = cursor.fetchone()
         return row is not None
 
+    def has_active_result_code(self, result_code: int) -> bool:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT 1
+                FROM connection_results
+                WHERE code = %(code)s
+                  AND is_active
+                LIMIT 1
+                FOR SHARE
+                """,
+                {"code": result_code},
+            )
+            row = cursor.fetchone()
+        return row is not None
+
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None:
         return self._get_card(public_id, lock=False)
 
@@ -1212,6 +1245,7 @@ class PostgresCardRepository:
                     actual_end_at = COALESCE(%(actual_end_at)s, actual_end_at),
                     result_code = COALESCE(%(result_code)s, result_code),
                     engineer_report = COALESCE(%(engineer_report)s, engineer_report),
+                    actual_duration_minutes = COALESCE(%(actual_duration_minutes)s, actual_duration_minutes),
                     updated_at = now()
                 WHERE public_id = %(public_id)s
                 RETURNING *
@@ -1225,12 +1259,49 @@ class PostgresCardRepository:
                     "actual_end_at": data.actual_end_at,
                     "result_code": data.result_code,
                     "engineer_report": data.engineer_report,
+                    "actual_duration_minutes": data.actual_duration_minutes,
                 },
             )
             row = cursor.fetchone()
         if row is None:
             return None
         return _card_from_row(row)
+
+    def create_omnidesk_internal_note_intent(
+        self,
+        *,
+        card_id: int,
+        source_event_id: int,
+        omnidesk_ticket_number: str,
+        payload: dict[str, Any],
+    ) -> int:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO omnidesk_internal_note_outbox (
+                    card_id,
+                    source_event_id,
+                    omnidesk_ticket_number,
+                    payload
+                )
+                VALUES (
+                    %(card_id)s,
+                    %(source_event_id)s,
+                    %(omnidesk_ticket_number)s,
+                    %(payload)s
+                )
+                ON CONFLICT (source_event_id) DO NOTHING
+                RETURNING id
+                """,
+                {
+                    "card_id": card_id,
+                    "source_event_id": source_event_id,
+                    "omnidesk_ticket_number": omnidesk_ticket_number,
+                    "payload": Jsonb(payload),
+                },
+            )
+            row = cursor.fetchone()
+        return row["id"] if row is not None else 0
 
     def add_card_event(
         self,
@@ -1499,6 +1570,7 @@ def _card_from_row(row: dict[str, Any]) -> CardRecord:
         created_by_id=row["created_by_id"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        actual_duration_minutes=row.get("actual_duration_minutes"),
         client_informed=row.get("client_informed", False),
         l1_owner_name=row.get("l1_owner_name"),
         l2_engineer_name=row.get("l2_engineer_name"),

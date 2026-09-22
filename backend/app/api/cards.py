@@ -260,6 +260,7 @@ def complete_card(
             result_code=payload.result_code,
             engineer_report=payload.engineer_report,
             actor_user_id=user.id,
+            actual_duration_minutes=payload.actual_duration_minutes,
             actor_role_ids=role_ids(user.roles),
             comment=payload.comment,
             ip_address=_client_ip(request),
@@ -450,7 +451,11 @@ def _create_role_card(
                         ip_address=_client_ip(request),
                         user_agent=request.headers.get("user-agent"),
                         allow_out_of_hours=scenario
-                        in {CreateScenario.L2_SELF, CreateScenario.L2_URGENT},
+                        in {
+                            CreateScenario.L2_SELF,
+                            CreateScenario.L2_URGENT,
+                            CreateScenario.L2_RETROACTIVE,
+                        },
                         role_create_plan=plan,
                     ),
                     rollback=connection.rollback,

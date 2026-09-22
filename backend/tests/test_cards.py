@@ -77,6 +77,8 @@ class FakeCardRepository:
         self.schedules: list[dict[str, Any]] = []
         self.due_reminders: list[Any] = []
         self.reminder_advances: list[dict[str, Any]] = []
+        self.active_result_codes: set[int] = {0}
+        self.omnidesk_note_intents: list[dict[str, Any]] = []
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         now = datetime.now(UTC)
@@ -112,6 +114,7 @@ class FakeCardRepository:
             created_by_id=data.created_by_id,
             created_at=now,
             updated_at=now,
+            actual_duration_minutes=data.actual_duration_minutes,
         )
         self.next_id += 1
         self.cards[card.public_id] = card
@@ -145,6 +148,34 @@ class FakeCardRepository:
             not in {CardStatus.COMPLETED, CardStatus.CANCELLED}
             for card in self.cards.values()
         )
+
+    def has_active_result_code(self, result_code: int) -> bool:
+        return result_code in self.active_result_codes
+
+    def create_omnidesk_internal_note_intent(
+        self,
+        *,
+        card_id: int,
+        source_event_id: int,
+        omnidesk_ticket_number: str,
+        payload: dict[str, Any],
+    ) -> int:
+        if any(
+            intent["source_event_id"] == source_event_id
+            for intent in self.omnidesk_note_intents
+        ):
+            return 0
+        intent_id = len(self.omnidesk_note_intents) + 1
+        self.omnidesk_note_intents.append(
+            {
+                "id": intent_id,
+                "card_id": card_id,
+                "source_event_id": source_event_id,
+                "omnidesk_ticket_number": omnidesk_ticket_number,
+                "payload": payload,
+            }
+        )
+        return intent_id
 
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None:
         return self.cards.get(public_id)
@@ -198,6 +229,11 @@ class FakeCardRepository:
             if data.result_code is not None
             else card.result_code,
             engineer_report=data.engineer_report or card.engineer_report,
+            actual_duration_minutes=(
+                data.actual_duration_minutes
+                if data.actual_duration_minutes is not None
+                else card.actual_duration_minutes
+            ),
             updated_at=datetime.now(UTC),
         )
         self.cards[public_id] = updated
@@ -1606,6 +1642,73 @@ def test_complete_requires_engineer_report() -> None:
         )
 
 
+def test_complete_rejects_missing_or_inactive_result_code() -> None:
+    repository = FakeCardRepository()
+    repository.active_result_codes = {1}
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    service.start_card(
+        card.public_id,
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    with pytest.raises(
+        InvalidCardTransitionError, match="result_code_inactive_or_unknown"
+    ):
+        service.complete_card(
+            card.public_id,
+            result_code=999,
+            engineer_report="Unknown code",
+            actor_user_id=20,
+            comment=None,
+            ip_address=None,
+            user_agent=None,
+        )
+
+    # Inactive code (0 is not in active_result_codes)
+    with pytest.raises(
+        InvalidCardTransitionError, match="result_code_inactive_or_unknown"
+    ):
+        service.complete_card(
+            card.public_id,
+            result_code=0,
+            engineer_report="Inactive code",
+            actor_user_id=20,
+            comment=None,
+            ip_address=None,
+            user_agent=None,
+        )
+
+    # Status must not have mutated
+    persisted = repository.cards[card.public_id]
+    assert persisted.status_code == int(CardStatus.IN_PROGRESS)
+    assert persisted.result_code is None
+    assert persisted.engineer_report is None
+
+    # Valid active code succeeds
+    completed = service.complete_card(
+        card.public_id,
+        result_code=1,
+        engineer_report="Active code succeeded",
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+    assert completed.status_code == int(CardStatus.COMPLETED)
+    assert completed.result_code == 1
+    assert completed.engineer_report == "Active code succeeded"
+
+
+
 def test_terminal_statuses_are_immutable_for_user_actions() -> None:
     repository = FakeCardRepository()
     service = make_service(repository)
@@ -2209,3 +2312,260 @@ def test_non_exempt_selected_l2_has_no_out_of_hours_side_effects() -> None:
     assert repository.cards == {}
     assert repository.cycles == []
     assert repository.attempts == []
+
+
+def test_complete_card_persists_actual_duration_and_creates_note_intent() -> None:
+    repository = FakeCardRepository()
+    repository.active_result_codes = {1}
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    service.start_card(
+        card.public_id,
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    completed = service.complete_card(
+        card.public_id,
+        result_code=1,
+        engineer_report="Completed successfully",
+        actual_duration_minutes=45,
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert completed.status_code == int(CardStatus.COMPLETED)
+    assert completed.actual_duration_minutes == 45
+    assert completed.result_code == 1
+    assert completed.engineer_report == "Completed successfully"
+
+    # Outbox intent must have been created in the same transaction
+    assert len(repository.omnidesk_note_intents) == 1
+    intent = repository.omnidesk_note_intents[0]
+    assert intent["card_id"] == completed.id
+    assert intent["omnidesk_ticket_number"] == completed.omnidesk_ticket_number
+    assert intent["payload"]["card_id"] == completed.id
+    assert intent["payload"]["ticket_number"] == completed.omnidesk_ticket_number
+    assert intent["payload"]["result_code"] == 1
+    assert intent["payload"]["engineer_report"] == "Completed successfully"
+    assert intent["payload"]["actual_duration_minutes"] == 45
+    assert "case_id" not in intent["payload"]
+
+
+def test_start_and_complete_use_injected_clock() -> None:
+    repository = FakeCardRepository()
+    repository.active_result_codes = {1}
+    started_at = datetime(2026, 9, 22, 8, tzinfo=UTC)
+    completed_at = started_at + timedelta(minutes=37)
+    clock_values = iter((started_at, completed_at))
+    service = CardService(repository, clock=lambda: next(clock_values))
+    card = service.create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    started = service.start_card(
+        card.public_id,
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+    completed = service.complete_card(
+        card.public_id,
+        result_code=1,
+        engineer_report="Completed",
+        actual_duration_minutes=37,
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert started.actual_start_at == started_at
+    assert completed.actual_end_at == completed_at
+
+
+def test_complete_card_rejects_non_positive_actual_duration() -> None:
+    repository = FakeCardRepository()
+    repository.active_result_codes = {1}
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    service.start_card(
+        card.public_id,
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    with pytest.raises(InvalidCardTransitionError, match="actual_duration_must_be_positive"):
+        service.complete_card(
+            card.public_id,
+            result_code=1,
+            engineer_report="Completed",
+            actual_duration_minutes=0,
+            actor_user_id=20,
+            comment=None,
+            ip_address=None,
+            user_agent=None,
+        )
+
+    with pytest.raises(InvalidCardTransitionError, match="actual_duration_must_be_positive"):
+        service.complete_card(
+            card.public_id,
+            result_code=1,
+            engineer_report="Completed",
+            actual_duration_minutes=-10,
+            actor_user_id=20,
+            comment=None,
+            ip_address=None,
+            user_agent=None,
+        )
+
+
+def test_complete_card_optional_actual_duration_defaults_to_none() -> None:
+    repository = FakeCardRepository()
+    repository.active_result_codes = {1}
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    service.start_card(
+        card.public_id,
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    completed = service.complete_card(
+        card.public_id,
+        result_code=1,
+        engineer_report="Completed without duration",
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert completed.actual_duration_minutes is None
+    assert len(repository.omnidesk_note_intents) == 1
+    assert "actual_duration_minutes" not in repository.omnidesk_note_intents[0]["payload"]
+
+
+def test_completed_retroactive_validates_active_result_code_and_derives_duration() -> None:
+    now = datetime(2026, 9, 20, 12, tzinfo=UTC)
+    repository = FakeCardRepository()
+    repository.active_result_codes = {5}
+    service = make_service(repository)
+
+    # Inactive result code is rejected
+    inactive_plan = validate_role_create(
+        scenario=CreateScenario.L2_RETROACTIVE,
+        planned_start_at=now - timedelta(hours=2),
+        planned_duration_minutes=90,
+        result_code=99,
+        engineer_report="Done",
+        now=now,
+    )
+    with pytest.raises(InvalidCardTransitionError, match="result_code_inactive_or_unknown"):
+        service.create_card(
+            create_payload(planned_start_at=now - timedelta(hours=2), planned_duration_minutes=90),
+            actor_user_id=20,
+            ip_address=None,
+            user_agent=None,
+            role_create_plan=inactive_plan,
+        )
+    assert repository.cards == {}
+    assert repository.omnidesk_note_intents == []
+
+    # Active result code succeeds, duration derived from start/end (90 min), note intent created
+    active_plan = validate_role_create(
+        scenario=CreateScenario.L2_RETROACTIVE,
+        planned_start_at=now - timedelta(hours=2),
+        planned_duration_minutes=90,
+        result_code=5,
+        engineer_report="Retroactive done",
+        now=now,
+    )
+    completed = service.create_card(
+        create_payload(planned_start_at=now - timedelta(hours=2), planned_duration_minutes=90),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        role_create_plan=active_plan,
+    )
+    assert completed.status_code == int(CardStatus.COMPLETED)
+    assert completed.actual_duration_minutes == 90
+    assert completed.result_code == 5
+    assert completed.engineer_report == "Retroactive done"
+    assert len(repository.omnidesk_note_intents) == 1
+    intent = repository.omnidesk_note_intents[0]
+    assert intent["card_id"] == completed.id
+    assert intent["payload"]["actual_duration_minutes"] == 90
+    assert intent["payload"]["result_code"] == 5
+    assert "case_id" not in intent["payload"]
+
+
+def test_in_progress_retroactive_does_not_create_note_intent() -> None:
+    now = datetime(2026, 9, 20, 12, tzinfo=UTC)
+    repository = FakeCardRepository()
+    service = make_service(repository)
+
+    in_progress_plan = validate_role_create(
+        scenario=CreateScenario.L2_RETROACTIVE,
+        planned_start_at=now - timedelta(minutes=30),
+        planned_duration_minutes=60,
+        now=now,
+    )
+    card = service.create_card(
+        create_payload(planned_start_at=now - timedelta(minutes=30), planned_duration_minutes=60),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        role_create_plan=in_progress_plan,
+    )
+    assert card.status_code == int(CardStatus.IN_PROGRESS)
+    assert repository.omnidesk_note_intents == []
+
+
+def test_omnidesk_note_intent_idempotency() -> None:
+    repository = FakeCardRepository()
+    intent_id_1 = repository.create_omnidesk_internal_note_intent(
+        card_id=1,
+        source_event_id=100,
+        omnidesk_ticket_number="123-456789",
+        payload={"card_id": 1, "result_code": 0},
+    )
+    assert intent_id_1 > 0
+    assert len(repository.omnidesk_note_intents) == 1
+
+    # Duplicate call with same source_event_id is idempotent
+    intent_id_2 = repository.create_omnidesk_internal_note_intent(
+        card_id=1,
+        source_event_id=100,
+        omnidesk_ticket_number="123-456789",
+        payload={"card_id": 1, "result_code": 0},
+    )
+    assert intent_id_2 == 0
+    assert len(repository.omnidesk_note_intents) == 1

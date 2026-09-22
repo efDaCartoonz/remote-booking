@@ -421,6 +421,15 @@ class CardService:
             actual_end_at = role_create_plan.actual_end_at
             result_code = role_create_plan.result_code
             engineer_report = role_create_plan.engineer_report
+            if status == CardStatus.COMPLETED:
+                if result_code is None or not self.repository.has_active_result_code(result_code):
+                    raise InvalidCardTransitionError("result_code_inactive_or_unknown")
+
+        actual_duration_minutes = None
+        if actual_start_at is not None and actual_end_at is not None:
+            derived_minutes = int((actual_end_at - actual_start_at).total_seconds() / 60)
+            if derived_minutes > 0:
+                actual_duration_minutes = derived_minutes
 
         out_of_hours_flag = False
         if l2_engineer_id is not None and (
@@ -466,17 +475,18 @@ class CardService:
                 actual_end_at=actual_end_at,
                 result_code=result_code,
                 engineer_report=engineer_report,
+                actual_duration_minutes=actual_duration_minutes,
             )
         )
         snapshot = _card_snapshot(card)
-        self.repository.add_card_event(
+        event_id = self.repository.add_card_event(
             card_id=card.id,
             event_type=CardEventType.CREATED,
             actor_user_id=actor_user_id,
             actor_type=actor_type,
             old_values=None,
             new_values=snapshot,
-            comment=None,
+            comment="retroactive_registration" if card.retroactive_flag else None,
         )
         self.repository.add_audit_log(
             actor_user_id=actor_user_id,
@@ -488,6 +498,12 @@ class CardService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        if card.status_code == int(CardStatus.COMPLETED):
+            self._create_omnidesk_completion_note(
+                card=card,
+                source_event_id=event_id,
+                actor_user_id=actor_user_id,
+            )
         if status == CardStatus.CREATED:
             card = self.l2_distribution_service.run_initial_distribution(
                 card,
@@ -675,7 +691,7 @@ class CardService:
             ip_address=ip_address,
             user_agent=user_agent,
             action=CardAction.START,
-            actual_start_at=datetime.now(UTC),
+            actual_start_at=self.clock(),
         )
 
     def complete_card(
@@ -685,6 +701,7 @@ class CardService:
         result_code: int,
         engineer_report: str,
         actor_user_id: int,
+        actual_duration_minutes: int | None = None,
         actor_role_ids: Collection[int] | None = None,
         comment: str | None,
         ip_address: str | None,
@@ -692,6 +709,8 @@ class CardService:
     ) -> CardRecord:
         if not engineer_report.strip():
             raise InvalidCardTransitionError("engineer_report_required")
+        if actual_duration_minutes is not None and actual_duration_minutes <= 0:
+            raise InvalidCardTransitionError("actual_duration_must_be_positive")
         return self._change_status(
             public_id,
             target_status=CardStatus.COMPLETED,
@@ -700,9 +719,10 @@ class CardService:
             comment=comment,
             ip_address=ip_address,
             user_agent=user_agent,
-            actual_end_at=datetime.now(UTC),
+            actual_end_at=self.clock(),
             result_code=result_code,
             engineer_report=engineer_report,
+            actual_duration_minutes=actual_duration_minutes,
             action=CardAction.COMPLETE,
         )
 
@@ -743,6 +763,7 @@ class CardService:
         actual_end_at: datetime | None = None,
         result_code: int | None = None,
         engineer_report: str | None = None,
+        actual_duration_minutes: int | None = None,
     ) -> CardRecord:
         card = self.repository.get_card_by_public_id_for_update(public_id)
         if card is None:
@@ -764,6 +785,12 @@ class CardService:
             current_l2_engineer_id=card.l2_engineer_id,
             new_l2_engineer_id=l2_engineer_id,
         )
+
+        if target_status == CardStatus.COMPLETED and (
+            result_code is None
+            or not self.repository.has_active_result_code(result_code)
+        ):
+            raise InvalidCardTransitionError("result_code_inactive_or_unknown")
 
         if target_status == CardStatus.CANCELLED:
             current_cycle = self.repository.get_current_assignment_cycle_for_update(
@@ -799,13 +826,14 @@ class CardService:
                 actual_end_at=actual_end_at,
                 result_code=result_code,
                 engineer_report=engineer_report,
+                actual_duration_minutes=actual_duration_minutes,
             ),
         )
         if updated is None:
             raise CardNotFoundError
 
         new_snapshot = _card_snapshot(updated)
-        self.repository.add_card_event(
+        event_id = self.repository.add_card_event(
             card_id=updated.id,
             event_type=CardEventType.STATUS_CHANGED,
             actor_user_id=actor_user_id,
@@ -824,11 +852,34 @@ class CardService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
+        if target_status == CardStatus.COMPLETED:
+            self._create_omnidesk_completion_note(
+                card=updated,
+                source_event_id=event_id,
+                actor_user_id=actor_user_id,
+            )
         if target_status in {CardStatus.CANCELLED, CardStatus.COMPLETED} and hasattr(
             self.repository, "close_reminder_schedules"
         ):
             self.repository.close_reminder_schedules(card_id=updated.id)
         return updated
+
+    def _create_omnidesk_completion_note(
+        self,
+        *,
+        card: CardRecord,
+        source_event_id: int,
+        actor_user_id: int | None,
+    ) -> None:
+        if not hasattr(self.repository, "create_omnidesk_internal_note_intent"):
+            return
+        payload = _safe_omnidesk_completion_payload(card, actor_user_id=actor_user_id)
+        self.repository.create_omnidesk_internal_note_intent(
+            card_id=card.id,
+            source_event_id=source_event_id,
+            omnidesk_ticket_number=card.omnidesk_ticket_number,
+            payload=payload,
+        )
 
     def _record_user_card_update(
         self,
@@ -896,6 +947,30 @@ def _validate_l2_assignment_decision(
         raise InvalidCardTransitionError("assigned_l2_required")
 
 
+def _safe_omnidesk_completion_payload(
+    card: CardRecord,
+    *,
+    actor_user_id: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "card_id": card.id,
+        "ticket_number": card.omnidesk_ticket_number,
+        "result_code": card.result_code,
+        "engineer_report": card.engineer_report,
+    }
+    if card.number:
+        payload["card_number"] = card.number
+    if card.actual_duration_minutes is not None:
+        payload["actual_duration_minutes"] = card.actual_duration_minutes
+    if card.actual_start_at is not None:
+        payload["actual_start_at"] = card.actual_start_at.isoformat()
+    if card.actual_end_at is not None:
+        payload["actual_end_at"] = card.actual_end_at.isoformat()
+    if actor_user_id is not None:
+        payload["actor_user_id"] = actor_user_id
+    return payload
+
+
 def _card_snapshot(card: CardRecord) -> dict[str, Any]:
     return {
         "id": card.id,
@@ -909,4 +984,5 @@ def _card_snapshot(card: CardRecord) -> dict[str, Any]:
         "l2_engineer_id": card.l2_engineer_id,
         "result_code": card.result_code,
         "engineer_report": card.engineer_report,
+        "actual_duration_minutes": card.actual_duration_minutes,
     }

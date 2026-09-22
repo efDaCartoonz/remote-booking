@@ -114,6 +114,7 @@ class CardRejectRequest(BaseModel):
 class CardCompleteRequest(BaseModel):
     result_code: int = Field(ge=0)
     engineer_report: str = Field(min_length=1)
+    actual_duration_minutes: int | None = Field(default=None, gt=0)
     comment: str | None = None
 
 
@@ -138,6 +139,7 @@ class CardResponse(BaseModel):
     description: str | None
     result_code: int | None
     engineer_report: str | None
+    actual_duration_minutes: int | None = None
     actual_start_at: datetime | None
     actual_end_at: datetime | None
     created_by_id: int | None
@@ -177,6 +179,7 @@ def card_response(card: CardRecord) -> CardResponse:
         description=card.description,
         result_code=card.result_code,
         engineer_report=card.engineer_report,
+        actual_duration_minutes=card.actual_duration_minutes,
         actual_start_at=card.actual_start_at,
         actual_end_at=card.actual_end_at,
         created_by_id=card.created_by_id,

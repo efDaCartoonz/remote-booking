@@ -17,6 +17,15 @@ class RecordingRepository:
         self.created: CreateCardData | None = None
         self.events: list[dict] = []
         self.audit: list[dict] = []
+        self.active_result_codes: set[int] = {0}
+        self.omnidesk_note_intents: list[dict] = []
+
+    def has_active_result_code(self, result_code: int) -> bool:
+        return result_code in self.active_result_codes
+
+    def create_omnidesk_internal_note_intent(self, **kwargs) -> int:
+        self.omnidesk_note_intents.append(kwargs)
+        return len(self.omnidesk_note_intents)
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         self.created = data
@@ -52,6 +61,7 @@ class RecordingRepository:
             created_by_id=data.created_by_id,
             created_at=NOW,
             updated_at=NOW,
+            actual_duration_minutes=data.actual_duration_minutes,
         )
 
     def add_card_event(self, **kwargs):
@@ -138,5 +148,8 @@ def test_completed_retroactive_plan_persists_completion_facts_without_distributi
     assert repository.created.l2_engineer_id == 42
     assert repository.created.actual_start_at == NOW - timedelta(hours=2)
     assert repository.created.actual_end_at == NOW - timedelta(hours=1)
+    assert repository.created.actual_duration_minutes == 60
     assert repository.created.result_code == 0
     assert repository.created.engineer_report == "Service restored"
+    assert repository.events[0]["comment"] == "retroactive_registration"
+    assert len(repository.omnidesk_note_intents) == 1
