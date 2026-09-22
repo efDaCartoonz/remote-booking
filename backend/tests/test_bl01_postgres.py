@@ -339,11 +339,14 @@ def test_manager_cancel_in_progress_persists_closed_lifecycle_and_releases_reser
                 omnidesk_ticket_number="920-000002",
                 planned_start_at=card.planned_start_at,
                 planned_duration_minutes=60,
+                l2_engineer_id=92002,
             ),
             actor_user_id=92000,
             ip_address=None,
             user_agent=None,
+            manual_assignment=True,
         )
+        assert replacement.status_code == int(CardStatus.ASSIGNED)
         assert replacement.l2_engineer_id == 92002
 
 
