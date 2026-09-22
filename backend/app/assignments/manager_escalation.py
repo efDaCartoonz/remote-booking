@@ -39,6 +39,7 @@ EVENTS = {
     "repeated_unsuccessful_l2_cycle",
     "no_available_l1_candidates",
     "l2_assignment_overdue",
+    "urgent_collision",
 }
 
 

@@ -77,6 +77,7 @@ class CardEventType(IntEnum):
     L1_CLIENT_INFORMED = 3
     DETAILS_UPDATED = 4
     SESSION_EXTENDED = 9
+    URGENT_COLLISION = 10
 
 
 CARD_EVENT_LABELS: dict[CardEventType, str] = {
@@ -86,6 +87,7 @@ CARD_EVENT_LABELS: dict[CardEventType, str] = {
     CardEventType.L1_CLIENT_INFORMED: "Клиент проинформирован",
     CardEventType.DETAILS_UPDATED: "Данные карточки изменены",
     CardEventType.SESSION_EXTENDED: "Сессия продлена",
+    CardEventType.URGENT_COLLISION: "Срочная коллизия",
 }
 
 

@@ -189,6 +189,14 @@ class CardRepository(Protocol):
         payload: dict[str, Any],
     ) -> int: ...
 
+    def list_conflicting_active_cards_for_update(
+        self,
+        *,
+        l2_engineer_id: int,
+        planned_start_at: datetime,
+        planned_end_at: datetime,
+    ) -> list[CardRecord]: ...
+
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None: ...
 
     def get_card_by_public_id_for_update(
@@ -623,6 +631,7 @@ class PostgresCardRepository:
         planned_start_at: datetime,
         planned_end_at: datetime,
         exclude_card_id: int | None = None,
+        exclude_card_ids: set[int] | None = None,
     ) -> list[L2DistributionCandidate]:
         with self.connection.cursor() as cursor:
             cursor.execute(
@@ -647,6 +656,7 @@ class PostgresCardRepository:
                         planned_start_at=planned_start_at,
                         planned_end_at=planned_end_at,
                         exclude_card_id=exclude_card_id,
+                        exclude_card_ids=exclude_card_ids,
                     )
                 ),
                 non_working_dates=self._list_non_working_dates(
@@ -1127,9 +1137,18 @@ class PostgresCardRepository:
                     count(*) FILTER (WHERE c.status_code = 1) AS assigned,
                     count(*) FILTER (WHERE c.status_code = 2) AS confirmed,
                     count(*) FILTER (WHERE c.status_code = 4) AS rejected,
-                    count(*) FILTER (WHERE c.overdue_flag) AS overdue
+                    count(*) FILTER (WHERE c.overdue_flag) AS overdue,
+                    count(*) FILTER (WHERE c.urgency_code > 0) AS urgent,
+                    count(*) FILTER (
+                        WHERE EXISTS (
+                            SELECT 1 FROM card_events ce
+                            WHERE ce.card_id = c.id
+                              AND ce.event_type_code = %(urgent_collision_event)s
+                              AND ce.comment = 'urgent_collision'
+                        )
+                    ) AS urgent_collision
                     FROM connection_cards c WHERE {where}""",
-                params,
+                {**params, "urgent_collision_event": int(CardEventType.URGENT_COLLISION)},
             )
             counts = dict(cursor.fetchone())
         return [_card_from_row(row) for row in rows], {
@@ -1169,6 +1188,35 @@ class PostgresCardRepository:
             )
             row = cursor.fetchone()
         return row is not None
+
+    def list_conflicting_active_cards_for_update(
+        self,
+        *,
+        l2_engineer_id: int,
+        planned_start_at: datetime,
+        planned_end_at: datetime,
+    ) -> list[CardRecord]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM connection_cards
+                WHERE l2_engineer_id = %(l2_engineer_id)s
+                  AND urgency_code = 0
+                  AND status_code IN (1, 2, 3)
+                  AND planned_start_at < %(planned_end_at)s
+                  AND planned_start_at + planned_duration_minutes * interval '1 minute' > %(planned_start_at)s
+                ORDER BY planned_start_at ASC, id ASC
+                FOR UPDATE
+                """,
+                {
+                    "l2_engineer_id": l2_engineer_id,
+                    "planned_start_at": planned_start_at,
+                    "planned_end_at": planned_end_at,
+                },
+            )
+            rows = cursor.fetchall()
+        return [_card_from_row(row) for row in rows]
 
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None:
         return self._get_card(public_id, lock=False)
@@ -1479,6 +1527,7 @@ class PostgresCardRepository:
         planned_end_at: datetime,
         owner_field: str = "l2_engineer_id",
         exclude_card_id: int | None = None,
+        exclude_card_ids: set[int] | None = None,
     ) -> tuple[TimeInterval, ...]:
         with self.connection.cursor() as cursor:
             if owner_field not in {"l1_owner_id", "l2_engineer_id"}:
@@ -1489,7 +1538,10 @@ class PostgresCardRepository:
                 "planned_start_at": planned_start_at,
                 "planned_end_at": planned_end_at,
             }
-            if exclude_card_id is not None:
+            if exclude_card_ids:
+                exclusion_sql = "AND id <> ALL(%(exclude_card_ids)s)"
+                params["exclude_card_ids"] = list(exclude_card_ids)
+            elif exclude_card_id is not None:
                 exclusion_sql = "AND id <> %(exclude_card_id)s"
                 params["exclude_card_id"] = exclude_card_id
             cursor.execute(

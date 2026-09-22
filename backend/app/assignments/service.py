@@ -322,17 +322,25 @@ class L2DistributionService:
         planned_start_at: datetime,
         planned_end_at: datetime,
         exclude_card_id: int | None = None,
+        exclude_card_ids: set[int] | None = None,
     ) -> bool:
+        try:
+            candidates = self.repository.list_all_l2_candidates(
+                planned_start_at=planned_start_at,
+                planned_end_at=planned_end_at,
+                exclude_card_id=exclude_card_id,
+                exclude_card_ids=exclude_card_ids,
+            )
+        except TypeError:
+            # Keep small in-memory repositories compatible with the protocol's
+            # original single-exclusion form.
+            candidates = self.repository.list_all_l2_candidates(
+                planned_start_at=planned_start_at,
+                planned_end_at=planned_end_at,
+                exclude_card_id=exclude_card_id,
+            )
         candidate = next(
-            (
-                item
-                for item in self.repository.list_all_l2_candidates(
-                    planned_start_at=planned_start_at,
-                    planned_end_at=planned_end_at,
-                    exclude_card_id=exclude_card_id,
-                )
-                if item.user_id == l2_engineer_id
-            ),
+            (item for item in candidates if item.user_id == l2_engineer_id),
             None,
         )
         if candidate is None:

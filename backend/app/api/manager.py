@@ -46,10 +46,12 @@ router = APIRouter(prefix="/api/v1/manager", tags=["manager"])
 
 
 class ManagerSummary(BaseModel):
-    assigned: int
-    confirmed: int
-    rejected: int
-    overdue: int
+    assigned: int = 0
+    confirmed: int = 0
+    rejected: int = 0
+    overdue: int = 0
+    urgent: int = 0
+    urgent_collision: int = 0
 
 
 class ManagerCard(BaseModel):

@@ -68,6 +68,8 @@ class ManagerRepository:
             "confirmed": 0,
             "rejected": 1,
             "overdue": 1,
+            "urgent": 2,
+            "urgent_collision": 0,
         }
 
 
@@ -208,6 +210,8 @@ def test_manager_passes_filters_and_summary_is_not_limited() -> None:
         "confirmed": 0,
         "rejected": 1,
         "overdue": 1,
+        "urgent": 2,
+        "urgent_collision": 0,
     }
     assert len(response.json()["items"]) == 1
 

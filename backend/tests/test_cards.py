@@ -21,6 +21,7 @@ from app.assignments.types import (
     ScheduleWindow,
     TimeInterval,
 )
+from app.assignments.manager_escalation import ManagerRecipient
 from app.auth.dependencies import get_auth_store, get_current_user
 from app.auth.store import RoleRecord, UserAuthRecord
 from app.cards.constants import (
@@ -176,6 +177,28 @@ class FakeCardRepository:
             }
         )
         return intent_id
+
+    def list_conflicting_active_cards_for_update(
+        self,
+        *,
+        l2_engineer_id: int,
+        planned_start_at: datetime,
+        planned_end_at: datetime,
+    ) -> list[CardRecord]:
+        result = []
+        for card in self.cards.values():
+            if (
+                card.l2_engineer_id == l2_engineer_id
+                and card.urgency_code == 0
+                and CardStatus(card.status_code)
+                in {CardStatus.ASSIGNED, CardStatus.CONFIRMED, CardStatus.IN_PROGRESS}
+                and card.planned_start_at < planned_end_at
+                and planned_start_at
+                < card.planned_start_at
+                + timedelta(minutes=card.planned_duration_minutes)
+            ):
+                result.append(card)
+        return sorted(result, key=lambda item: (item.planned_start_at, item.id))
 
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None:
         return self.cards.get(public_id)
@@ -2251,6 +2274,119 @@ def test_l2_urgent_create_allows_out_of_hours_and_marks_card() -> None:
     assert card.urgency_code == 1
     assert repository.cycles == []
     assert repository.attempts == []
+
+
+def _urgent_plan() -> object:
+    return validate_role_create(
+        scenario=CreateScenario.L2_URGENT,
+        planned_start_at=DEFAULT_PLANNED_START_AT,
+        planned_duration_minutes=60,
+        urgent_reason="production incident",
+        now=DEFAULT_PLANNED_START_AT - timedelta(hours=3),
+    )
+
+
+def test_l2_urgent_collision_displaces_and_reassigns_to_next_l2() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    repository.list_active_manager_recipients = lambda: [
+        ManagerRecipient(900, telegram_chat_id="manager-chat")
+    ]
+    normal = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20, omnidesk_ticket_number="123-456788"),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        manual_assignment=True,
+        allow_out_of_hours=True,
+    )
+    notifications = RecordingNotificationService()
+    urgent = CardService(repository, notifications).create_card(
+        create_payload(omnidesk_ticket_number="123-456789"),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        allow_out_of_hours=True,
+        role_create_plan=_urgent_plan(),
+    )
+
+    displaced = repository.get_card_by_id_for_update(normal.id)
+    assert urgent.urgency_code == 1
+    assert urgent.l2_engineer_id == 20
+    assert displaced is not None
+    assert displaced.status_code == int(CardStatus.ASSIGNED)
+    assert displaced.l2_engineer_id == 30
+    assert any(
+        event["event_type"] == CardEventType.URGENT_COLLISION
+        and event["comment"] == "urgent_collision"
+        for event in repository.events
+    )
+    assert any(
+        item.event == "urgent_collision" and item.recipient_user_id == 20
+        for item in notifications.notifications
+    )
+    assert any(
+        item.event == "manager_escalation" and item.recipient_user_id == 900
+        for item in notifications.notifications
+    )
+    assert repository.cycles[-1].card_id == normal.id
+
+
+def test_l2_urgent_collision_exhaustion_rejects_and_assigns_l1() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l1_candidate(repository, 100)
+    repository.list_active_manager_recipients = lambda: [
+        ManagerRecipient(900, telegram_chat_id="manager-chat")
+    ]
+    normal = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20, omnidesk_ticket_number="123-456788"),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        manual_assignment=True,
+        allow_out_of_hours=True,
+    )
+    notifications = RecordingNotificationService()
+    urgent = CardService(repository, notifications).create_card(
+        create_payload(omnidesk_ticket_number="123-456789"),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        allow_out_of_hours=True,
+        role_create_plan=_urgent_plan(),
+    )
+
+    displaced = repository.get_card_by_id_for_update(normal.id)
+    assert urgent.status_code == int(CardStatus.ASSIGNED)
+    assert displaced is not None
+    assert displaced.status_code == int(CardStatus.REJECTED)
+    assert displaced.l2_engineer_id is None
+    assert displaced.l1_owner_id == 100
+    collision_intents = [
+        item
+        for item in notifications.notifications
+        if item.event == "urgent_collision"
+    ]
+    assert {item.recipient_user_id for item in collision_intents} == {20, 100}
+
+    event_id = next(
+        index + 1
+        for index, event in enumerate(repository.events)
+        if event["card_id"] == normal.id
+        and event["comment"] == "urgent_collision"
+    )
+    before = len(notifications.notifications)
+    CardService(repository, notifications)._notify_urgent_collision(
+        displaced=displaced,
+        event_id=event_id,
+        affected_l1_id=100,
+        affected_l2_id=20,
+        ip_address=None,
+        user_agent=None,
+    )
+    assert len(notifications.notifications) == before
 
 
 @pytest.mark.parametrize("reason", ("absence", "collision"))

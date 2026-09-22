@@ -2,11 +2,15 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from collections.abc import Callable, Collection
+from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
 from app.assignments.repository import AssignmentRepository
-from app.assignments.service import AssignmentDecisionError, L2DistributionService
+from app.assignments.service import (
+    AssignmentDecisionError,
+    L2DistributionService,
+)
 from app.cards.constants import (
     ALLOWED_STATUS_TRANSITIONS,
     ActorType,
@@ -47,6 +51,14 @@ class InvalidCardTransitionError(Exception):
     def __init__(self, detail: str) -> None:
         self.detail = detail
         super().__init__(detail)
+
+
+@dataclass(frozen=True)
+class _UrgentCollision:
+    displaced: CardRecord
+    event_id: int
+    affected_l1_id: int | None
+    affected_l2_id: int | None
 
 
 class CardService:
@@ -431,6 +443,15 @@ class CardService:
             if derived_minutes > 0:
                 actual_duration_minutes = derived_minutes
 
+        urgent_collision_cards: list[CardRecord] = []
+        if role_create_plan is not None and role_create_plan.urgency_code > 0:
+            urgent_collision_cards = self._find_urgent_collisions(
+                l2_engineer_id=l2_engineer_id,
+                planned_start_at=payload.planned_start_at,
+                planned_end_at=payload.planned_start_at
+                + timedelta(minutes=payload.planned_duration_minutes),
+            )
+
         out_of_hours_flag = False
         if l2_engineer_id is not None and (
             manual_assignment or role_create_plan is not None
@@ -443,11 +464,27 @@ class CardService:
                     l2_engineer_id=l2_engineer_id,
                     planned_start_at=payload.planned_start_at,
                     planned_end_at=end,
+                    exclude_card_id=(
+                        urgent_collision_cards[0].id
+                        if len(urgent_collision_cards) == 1
+                        else None
+                    ),
+                    exclude_card_ids={item.id for item in urgent_collision_cards},
                 )
             except AssignmentDecisionError as exc:
                 raise InvalidCardTransitionError(exc.detail) from exc
             if out_of_hours_flag and not allow_out_of_hours:
                 raise InvalidCardTransitionError("out_of_hours_not_permitted")
+
+        urgent_collisions = [
+            self._displace_for_urgent_collision(
+                collision_card,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+            for collision_card in urgent_collision_cards
+        ]
 
         card = self.repository.create_card(
             CreateCardData(
@@ -504,6 +541,20 @@ class CardService:
                 source_event_id=event_id,
                 actor_user_id=actor_user_id,
             )
+        for urgent_collision in urgent_collisions:
+            self._record_urgent_card_collision(
+                card=card,
+                collision=urgent_collision,
+                actor_user_id=actor_user_id,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        for urgent_collision in urgent_collisions:
+            self.l2_distribution_service.run_initial_distribution(
+                urgent_collision.displaced,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
         if status == CardStatus.CREATED:
             card = self.l2_distribution_service.run_initial_distribution(
                 card,
@@ -515,13 +566,233 @@ class CardService:
                 card = self.l2_distribution_service.run_manual_assignment(
                     card,
                     l2_engineer_id=l2_engineer_id,
-                    actor_user_id=actor_user_id or 0,
+                    actor_user_id=actor_user_id,
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
             except AssignmentDecisionError as exc:
                 raise InvalidCardTransitionError(exc.detail) from exc
         return card
+
+    def _find_urgent_collisions(
+        self,
+        *,
+        l2_engineer_id: int | None,
+        planned_start_at: datetime,
+        planned_end_at: datetime,
+    ) -> list[CardRecord]:
+        if l2_engineer_id is None:
+            return []
+        finder = getattr(
+            self.repository, "list_conflicting_active_cards_for_update", None
+        )
+        if finder is not None:
+            return list(
+                finder(
+                    l2_engineer_id=l2_engineer_id,
+                    planned_start_at=planned_start_at,
+                    planned_end_at=planned_end_at,
+                )
+            )
+        finder = getattr(
+            self.repository, "get_conflicting_active_card_for_update", None
+        )
+        if finder is None:
+            return []
+        card = finder(
+            l2_engineer_id=l2_engineer_id,
+            planned_start_at=planned_start_at,
+            planned_end_at=planned_end_at,
+        )
+        return [card] if card is not None else []
+
+    def _displace_for_urgent_collision(
+        self,
+        card: CardRecord,
+        *,
+        actor_user_id: int | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> _UrgentCollision:
+        if actor_user_id is None:
+            raise InvalidCardTransitionError("actor_user_required")
+        affected_l1_id = card.l1_owner_id
+        affected_l2_id = card.l2_engineer_id
+        old_values = _card_distribution_snapshot(card)
+        current_cycle = self.repository.get_current_assignment_cycle_for_update(card.id)
+        if current_cycle is not None and card.l2_engineer_id is not None:
+            pending = self.repository.get_pending_assignment_attempt_for_update(
+                card_id=card.id, l2_engineer_id=card.l2_engineer_id
+            )
+            if pending is not None:
+                skipped = self.repository.update_assignment_attempt_response(
+                    attempt_id=pending.id,
+                    status=AssignmentAttemptStatus.SKIPPED,
+                    actor_user_id=actor_user_id,
+                    rejection_reason="urgent_collision",
+                )
+                if skipped is not None:
+                    self.repository.add_audit_log(
+                        actor_user_id=actor_user_id,
+                        actor_type=ActorType.INTERNAL_USER,
+                        action=AuditAction.UPDATE,
+                        entity_type="assignment_attempt",
+                        entity_id=skipped.id,
+                        old_values=_urgent_attempt_snapshot(pending),
+                        new_values=_urgent_attempt_snapshot(skipped),
+                        ip_address=ip_address,
+                        user_agent=user_agent,
+                    )
+            self.repository.update_assignment_cycle_status(
+                cycle_id=current_cycle.id, status=AssignmentCycleStatus.CANCELLED
+            )
+        if hasattr(self.repository, "close_reminder_schedules"):
+            self.repository.close_reminder_schedules(card_id=card.id)
+
+        if hasattr(self.repository, "release_l1_followup"):
+            released = self.repository.release_l1_followup(card_id=card.id)
+            if released is not None:
+                card = released
+        displaced = self.repository.update_card_distribution_result(
+            card_id=card.id,
+            status=CardStatus.CREATED,
+            l2_engineer_id=None,
+            increment_unsuccessful_cycle_count=False,
+        )
+
+        new_values = {
+            **_card_distribution_snapshot(displaced),
+            "collision": True,
+            "displaced_l2_engineer_id": affected_l2_id,
+            "planned_start_at": card.planned_start_at.isoformat(),
+            "planned_end_at": (
+                card.planned_start_at
+                + timedelta(minutes=card.planned_duration_minutes)
+            ).isoformat(),
+        }
+        event_id = self.repository.add_card_event(
+            card_id=card.id,
+            event_type=CardEventType.URGENT_COLLISION,
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            old_values=old_values,
+            new_values=new_values,
+            comment="urgent_collision",
+        )
+        self.repository.add_audit_log(
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.UPDATE,
+            entity_type="urgent_collision",
+            entity_id=card.id,
+            old_values=old_values,
+            new_values=new_values,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        self._notify_urgent_collision(
+            displaced=displaced,
+            event_id=event_id,
+            affected_l1_id=affected_l1_id,
+            affected_l2_id=affected_l2_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return _UrgentCollision(
+            displaced, event_id, affected_l1_id, affected_l2_id
+        )
+
+    def _notify_urgent_collision(
+        self,
+        *,
+        displaced: CardRecord,
+        event_id: int,
+        affected_l1_id: int | None,
+        affected_l2_id: int | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        if self.notifications is None:
+            return
+        recipient_ids: list[int] = []
+        if affected_l1_id is not None:
+            recipient_ids = [affected_l1_id]
+        else:
+            list_candidates = getattr(
+                self.repository, "list_l1_distribution_candidates", None
+            )
+            if list_candidates is not None:
+                end = displaced.planned_start_at + timedelta(
+                    minutes=displaced.planned_duration_minutes
+                )
+                recipient_ids = [
+                    candidate.user_id
+                    for candidate in list_candidates(
+                        planned_start_at=displaced.planned_start_at,
+                        planned_end_at=end,
+                    )
+                ]
+        recipient_ids = list(dict.fromkeys(recipient_ids))
+        if affected_l2_id is not None:
+            recipient_ids.append(affected_l2_id)
+        recipient_ids = list(dict.fromkeys(recipient_ids))
+        for recipient_id in recipient_ids:
+            assignment = (
+                "l2" if recipient_id == affected_l2_id else "urgent_collision"
+            )
+            for channel in ("telegram", "bitrix24"):
+                self.notifications.notify(
+                    event="urgent_collision",
+                    card_id=displaced.id,
+                    source_event_id=event_id,
+                    source_event_type=int(CardEventType.URGENT_COLLISION),
+                    recipient_user_id=recipient_id,
+                    channel=channel,
+                    payload={"card_id": displaced.id, "assignment": assignment},
+                )
+        self.l2_distribution_service.manager_escalation_service.escalate(
+            card=displaced,
+            source_event_id=event_id,
+            source_event_type=CardEventType.URGENT_COLLISION,
+            reason="urgent_collision",
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+
+    def _record_urgent_card_collision(
+        self,
+        *,
+        card: CardRecord,
+        collision: _UrgentCollision,
+        actor_user_id: int | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> None:
+        values = {
+            "urgent_card_id": card.id,
+            "displaced_card_id": collision.displaced.id,
+            "collision_event_id": collision.event_id,
+        }
+        self.repository.add_card_event(
+            card_id=card.id,
+            event_type=CardEventType.URGENT_COLLISION,
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            old_values=None,
+            new_values=values,
+            comment="urgent_collision_created",
+        )
+        self.repository.add_audit_log(
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.UPDATE,
+            entity_type="urgent_collision",
+            entity_id=card.id,
+            old_values=None,
+            new_values=values,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
 
     def get_card(self, public_id: UUID) -> CardRecord:
         card = self.repository.get_card_by_public_id(public_id)
@@ -985,4 +1256,21 @@ def _card_snapshot(card: CardRecord) -> dict[str, Any]:
         "result_code": card.result_code,
         "engineer_report": card.engineer_report,
         "actual_duration_minutes": card.actual_duration_minutes,
+    }
+
+
+def _urgent_attempt_snapshot(attempt) -> dict[str, Any]:
+    return {
+        "id": attempt.id,
+        "cycle_id": attempt.cycle_id,
+        "card_id": attempt.card_id,
+        "l2_engineer_id": attempt.l2_engineer_id,
+        "status_code": attempt.status_code,
+        "responded_at": (
+            attempt.responded_at.isoformat()
+            if attempt.responded_at is not None
+            else None
+        ),
+        "actor_user_id": attempt.actor_user_id,
+        "rejection_reason": attempt.rejection_reason,
     }

@@ -645,3 +645,78 @@ def test_postgres_role_create_plans_persist_each_role_contract(
                 (retroactive.id,),
             )
             assert cursor.fetchone()["actor_user_id"] == 91001
+
+
+def test_postgres_l2_urgent_collision_reassigns_displaced_card(
+    database_url: str,
+) -> None:
+    now = datetime.now(UTC).replace(microsecond=0)
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO users (id, username, password_hash, full_name) VALUES "
+                "(91000, 'pg-collision-manager', 'test', 'PG Collision Manager'), "
+                "(91001, 'pg-collision-l2-a', 'test', 'PG Collision L2 A'), "
+                "(91002, 'pg-collision-l2-b', 'test', 'PG Collision L2 B') "
+                "ON CONFLICT (id) DO NOTHING"
+            )
+            cursor.execute(
+                "INSERT INTO user_roles (user_id, role_id) VALUES (91000, 3), (91001, 2), (91002, 2) ON CONFLICT DO NOTHING"
+            )
+            cursor.execute(
+                "INSERT INTO distribution_members (user_id, pool_code, is_enabled) VALUES "
+                "(91001, 2, true), (91002, 2, true) "
+                "ON CONFLICT (user_id, pool_code) DO UPDATE SET is_enabled=true"
+            )
+            for user_id in (91001, 91002):
+                for weekday in range(1, 8):
+                    cursor.execute(
+                        "INSERT INTO schedules (user_id, weekday, start_time, end_time, timezone) "
+                        "VALUES (%s, %s, '00:00', '23:59:59.999999', 'UTC')",
+                        (user_id, weekday),
+                    )
+        service = CardService(PostgresCardRepository(connection))
+        normal = service.create_card(
+            CardCreateRequest(
+                omnidesk_ticket_number="910-000021",
+                planned_start_at=now + timedelta(hours=3),
+                planned_duration_minutes=60,
+                l2_engineer_id=91001,
+            ),
+            actor_user_id=91000,
+            ip_address=None,
+            user_agent=None,
+            manual_assignment=True,
+            allow_out_of_hours=True,
+        )
+        urgent = service.create_card(
+            CardCreateRequest(
+                omnidesk_ticket_number="910-000022",
+                planned_start_at=now + timedelta(hours=3),
+                planned_duration_minutes=60,
+            ),
+            actor_user_id=91001,
+            ip_address=None,
+            user_agent=None,
+            allow_out_of_hours=True,
+            role_create_plan=validate_role_create(
+                scenario=CreateScenario.L2_URGENT,
+                planned_start_at=now + timedelta(hours=3),
+                planned_duration_minutes=60,
+                urgent_reason="collision regression",
+                now=now,
+            ),
+        )
+        connection.commit()
+        assert urgent.status_code == 1 and urgent.l2_engineer_id == 91001
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT status_code, l2_engineer_id FROM connection_cards WHERE id=%s",
+                (normal.id,),
+            )
+            assert cursor.fetchone() == {"status_code": 1, "l2_engineer_id": 91002}
+            cursor.execute(
+                "SELECT count(*) FROM card_events WHERE card_id=%s AND comment='urgent_collision'",
+                (normal.id,),
+            )
+            assert cursor.fetchone()[0] == 1

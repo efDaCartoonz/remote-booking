@@ -108,15 +108,15 @@ def test_no_recipients_and_no_channels_have_distinct_safe_reasons():
     )
 
 
-def test_unsupported_or_untrusted_event_is_rejected():
+def test_urgent_collision_is_supported_as_a_controlled_escalation_event():
     repo = Repo([ManagerRecipient(1, "tg")])
     service = ManagerEscalationService(repo, RecordingNotificationService())
-    with pytest.raises(ValueError):
-        service.escalate(
-            card=card(),
-            source_event_id=1,
-            source_event_type=CardEventType.STATUS_CHANGED,
-            reason="urgent_collision",
-            ip_address=None,
-            user_agent=None,
-        )
+    result = service.escalate(
+        card=card(),
+        source_event_id=1,
+        source_event_type=CardEventType.URGENT_COLLISION,
+        reason="urgent_collision",
+        ip_address=None,
+        user_agent=None,
+    )
+    assert result.created_intents == 1
