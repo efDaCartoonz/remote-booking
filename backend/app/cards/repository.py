@@ -1148,7 +1148,10 @@ class PostgresCardRepository:
                         )
                     ) AS urgent_collision
                     FROM connection_cards c WHERE {where}""",
-                {**params, "urgent_collision_event": int(CardEventType.URGENT_COLLISION)},
+                {
+                    **params,
+                    "urgent_collision_event": int(CardEventType.URGENT_COLLISION),
+                },
             )
             counts = dict(cursor.fetchone())
         return [_card_from_row(row) for row in rows], {

@@ -5,7 +5,6 @@ import psycopg
 import pytest
 from psycopg.rows import dict_row
 
-from app.admin.repository import AdministrativeRepository, ConnectionResult
 from app.cards.constants import CardStatus, RoleId
 from app.cards.create_policy import CreateScenario, validate_role_create
 from app.cards.repository import PostgresCardRepository
@@ -29,7 +28,9 @@ def cleanup(database_url: str):
     yield
     with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
         cursor.execute("DELETE FROM omnidesk_internal_note_outbox")
-        cursor.execute("DELETE FROM connection_cards WHERE omnidesk_ticket_number LIKE '930-%'")
+        cursor.execute(
+            "DELETE FROM connection_cards WHERE omnidesk_ticket_number LIKE '930-%'"
+        )
         cursor.execute("DELETE FROM users WHERE id BETWEEN 93000 AND 93010")
         cursor.execute("DELETE FROM connection_results WHERE code >= 9300")
 
@@ -59,7 +60,9 @@ def _seed(connection: psycopg.Connection) -> None:
         )
 
 
-def test_normal_completion_persists_actual_duration_and_outbox_intent(database_url: str) -> None:
+def test_normal_completion_persists_actual_duration_and_outbox_intent(
+    database_url: str,
+) -> None:
     with psycopg.connect(database_url, row_factory=dict_row) as connection:
         _seed(connection)
         repository = PostgresCardRepository(connection)
@@ -139,13 +142,18 @@ def test_normal_completion_persists_actual_duration_and_outbox_intent(database_u
             payload={"card_id": card.id},
         )
         assert duplicate_id == 0
-        assert connection.execute(
-            "SELECT count(*) FROM omnidesk_internal_note_outbox WHERE card_id = %s",
-            (card.id,),
-        ).fetchone()["count"] == 1
+        assert (
+            connection.execute(
+                "SELECT count(*) FROM omnidesk_internal_note_outbox WHERE card_id = %s",
+                (card.id,),
+            ).fetchone()["count"]
+            == 1
+        )
 
 
-def test_completed_retroactive_persists_derived_duration_and_rejects_inactive_code(database_url: str) -> None:
+def test_completed_retroactive_persists_derived_duration_and_rejects_inactive_code(
+    database_url: str,
+) -> None:
     now = datetime(2026, 9, 21, 10, tzinfo=UTC)
     with psycopg.connect(database_url, row_factory=dict_row) as connection:
         _seed(connection)
@@ -161,7 +169,9 @@ def test_completed_retroactive_persists_derived_duration_and_rejects_inactive_co
             engineer_report="Should fail",
             now=now,
         )
-        with pytest.raises(InvalidCardTransitionError, match="result_code_inactive_or_unknown"):
+        with pytest.raises(
+            InvalidCardTransitionError, match="result_code_inactive_or_unknown"
+        ):
             service.create_card(
                 CardCreateRequest(
                     omnidesk_ticket_number="930-000002",
@@ -211,7 +221,9 @@ def test_completed_retroactive_persists_derived_duration_and_rejects_inactive_co
         assert "case_id" not in outbox_row["payload"]
 
 
-def test_in_progress_retroactive_does_not_create_outbox_intent(database_url: str) -> None:
+def test_in_progress_retroactive_does_not_create_outbox_intent(
+    database_url: str,
+) -> None:
     now = datetime(2026, 9, 21, 10, tzinfo=UTC)
     with psycopg.connect(database_url, row_factory=dict_row) as connection:
         _seed(connection)

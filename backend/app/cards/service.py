@@ -434,12 +434,16 @@ class CardService:
             result_code = role_create_plan.result_code
             engineer_report = role_create_plan.engineer_report
             if status == CardStatus.COMPLETED:
-                if result_code is None or not self.repository.has_active_result_code(result_code):
+                if result_code is None or not self.repository.has_active_result_code(
+                    result_code
+                ):
                     raise InvalidCardTransitionError("result_code_inactive_or_unknown")
 
         actual_duration_minutes = None
         if actual_start_at is not None and actual_end_at is not None:
-            derived_minutes = int((actual_end_at - actual_start_at).total_seconds() / 60)
+            derived_minutes = int(
+                (actual_end_at - actual_start_at).total_seconds() / 60
+            )
             if derived_minutes > 0:
                 actual_duration_minutes = derived_minutes
 
@@ -618,7 +622,7 @@ class CardService:
             raise InvalidCardTransitionError("actor_user_required")
         affected_l1_id = card.l1_owner_id
         affected_l2_id = card.l2_engineer_id
-        old_values = _card_distribution_snapshot(card)
+        old_values = _card_snapshot(card)
         current_cycle = self.repository.get_current_assignment_cycle_for_update(card.id)
         if current_cycle is not None and card.l2_engineer_id is not None:
             pending = self.repository.get_pending_assignment_attempt_for_update(
@@ -661,13 +665,12 @@ class CardService:
         )
 
         new_values = {
-            **_card_distribution_snapshot(displaced),
+            **_card_snapshot(displaced),
             "collision": True,
             "displaced_l2_engineer_id": affected_l2_id,
             "planned_start_at": card.planned_start_at.isoformat(),
             "planned_end_at": (
-                card.planned_start_at
-                + timedelta(minutes=card.planned_duration_minutes)
+                card.planned_start_at + timedelta(minutes=card.planned_duration_minutes)
             ).isoformat(),
         }
         event_id = self.repository.add_card_event(
@@ -698,9 +701,7 @@ class CardService:
             ip_address=ip_address,
             user_agent=user_agent,
         )
-        return _UrgentCollision(
-            displaced, event_id, affected_l1_id, affected_l2_id
-        )
+        return _UrgentCollision(displaced, event_id, affected_l1_id, affected_l2_id)
 
     def _notify_urgent_collision(
         self,
@@ -737,9 +738,7 @@ class CardService:
             recipient_ids.append(affected_l2_id)
         recipient_ids = list(dict.fromkeys(recipient_ids))
         for recipient_id in recipient_ids:
-            assignment = (
-                "l2" if recipient_id == affected_l2_id else "urgent_collision"
-            )
+            assignment = "l2" if recipient_id == affected_l2_id else "urgent_collision"
             for channel in ("telegram", "bitrix24"):
                 self.notifications.notify(
                     event="urgent_collision",

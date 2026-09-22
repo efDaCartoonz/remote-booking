@@ -740,11 +740,12 @@ def create_payload(
     l2_engineer_id: int | None = None,
     omnidesk_ticket_number: str = "123-456789",
     planned_start_at: datetime | None = None,
+    planned_duration_minutes: int = 60,
 ) -> CardCreateRequest:
     return CardCreateRequest(
         omnidesk_ticket_number=omnidesk_ticket_number,
         planned_start_at=planned_start_at or DEFAULT_PLANNED_START_AT,
-        planned_duration_minutes=60,
+        planned_duration_minutes=planned_duration_minutes,
         l2_engineer_id=l2_engineer_id,
         description="Проверить удаленный доступ",
     )
@@ -1731,7 +1732,6 @@ def test_complete_rejects_missing_or_inactive_result_code() -> None:
     assert completed.engineer_report == "Active code succeeded"
 
 
-
 def test_terminal_statuses_are_immutable_for_user_actions() -> None:
     repository = FakeCardRepository()
     service = make_service(repository)
@@ -2365,17 +2365,14 @@ def test_l2_urgent_collision_exhaustion_rejects_and_assigns_l1() -> None:
     assert displaced.l2_engineer_id is None
     assert displaced.l1_owner_id == 100
     collision_intents = [
-        item
-        for item in notifications.notifications
-        if item.event == "urgent_collision"
+        item for item in notifications.notifications if item.event == "urgent_collision"
     ]
     assert {item.recipient_user_id for item in collision_intents} == {20, 100}
 
     event_id = next(
         index + 1
         for index, event in enumerate(repository.events)
-        if event["card_id"] == normal.id
-        and event["comment"] == "urgent_collision"
+        if event["card_id"] == normal.id and event["comment"] == "urgent_collision"
     )
     before = len(notifications.notifications)
     CardService(repository, notifications)._notify_urgent_collision(
@@ -2551,7 +2548,9 @@ def test_complete_card_rejects_non_positive_actual_duration() -> None:
         user_agent=None,
     )
 
-    with pytest.raises(InvalidCardTransitionError, match="actual_duration_must_be_positive"):
+    with pytest.raises(
+        InvalidCardTransitionError, match="actual_duration_must_be_positive"
+    ):
         service.complete_card(
             card.public_id,
             result_code=1,
@@ -2563,7 +2562,9 @@ def test_complete_card_rejects_non_positive_actual_duration() -> None:
             user_agent=None,
         )
 
-    with pytest.raises(InvalidCardTransitionError, match="actual_duration_must_be_positive"):
+    with pytest.raises(
+        InvalidCardTransitionError, match="actual_duration_must_be_positive"
+    ):
         service.complete_card(
             card.public_id,
             result_code=1,
@@ -2606,13 +2607,16 @@ def test_complete_card_optional_actual_duration_defaults_to_none() -> None:
 
     assert completed.actual_duration_minutes is None
     assert len(repository.omnidesk_note_intents) == 1
-    assert "actual_duration_minutes" not in repository.omnidesk_note_intents[0]["payload"]
+    assert (
+        "actual_duration_minutes" not in repository.omnidesk_note_intents[0]["payload"]
+    )
 
 
-def test_completed_retroactive_validates_active_result_code_and_derives_duration() -> None:
+def test_completed_retroactive_validates_result_and_derives_duration() -> None:
     now = datetime(2026, 9, 20, 12, tzinfo=UTC)
     repository = FakeCardRepository()
     repository.active_result_codes = {5}
+    seed_l2_candidate(repository, 20, planned_start_at=now - timedelta(hours=2))
     service = make_service(repository)
 
     # Inactive result code is rejected
@@ -2624,9 +2628,13 @@ def test_completed_retroactive_validates_active_result_code_and_derives_duration
         engineer_report="Done",
         now=now,
     )
-    with pytest.raises(InvalidCardTransitionError, match="result_code_inactive_or_unknown"):
+    with pytest.raises(
+        InvalidCardTransitionError, match="result_code_inactive_or_unknown"
+    ):
         service.create_card(
-            create_payload(planned_start_at=now - timedelta(hours=2), planned_duration_minutes=90),
+            create_payload(
+                planned_start_at=now - timedelta(hours=2), planned_duration_minutes=90
+            ),
             actor_user_id=20,
             ip_address=None,
             user_agent=None,
@@ -2645,7 +2653,9 @@ def test_completed_retroactive_validates_active_result_code_and_derives_duration
         now=now,
     )
     completed = service.create_card(
-        create_payload(planned_start_at=now - timedelta(hours=2), planned_duration_minutes=90),
+        create_payload(
+            planned_start_at=now - timedelta(hours=2), planned_duration_minutes=90
+        ),
         actor_user_id=20,
         ip_address=None,
         user_agent=None,
@@ -2666,6 +2676,7 @@ def test_completed_retroactive_validates_active_result_code_and_derives_duration
 def test_in_progress_retroactive_does_not_create_note_intent() -> None:
     now = datetime(2026, 9, 20, 12, tzinfo=UTC)
     repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20, planned_start_at=now - timedelta(minutes=30))
     service = make_service(repository)
 
     in_progress_plan = validate_role_create(
@@ -2675,7 +2686,9 @@ def test_in_progress_retroactive_does_not_create_note_intent() -> None:
         now=now,
     )
     card = service.create_card(
-        create_payload(planned_start_at=now - timedelta(minutes=30), planned_duration_minutes=60),
+        create_payload(
+            planned_start_at=now - timedelta(minutes=30), planned_duration_minutes=60
+        ),
         actor_user_id=20,
         ip_address=None,
         user_agent=None,
