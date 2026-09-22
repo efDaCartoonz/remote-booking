@@ -270,6 +270,83 @@ def test_cancel_closes_assignment_lifecycle_and_releases_reservation(database_ur
             assert cursor.fetchone()["count"] == 0
 
 
+def test_manager_cancel_in_progress_persists_closed_lifecycle_and_releases_reservation(
+    database_url,
+):
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        _seed(connection)
+        service = CardService(PostgresCardRepository(connection))
+        card = _create_rejected(service)
+        assert card.l2_engineer_id == 92002
+
+        service.confirm_card(
+            card.public_id,
+            actor_user_id=92002,
+            comment="confirmed",
+            ip_address=None,
+            user_agent=None,
+        )
+        service.start_card(
+            card.public_id,
+            actor_user_id=92002,
+            comment="started",
+            ip_address=None,
+            user_agent=None,
+        )
+        cancelled = service.cancel_card(
+            card.public_id,
+            actor_user_id=92000,
+            actor_role_ids={int(RoleId.MANAGER)},
+            comment="client_requested",
+            ip_address=None,
+            user_agent=None,
+        )
+
+        assert cancelled.status_code == int(CardStatus.CANCELLED)
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT status_code FROM connection_cards WHERE id=%s", (card.id,)
+            )
+            assert cursor.fetchone()["status_code"] == int(CardStatus.CANCELLED)
+            cursor.execute(
+                "SELECT status_code FROM assignment_cycles WHERE card_id=%s",
+                (card.id,),
+            )
+            assert cursor.fetchone()["status_code"] == int(
+                AssignmentCycleStatus.CANCELLED
+            )
+            cursor.execute(
+                "SELECT status_code, responded_at, actor_user_id FROM assignment_attempts WHERE card_id=%s",
+                (card.id,),
+            )
+            attempt = dict(cursor.fetchone())
+            assert attempt["status_code"] == int(AssignmentAttemptStatus.CONFIRMED)
+            assert attempt["responded_at"] is not None
+            assert attempt["actor_user_id"] == 92002
+            cursor.execute(
+                "SELECT count(*) FROM reminder_schedules WHERE card_id=%s AND closed_at IS NULL",
+                (card.id,),
+            )
+            assert cursor.fetchone()["count"] == 0
+            cursor.execute(
+                "SELECT count(*) FROM connection_cards WHERE l2_engineer_id=92002 AND status_code IN (1, 2, 3)",
+            )
+            assert cursor.fetchone()["count"] == 0
+
+        # The engineer's reservation is released for a subsequent assignment.
+        replacement = service.create_card(
+            CardCreateRequest(
+                omnidesk_ticket_number="920-000002",
+                planned_start_at=card.planned_start_at,
+                planned_duration_minutes=60,
+            ),
+            actor_user_id=92000,
+            ip_address=None,
+            user_agent=None,
+        )
+        assert replacement.l2_engineer_id == 92002
+
+
 def test_l2_overdue_persists_l1_followup_and_deduplicates_escalation(database_url):
     with psycopg.connect(database_url, row_factory=dict_row) as connection:
         _seed(connection)

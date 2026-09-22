@@ -129,6 +129,23 @@ def test_action_policy_rejects_role_owner_and_state_violations(
     assert error.value.status_code == (409 if detail.endswith("status") else 403)
 
 
+@pytest.mark.parametrize(
+    "status", (CardStatus.CREATED, CardStatus.COMPLETED, CardStatus.CANCELLED)
+)
+def test_manager_cancel_rejects_non_cancellable_statuses(status: CardStatus) -> None:
+    with pytest.raises(CardActionPolicyError) as error:
+        authorize_card_action(
+            action=CardAction.CANCEL,
+            card=PolicyCard(status_code=int(status)),
+            actor_user_id=10,
+            actor_role_ids=MANAGER,
+            comment="client_requested",
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "action_not_allowed_for_status"
+
+
 def test_create_requires_manager_business_role_not_admin_access_level() -> None:
     authorize_create(actor_role_ids=MANAGER)
 
