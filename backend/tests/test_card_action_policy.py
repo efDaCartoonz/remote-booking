@@ -135,3 +135,98 @@ def test_owner_cancellation_requires_recorded_basis() -> None:
 
     assert error.value.status_code == 422
     assert error.value.detail == "cancellation_reason_required"
+
+
+@pytest.mark.parametrize("status", tuple(CardStatus))
+def test_reschedule_manager_matrix_is_limited_to_srs_time_change_states(
+    status: CardStatus,
+) -> None:
+    card = PolicyCard(status_code=int(status))
+
+    if status in {
+        CardStatus.ASSIGNED,
+        CardStatus.CONFIRMED,
+        CardStatus.REJECTED,
+    }:
+        authorize_card_action(
+            action=CardAction.RESCHEDULE,
+            card=card,
+            actor_user_id=10,
+            actor_role_ids=MANAGER,
+        )
+        return
+
+    with pytest.raises(CardActionPolicyError) as error:
+        authorize_card_action(
+            action=CardAction.RESCHEDULE,
+            card=card,
+            actor_user_id=10,
+            actor_role_ids=MANAGER,
+        )
+
+    assert error.value.status_code == 409
+    assert error.value.detail == "action_not_allowed_for_status"
+
+
+@pytest.mark.parametrize("status", (CardStatus.ASSIGNED, CardStatus.CONFIRMED))
+def test_reschedule_allows_assigned_l2_with_reason(status: CardStatus) -> None:
+    authorize_card_action(
+        action=CardAction.RESCHEDULE,
+        card=PolicyCard(status_code=int(status)),
+        actor_user_id=22,
+        actor_role_ids=L2,
+        comment="client_requested",
+    )
+
+
+def test_reschedule_allows_owning_l1_with_reason() -> None:
+    authorize_card_action(
+        action=CardAction.RESCHEDULE,
+        card=PolicyCard(status_code=int(CardStatus.REJECTED)),
+        actor_user_id=11,
+        actor_role_ids=L1,
+        comment="client_requested",
+    )
+
+
+@pytest.mark.parametrize(
+    ("roles", "actor_user_id", "detail"),
+    (
+        (L1, 99, "assigned_l1_required"),
+        (L2, 99, "assigned_l2_required"),
+        (ADMIN, 10, "action_forbidden"),
+    ),
+)
+def test_reschedule_rejects_non_owner_or_unassigned_actor(
+    roles: frozenset[int], actor_user_id: int, detail: str
+) -> None:
+    with pytest.raises(CardActionPolicyError) as error:
+        authorize_card_action(
+            action=CardAction.RESCHEDULE,
+            card=PolicyCard(status_code=int(CardStatus.CONFIRMED)),
+            actor_user_id=actor_user_id,
+            actor_role_ids=roles,
+            comment="client_requested",
+        )
+
+    assert error.value.status_code == 403
+    assert error.value.detail == detail
+
+
+@pytest.mark.parametrize("roles", (L1, L2))
+@pytest.mark.parametrize("comment", (None, "   "))
+def test_reschedule_requires_reason_for_non_manager_actor(
+    roles: frozenset[int], comment: str | None
+) -> None:
+    actor_user_id = 11 if roles == L1 else 22
+    with pytest.raises(CardActionPolicyError) as error:
+        authorize_card_action(
+            action=CardAction.RESCHEDULE,
+            card=PolicyCard(status_code=int(CardStatus.CONFIRMED)),
+            actor_user_id=actor_user_id,
+            actor_role_ids=roles,
+            comment=comment,
+        )
+
+    assert error.value.status_code == 422
+    assert error.value.detail == "reschedule_reason_required"

@@ -120,7 +120,7 @@ def authorize_card_action(
         return
 
     if action == CardAction.RESCHEDULE:
-        _require_manager_l1_or_assigned_l2(
+        _require_manager_l1_owner_or_assigned_l2(
             roles=roles, card=card, actor_user_id=actor_user_id
         )
         _require_status(
@@ -183,6 +183,28 @@ def _require_manager_l1_or_assigned_l2(
     if int(RoleId.L2) in roles and card.l2_engineer_id == actor_user_id:
         return
     _forbidden("assigned_l2_required")
+
+
+def _require_manager_l1_owner_or_assigned_l2(
+    *, roles: Collection[int], card: PolicyCard, actor_user_id: int
+) -> None:
+    """Authorize time changes by a manager, card owner, or assigned L2.
+
+    Unlike cancellation, a reschedule is a change to the card's agreed
+    schedule.  An arbitrary L1 must not be able to change another L1's card;
+    the SRS grants this operation to the owning L1 only.
+    """
+    if int(RoleId.MANAGER) in roles:
+        return
+    owns_l1 = int(RoleId.L1) in roles and card.l1_owner_id == actor_user_id
+    owns_l2 = int(RoleId.L2) in roles and card.l2_engineer_id == actor_user_id
+    if owns_l1 or owns_l2:
+        return
+    if int(RoleId.L1) in roles:
+        _forbidden("assigned_l1_required")
+    if int(RoleId.L2) in roles:
+        _forbidden("assigned_l2_required")
+    _forbidden()
 
 
 def _require_assigned_l1(

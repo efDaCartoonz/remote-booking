@@ -1198,6 +1198,103 @@ def test_reschedule_policy_failure_has_no_side_effects() -> None:
     assert (repository.events, repository.audit, repository.cycles) == before
 
 
+@pytest.mark.parametrize(
+    "initial_status",
+    (
+        CardStatus.CREATED,
+        CardStatus.IN_PROGRESS,
+        CardStatus.COMPLETED,
+        CardStatus.CANCELLED,
+    ),
+)
+def test_service_reschedule_status_matrix_rejects_non_time_change_states(
+    initial_status: CardStatus,
+) -> None:
+    repository = FakeCardRepository()
+    service = make_service(repository)
+    card = repository.create_card(
+        CreateCardData(
+            omnidesk_ticket_number="123-456789",
+            planned_start_at=DEFAULT_PLANNED_START_AT,
+            planned_duration_minutes=60,
+            created_by_id=10,
+            status=initial_status,
+            l1_owner_id=11,
+            l2_engineer_id=(20 if initial_status != CardStatus.REJECTED else None),
+        )
+    )
+    before = repository.cards[card.public_id]
+
+    with pytest.raises(
+        CardActionPolicyError, match="action_not_allowed_for_status"
+    ):
+        service.reschedule_card(
+            card.public_id,
+            actor_user_id=10,
+            actor_role_ids={int(RoleId.MANAGER)},
+            planned_start_at=DEFAULT_PLANNED_START_AT + timedelta(hours=2),
+            planned_duration_minutes=90,
+            description=None,
+            reason=None,
+            ip_address=None,
+            user_agent=None,
+        )
+
+    assert repository.cards[card.public_id] == before
+
+
+def test_service_reschedule_allows_owning_l1_on_rejected_card() -> None:
+    repository = FakeCardRepository()
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    assert card.status_code == int(CardStatus.REJECTED)
+    repository.cards[card.public_id] = replace(card, l1_owner_id=11)
+    new_start = DEFAULT_PLANNED_START_AT + timedelta(hours=2)
+    seed_l2_candidate(repository, 20, planned_start_at=new_start)
+
+    updated = service.reschedule_card(
+        card.public_id,
+        actor_user_id=11,
+        actor_role_ids={int(RoleId.L1)},
+        planned_start_at=new_start,
+        planned_duration_minutes=60,
+        description=None,
+        reason="client_requested",
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert updated.status_code == int(CardStatus.ASSIGNED)
+    assert updated.l2_engineer_id == 20
+
+
+def test_service_reschedule_rejects_non_owning_l1_before_mutation() -> None:
+    repository = FakeCardRepository()
+    service = make_service(repository)
+    card = service.create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    repository.cards[card.public_id] = replace(card, l1_owner_id=11)
+    before = repository.cards[card.public_id]
+
+    with pytest.raises(CardActionPolicyError, match="assigned_l1_required"):
+        service.reschedule_card(
+            card.public_id,
+            actor_user_id=99,
+            actor_role_ids={int(RoleId.L1)},
+            planned_start_at=DEFAULT_PLANNED_START_AT + timedelta(hours=2),
+            planned_duration_minutes=60,
+            description=None,
+            reason="client_requested",
+            ip_address=None,
+            user_agent=None,
+        )
+
+    assert repository.cards[card.public_id] == before
+
+
 def test_known_reschedule_exclusion_is_mapped_to_safe_conflict(monkeypatch) -> None:
     class FakeExclusionViolation(Exception):
         pass
@@ -1206,11 +1303,16 @@ def test_known_reschedule_exclusion_is_mapped_to_safe_conflict(monkeypatch) -> N
     error = FakeExclusionViolation("database failure")
     error.diag = SimpleNamespace(constraint_name="ex_connection_cards_l2_no_overlap")
 
+    rollback_calls: list[str] = []
     with pytest.raises(HTTPException) as conflict:
-        cards_api._handle_change(lambda: (_ for _ in ()).throw(error))
+        cards_api._handle_change(
+            lambda: (_ for _ in ()).throw(error),
+            rollback=lambda: rollback_calls.append("rollback"),
+        )
 
     assert conflict.value.status_code == 409
     assert conflict.value.detail == "l2_assignment_conflict"
+    assert rollback_calls == ["rollback"]
 
 
 def test_unknown_reschedule_exclusion_is_not_masked(monkeypatch) -> None:
@@ -1683,6 +1785,122 @@ def test_cards_api_manager_action_records_actual_actor() -> None:
     assert response.json()["status"] == "in_progress"
     assert repository.audit[-1]["actor_user_id"] == 10
     assert repository.events[-1]["actor_user_id"] == 10
+
+
+def test_cards_api_reschedule_selected_l2_uses_manual_assignment_contract() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=10,
+        username="manager",
+        password_hash="unused",
+        full_name="Руководитель",
+        email=None,
+        roles=(RoleRecord(id=3, name="Руководитель"),),
+    )
+    card = CardService(repository).create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    new_start = DEFAULT_PLANNED_START_AT + timedelta(hours=2)
+    seed_l2_candidate(repository, 20, planned_start_at=new_start)
+    seed_l2_candidate(repository, 30, planned_start_at=new_start)
+
+    response = TestClient(app, base_url="https://testserver").post(
+        f"/api/v1/cards/{card.public_id}/l1/reschedule",
+        json={
+            "planned_start_at": new_start.isoformat(),
+            "planned_duration_minutes": 60,
+            "reason": "client_requested",
+            "l2_engineer_id": 30,
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "assigned"
+    assert response.json()["l2_engineer_id"] == 30
+    assert repository.events[-1]["comment"] == "manager_manual_assignment"
+    assert repository.distribution_last_user_id == 20
+
+
+def test_cards_api_rejects_non_manager_selected_l2_without_mutation() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=20,
+        username="l2",
+        password_hash="unused",
+        full_name="Инженер L2",
+        email=None,
+        roles=(RoleRecord(id=2, name="Инженер L2"),),
+    )
+    card = CardService(repository).create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    before = repository.cards[card.public_id]
+    events_before = list(repository.events)
+    audit_before = list(repository.audit)
+    new_start = DEFAULT_PLANNED_START_AT + timedelta(hours=2)
+    seed_l2_candidate(repository, 20, planned_start_at=new_start)
+    seed_l2_candidate(repository, 30, planned_start_at=new_start)
+
+    response = TestClient(app, base_url="https://testserver").post(
+        f"/api/v1/cards/{card.public_id}/l1/reschedule",
+        json={
+            "planned_start_at": new_start.isoformat(),
+            "planned_duration_minutes": 60,
+            "reason": "client_requested",
+            "l2_engineer_id": 30,
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "manager_required_for_manual_assignment"
+    assert repository.cards[card.public_id] == before
+    assert repository.events == events_before
+    assert repository.audit == audit_before
+
+
+def test_cards_api_reschedule_without_selected_l2_uses_automatic_distribution() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=10,
+        username="manager",
+        password_hash="unused",
+        full_name="Руководитель",
+        email=None,
+        roles=(RoleRecord(id=3, name="Руководитель"),),
+    )
+    card = CardService(repository).create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    assert card.l2_engineer_id == 20
+    new_start = DEFAULT_PLANNED_START_AT + timedelta(hours=2)
+    seed_l2_candidate(repository, 20, planned_start_at=new_start)
+    seed_l2_candidate(repository, 30, planned_start_at=new_start)
+
+    response = TestClient(app, base_url="https://testserver").post(
+        f"/api/v1/cards/{card.public_id}/l1/reschedule",
+        json={
+            "planned_start_at": new_start.isoformat(),
+            "planned_duration_minutes": 60,
+            "reason": "client_requested",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "assigned"
+    assert response.json()["l2_engineer_id"] == 30
+    assert repository.distribution_last_user_id == 30
 
 
 def test_manager_manual_assignment_computes_inside_schedule_flag() -> None:

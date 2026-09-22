@@ -326,11 +326,14 @@ def reschedule_rejected(
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
             selected_l2_engineer_id=payload.l2_engineer_id,
-        )
+        ),
+        rollback=_connection_rollback(service),
     )
 
 
-def _handle_change(change: Callable[[], CardRecord]) -> CardResponse:
+def _handle_change(
+    change: Callable[[], CardRecord], *, rollback: Callable[[], None] | None = None
+) -> CardResponse:
     try:
         card = change()
     except CardNotFoundError as exc:
@@ -346,11 +349,25 @@ def _handle_change(change: Callable[[], CardRecord]) -> CardResponse:
         constraint_name = getattr(getattr(exc, "diag", None), "constraint_name", None)
         if constraint_name != "ex_connection_cards_l2_no_overlap":
             raise
+        if rollback is not None:
+            rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="l2_assignment_conflict",
         ) from None
     return card_response(card)
+
+
+def _connection_rollback(service: CardService) -> Callable[[], None] | None:
+    """Return the DB rollback hook for a change handled by the API.
+
+    In-memory repositories used by unit tests intentionally have no connection.
+    PostgreSQL exclusion errors abort the current transaction, so the API must
+    roll back before converting the error into a safe 409 response.
+    """
+    connection = getattr(service.repository, "connection", None)
+    rollback = getattr(connection, "rollback", None)
+    return rollback if callable(rollback) else None
 
 
 def _not_found() -> HTTPException:
