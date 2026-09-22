@@ -1047,10 +1047,14 @@ def test_manager_reschedule_selected_l2_from_confirmed_or_rejected_has_one_fresh
     assert repository.cycles[-1].status_code == int(AssignmentCycleStatus.ASSIGNED)
     assert len(repository.attempts) == expected_attempt_count
     assert repository.attempts[-1].status_code == int(AssignmentAttemptStatus.PENDING)
-    assert len([item for item in repository.schedules if item["closed_at"] is None]) == 1
+    assert (
+        len([item for item in repository.schedules if item["closed_at"] is None]) == 1
+    )
 
 
-def test_manager_reschedule_selected_l2_collision_has_no_lifecycle_side_effects() -> None:
+def test_manager_reschedule_selected_l2_collision_has_no_lifecycle_side_effects() -> (
+    None
+):
     repository = FakeCardRepository()
     seed_l2_candidate(repository, 20)
     service = make_service(repository)
@@ -1225,9 +1229,7 @@ def test_service_reschedule_status_matrix_rejects_non_time_change_states(
     )
     before = repository.cards[card.public_id]
 
-    with pytest.raises(
-        CardActionPolicyError, match="action_not_allowed_for_status"
-    ):
+    with pytest.raises(CardActionPolicyError, match="action_not_allowed_for_status"):
         service.reschedule_card(
             card.public_id,
             actor_user_id=10,
