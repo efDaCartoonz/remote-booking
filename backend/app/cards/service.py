@@ -19,7 +19,7 @@ from app.cards.constants import (
     CreatedSource,
     RoleId,
 )
-from app.cards.create_policy import RoleCreatePlan
+from app.cards.create_policy import RoleCreatePlan, validate_reschedule_window
 from app.cards.policy import CardAction, CardActionPolicyError, authorize_card_action
 from app.cards.repository import (
     CardHistoryRecord,
@@ -150,6 +150,13 @@ class CardService:
             or card.l1_owner_id != actor_user_id
         ):
             raise InvalidCardTransitionError("assigned_l1_required")
+        try:
+            validate_reschedule_window(
+                planned_start_at=planned_start_at,
+                urgency_code=card.urgency_code,
+            )
+        except ValueError as exc:
+            raise CardActionPolicyError(status_code=422, detail=str(exc)) from exc
         old = _card_snapshot(card)
         updated = self.repository.update_l1_followup(
             public_id,
@@ -226,6 +233,14 @@ class CardService:
             )
         ):
             return card
+
+        try:
+            validate_reschedule_window(
+                planned_start_at=planned_start_at,
+                urgency_code=card.urgency_code,
+            )
+        except ValueError as exc:
+            raise CardActionPolicyError(status_code=422, detail=str(exc)) from exc
 
         out_of_hours_flag = False
         if selected_l2_engineer_id is not None:

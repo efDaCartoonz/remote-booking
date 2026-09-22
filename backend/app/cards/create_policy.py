@@ -116,6 +116,33 @@ def validate_role_create(
     )
 
 
+def validate_reschedule_window(
+    *,
+    planned_start_at: datetime,
+    urgency_code: int,
+    now: datetime | None = None,
+) -> None:
+    """Apply the create scheduling window to a time change.
+
+    Urgent cards retain the create contract's exemption from the 120-minute
+    minimum while still requiring a future, timezone-aware start within the
+    14-day horizon.
+    """
+    if planned_start_at.tzinfo is None or planned_start_at.utcoffset() is None:
+        raise ValueError("planned_start_at_must_be_timezone_aware")
+    now = now or datetime.now(UTC)
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now_must_be_timezone_aware")
+    start = planned_start_at.astimezone(UTC)
+    now = now.astimezone(UTC)
+    if urgency_code > 0:
+        if start < now:
+            raise ValueError("urgent_planned_start_must_not_be_in_past")
+        _validate_horizon(start=start, now=now)
+    else:
+        _validate_normal_window(start=start, now=now)
+
+
 def _validate_normal_window(*, start: datetime, now: datetime) -> None:
     if start < now + timedelta(minutes=120):
         raise ValueError("planned_start_too_soon")

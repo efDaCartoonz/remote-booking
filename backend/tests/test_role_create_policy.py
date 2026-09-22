@@ -3,7 +3,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.cards.constants import AssignmentMethod, CardStatus
-from app.cards.create_policy import CreateScenario, validate_role_create
+from app.cards.create_policy import (
+    CreateScenario,
+    validate_reschedule_window,
+    validate_role_create,
+)
 from app.cards.policy import CardActionPolicyError, authorize_create
 
 
@@ -71,6 +75,39 @@ def test_normal_create_rejects_invalid_window(start, detail) -> None:
             planned_start_at=start,
             planned_duration_minutes=60,
             now=NOW,
+        )
+
+
+def test_reschedule_uses_normal_create_window() -> None:
+    validate_reschedule_window(
+        planned_start_at=NOW + timedelta(hours=2), urgency_code=0, now=NOW
+    )
+    with pytest.raises(ValueError, match="planned_start_too_soon"):
+        validate_reschedule_window(
+            planned_start_at=NOW + timedelta(minutes=119),
+            urgency_code=0,
+            now=NOW,
+        )
+    with pytest.raises(ValueError, match="planned_start_too_far"):
+        validate_reschedule_window(
+            planned_start_at=NOW + timedelta(days=15), urgency_code=0, now=NOW
+        )
+
+
+def test_urgent_reschedule_keeps_create_exception_to_minimum_delay() -> None:
+    validate_reschedule_window(
+        planned_start_at=NOW + timedelta(minutes=5), urgency_code=1, now=NOW
+    )
+    with pytest.raises(ValueError, match="urgent_planned_start_must_not_be_in_past"):
+        validate_reschedule_window(
+            planned_start_at=NOW - timedelta(minutes=1), urgency_code=1, now=NOW
+        )
+
+
+def test_reschedule_requires_timezone_aware_start() -> None:
+    with pytest.raises(ValueError, match="planned_start_at_must_be_timezone_aware"):
+        validate_reschedule_window(
+            planned_start_at=datetime(2026, 9, 17, 12), urgency_code=0, now=NOW
         )
 
 
