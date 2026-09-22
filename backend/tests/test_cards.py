@@ -1789,6 +1789,42 @@ def test_cards_api_manager_action_records_actual_actor() -> None:
     assert repository.events[-1]["actor_user_id"] == 10
 
 
+def test_cards_api_manager_can_cancel_in_progress_card() -> None:
+    repository = FakeCardRepository()
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=10,
+        username="manager",
+        password_hash="unused",
+        full_name="Руководитель",
+        email=None,
+        roles=(RoleRecord(id=3, name="Руководитель"),),
+    )
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    CardService(repository).start_card(
+        card.public_id,
+        actor_user_id=20,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    response = TestClient(app, base_url="https://testserver").post(
+        f"/api/v1/cards/{card.public_id}/cancel",
+        json={"comment": "client_requested"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+    assert repository.audit[-1]["actor_user_id"] == 10
+
+
 def test_cards_api_reschedule_selected_l2_uses_manual_assignment_contract() -> None:
     repository = FakeCardRepository()
     seed_l2_candidate(repository, 20)
@@ -1964,6 +2000,33 @@ def test_l2_self_create_allows_out_of_hours_and_marks_card() -> None:
 
     assert card.l2_engineer_id == 20
     assert card.out_of_hours_flag is True
+    assert repository.cycles == []
+    assert repository.attempts == []
+
+
+def test_l2_urgent_create_allows_out_of_hours_and_marks_card() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20, schedule_end=time(1))
+    plan = validate_role_create(
+        scenario=CreateScenario.L2_URGENT,
+        planned_start_at=DEFAULT_PLANNED_START_AT,
+        planned_duration_minutes=60,
+        urgent_reason="incident",
+        now=DEFAULT_PLANNED_START_AT - timedelta(hours=3),
+    )
+
+    card = CardService(repository).create_card(
+        create_payload(),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        allow_out_of_hours=True,
+        role_create_plan=plan,
+    )
+
+    assert card.l2_engineer_id == 20
+    assert card.out_of_hours_flag is True
+    assert card.urgency_code == 1
     assert repository.cycles == []
     assert repository.attempts == []
 

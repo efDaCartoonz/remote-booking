@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 import json
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 
 import app.api.cards as cards_api
@@ -97,7 +98,16 @@ def test_role_create_maps_public_ticket_failures_without_case_id(monkeypatch) ->
     assert "case_id" not in response.text
 
 
-def test_l2_create_is_self_assigned_and_audited_as_actual_actor(monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("path", "extra_payload"),
+    (
+        ("/api/v1/cards/l2", {}),
+        ("/api/v1/cards/l2/urgent", {"urgent_reason": "incident"}),
+    ),
+)
+def test_l2_create_is_self_assigned_and_allows_out_of_hours(
+    monkeypatch, path, extra_payload
+) -> None:
     captured = {}
 
     class Repository:
@@ -171,7 +181,7 @@ def test_l2_create_is_self_assigned_and_audited_as_actual_actor(monkeypatch) -> 
     )
     app = create_app()
     app.dependency_overrides[get_current_user] = lambda: L2
-    response = TestClient(app).post("/api/v1/cards/l2", json=_payload())
+    response = TestClient(app).post(path, json=_payload(**extra_payload))
     assert response.status_code == 201
     assert captured["actor_user_id"] == L2.id
     assert captured["allow_out_of_hours"] is True

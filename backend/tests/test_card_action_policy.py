@@ -35,6 +35,7 @@ ADMIN = frozenset({int(RoleId.ADMIN)})
         (CardAction.START, MANAGER, 10, CardStatus.CONFIRMED),
         (CardAction.COMPLETE, MANAGER, 10, CardStatus.IN_PROGRESS),
         (CardAction.CANCEL, MANAGER, 10, CardStatus.REJECTED),
+        (CardAction.CANCEL, MANAGER, 10, CardStatus.IN_PROGRESS),
         (CardAction.RESCHEDULE, MANAGER, 10, CardStatus.REJECTED),
         (CardAction.CONFIRM, L2, 22, CardStatus.ASSIGNED),
         (CardAction.REJECT, L2, 22, CardStatus.ASSIGNED),
@@ -84,6 +85,20 @@ def test_action_policy_allows_only_role_owner_and_state_combinations(
             "action_not_allowed_for_status",
         ),
         (CardAction.CANCEL, L2, 33, CardStatus.REJECTED, "assigned_l2_required"),
+        (
+            CardAction.CANCEL,
+            L2,
+            22,
+            CardStatus.IN_PROGRESS,
+            "action_not_allowed_for_status",
+        ),
+        (
+            CardAction.CANCEL,
+            L1,
+            11,
+            CardStatus.IN_PROGRESS,
+            "action_not_allowed_for_status",
+        ),
         (
             CardAction.RESCHEDULE,
             L1,

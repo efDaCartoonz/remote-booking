@@ -141,7 +141,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[CardStatus, frozenset[CardStatus]] = {
     CardStatus.REJECTED: frozenset(
         {CardStatus.CREATED, CardStatus.ASSIGNED, CardStatus.CANCELLED}
     ),
-    CardStatus.IN_PROGRESS: frozenset({CardStatus.COMPLETED}),
+    CardStatus.IN_PROGRESS: frozenset({CardStatus.COMPLETED, CardStatus.CANCELLED}),
     CardStatus.COMPLETED: frozenset(),
     CardStatus.CANCELLED: frozenset(),
 }

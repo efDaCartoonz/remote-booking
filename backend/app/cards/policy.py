@@ -110,9 +110,18 @@ def authorize_card_action(
         _require_manager_l1_or_assigned_l2(
             roles=roles, card=card, actor_user_id=actor_user_id
         )
-        _require_status(
-            status, CardStatus.ASSIGNED, CardStatus.CONFIRMED, CardStatus.REJECTED
-        )
+        if int(RoleId.MANAGER) in roles:
+            _require_status(
+                status,
+                CardStatus.ASSIGNED,
+                CardStatus.CONFIRMED,
+                CardStatus.REJECTED,
+                CardStatus.IN_PROGRESS,
+            )
+        else:
+            _require_status(
+                status, CardStatus.ASSIGNED, CardStatus.CONFIRMED, CardStatus.REJECTED
+            )
         if int(RoleId.MANAGER) not in roles and not (comment or "").strip():
             raise CardActionPolicyError(
                 status_code=422, detail="cancellation_reason_required"
