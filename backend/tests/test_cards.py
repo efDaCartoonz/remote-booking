@@ -1982,6 +1982,9 @@ def test_cards_api_rejects_non_manager_selected_l2_without_mutation() -> None:
     seed_l2_candidate(repository, 30)
     app = create_app()
     app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_card_service] = lambda: CardService(
+        repository, clock=lambda: RESCHEDULE_NOW
+    )
     app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
         id=20,
         username="l2",
