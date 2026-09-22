@@ -1825,6 +1825,108 @@ def test_cards_api_manager_can_cancel_in_progress_card() -> None:
     assert repository.audit[-1]["actor_user_id"] == 10
 
 
+@pytest.mark.parametrize(
+    "initial_status",
+    (CardStatus.CREATED, CardStatus.COMPLETED, CardStatus.CANCELLED),
+)
+def test_cards_api_cancel_rejects_forbidden_status_without_mutation(
+    initial_status: CardStatus,
+) -> None:
+    repository = FakeCardRepository()
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=10,
+        username="manager",
+        password_hash="unused",
+        full_name="Руководитель",
+        email=None,
+        roles=(RoleRecord(id=3, name="Руководитель"),),
+    )
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    card = replace(card, status_code=int(initial_status))
+    repository.cards[card.public_id] = card
+    before = (
+        repository.cards[card.public_id],
+        list(repository.events),
+        list(repository.audit),
+    )
+
+    response = TestClient(app, base_url="https://testserver").post(
+        f"/api/v1/cards/{card.public_id}/cancel", json={"comment": "client_requested"}
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "status_transition_not_allowed"
+    assert (
+        repository.cards[card.public_id],
+        repository.events,
+        repository.audit,
+    ) == before
+
+
+@pytest.mark.parametrize(
+    "initial_status",
+    (
+        CardStatus.CREATED,
+        CardStatus.IN_PROGRESS,
+        CardStatus.COMPLETED,
+        CardStatus.CANCELLED,
+    ),
+)
+def test_cards_api_reschedule_rejects_forbidden_status_without_mutation(
+    initial_status: CardStatus,
+) -> None:
+    repository = FakeCardRepository()
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=10,
+        username="manager",
+        password_hash="unused",
+        full_name="Руководитель",
+        email=None,
+        roles=(RoleRecord(id=3, name="Руководитель"),),
+    )
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    card = replace(card, status_code=int(initial_status))
+    repository.cards[card.public_id] = card
+    before = (
+        repository.cards[card.public_id],
+        list(repository.events),
+        list(repository.audit),
+    )
+
+    response = TestClient(app, base_url="https://testserver").post(
+        f"/api/v1/cards/{card.public_id}/l1/reschedule",
+        json={
+            "planned_start_at": (
+                DEFAULT_PLANNED_START_AT + timedelta(hours=2)
+            ).isoformat(),
+            "planned_duration_minutes": 60,
+            "reason": "client_requested",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "action_not_allowed_for_status"
+    assert (
+        repository.cards[card.public_id],
+        repository.events,
+        repository.audit,
+    ) == before
+
+
 def test_cards_api_reschedule_selected_l2_uses_manual_assignment_contract() -> None:
     repository = FakeCardRepository()
     seed_l2_candidate(repository, 20)
