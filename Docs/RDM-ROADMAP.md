@@ -273,8 +273,7 @@ notifications; schedule/absence/calendar/out-of-hours computation.
   счётчики срочных коллизий в dashboard summary руководителя (REQ-FR-154 не
   заявляется полностью закрытым сверх счётчиков dashboard). Финальный exact-SHA
   quality gate документационного коммита ещё не выполнялся; внешняя доставка
-  Omnidesk, stage и deployment не заявляются; BL-04 implementation accepted,
-  final exact-SHA gate and push pending.
+  Omnidesk, stage и deployment не заявляются.
 - **Definition of Done:** выполнен на candidate HEAD
   `34aba3362bbfd8bf8ef37a511e540e1f916f232b`: exact quality gate прошёл
   backend regression (297 passed, 26 skipped), frontend native suite
@@ -283,8 +282,7 @@ notifications; schedule/absence/calendar/out-of-hours computation.
   отдельная изолированная PostgreSQL BL-03 behavioral matrix прошла 7/7,
   cleanup временных ресурсов подтверждён. Финальный exact-SHA gate после
   обновления документации ещё не проводился; внешняя доставка Omnidesk не
-  заявляется (IE-01); REQ-FR-154 не заявляется сверх счётчиков dashboard;
-  BL-04 implementation accepted, final exact-SHA gate and push pending.
+  заявляется (IE-01); REQ-FR-154 не заявляется сверх счётчиков dashboard.
 
 ### BL-04 — Автопродление и background policy completion
 
@@ -302,13 +300,13 @@ returned to L1 under BL-03 rules.
 the old constraints exists.
 - **SRS:** REQ-FR-137..143 (владеет требованиями автопродления); Technical Design §9.
 - **Зависимости:** DB-02, BL-03, FI-01.
-- **Статус:** implementation accepted; awaiting final exact-SHA gate and push.
-- **Подтверждённое evidence:** isolated PostgreSQL matrix — 11 passed;
-  forward migration `20260923_0009` upgraded a clean temporary database.
-  Это не подтверждает прохождение глобального quality gate.
-- **Definition of Done:** implementation and isolated database evidence are
-  accepted; final exact-SHA gate and push remain outstanding, поэтому BL-04
-  ещё не DONE.
+- **Статус:** DONE; commit `40ab192` pushed to `main` (`9d5863e..40ab192`).
+- **Подтверждённое evidence:** exact-SHA `make verify` на `40ab192` прошёл:
+  backend 300 passed, 37 skipped; frontend 3 tests passed и build passed;
+  migration round-trip `0001 -> 0009 -> 0001 -> 0009`. Изолированная
+  PostgreSQL BL-04 matrix — 11 passed; временные Docker-ресурсы очищены.
+- **Definition of Done:** выполнен на exact SHA `40ab192`; commit доставлен
+  в `main`. Stage/deployment и внешняя доставка Omnidesk не заявляются.
 
 ## 5. Frontend
 
@@ -542,10 +540,11 @@ next functional milestone and never substitutes for its tests.
 ## Текущий фокус
 
 - **CURRENT WORKSTREAM:** Backend business logic.
-- **CURRENT MILESTONE:** BL-04 — Автопродление и background policy completion
-  (implementation accepted; final exact-SHA gate and push pending; not DONE).
+- **CURRENT MILESTONE:** Backend business logic — завершена.
 - **NEXT MILESTONE:** IE-01 — NOT STARTED.
-- **LAST COMPLETED MILESTONE:** BL-03 — Urgent, retroactive, execution and completion
+- **LAST COMPLETED MILESTONE:** BL-04 — Auto-extension and background policy completion
+  (DONE на exact SHA `40ab192`; exact-SHA gate прошёл, commit pushed to `main`);
+  BL-03 — Urgent, retroactive, execution and completion
   (DONE на implementation candidate `34aba3362bbfd8bf8ef37a511e540e1f916f232b`;
   финальный exact-SHA gate документации ещё не проводился, внешняя доставка Omnidesk
   не заявляется, REQ-FR-154 не заявляется сверх счётчиков dashboard).

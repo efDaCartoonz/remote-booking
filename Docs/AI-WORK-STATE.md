@@ -78,20 +78,14 @@ BL-03 completion: на implementation candidate `34aba3362bbfd8bf8ef37a511e540e1
 Границы SRS: BL-03 охватывает REQ-FR-099..125, 144..145 и частичную реализацию
 REQ-FR-154 (только dashboard summary counters; REQ-FR-154 не заявляется полностью
 закрытым; требования REQ-FR-137..143 и 156..160 не входят в скоуп BL-03).
-BL-04 владеет REQ-FR-137..143. Реализация принята; финальный exact-SHA gate и
-push ожидают выполнения, поэтому milestone ещё не DONE. Подтверждено: отдельная
-изолированная PostgreSQL matrix — 11 passed; forward migration
-`20260923_0009` успешно upgrade-нута на чистой временной БД. Глобальные gate
-counts не заявляются.
-Статус и доказательства: на candidate HEAD `34aba3362bbfd8bf8ef37a511e540e1f916f232b`
-пройден exact quality gate: backend 297 passed, 26 skipped; frontend native
-3 tests passed и build passed; Ruff/format passed; migration round-trip
-`0001 -> 20260922_0008 -> 0001 -> 0008` (`20260901_0001 → 20260922_0008 → 20260901_0001 → 20260922_0008`);
-отдельная изолированная PostgreSQL BL-03 behavioral matrix прошла 7/7 и
-cleanup временных ресурсов подтверждён. Финальный exact-SHA quality gate для
-документационного коммита ещё не выполнялся; внешняя доставка Omnidesk не
-заявляется (IE-01); stage и deployment не заявляются; BL-04 implementation
-accepted, final exact-SHA gate and push pending. **WS-04 / BL-03: DONE.**
+BL-04 владеет REQ-FR-137..143 и завершён на exact SHA `40ab192`. На нём прошёл
+`make verify`: backend 300 passed, 37 skipped; frontend 3 tests passed и build
+passed; migration round-trip `0001 -> 0009 -> 0001 -> 0009`. Изолированная
+PostgreSQL BL-04 matrix прошла 11 проверок; временные Docker-ресурсы очищены;
+коммит отправлен в `main` (`9d5863e..40ab192`). Финальный exact-SHA quality gate
+BL-03 документационного коммита ещё не выполнялся; внешняя доставка Omnidesk
+не заявляется (IE-01); stage и deployment не заявляются.
+**WS-04 / BL-03 / BL-04: DONE.**
 
 ## Границы и метод
 
@@ -304,8 +298,9 @@ accepted, final exact-SHA gate and push pending. **WS-04 / BL-03: DONE.**
 (DONE на implementation candidate `34aba3362bbfd8bf8ef37a511e540e1f916f232b`;
 финальный exact-SHA gate документации ещё не проводился, внешняя доставка
 Omnidesk не заявляется, REQ-FR-154 не расширяется сверх счётчиков dashboard).
-BL-04 владеет REQ-FR-137..143. Реализация принята; финальный exact-SHA gate и
-push ожидают выполнения, поэтому BL-04 ещё не DONE. Отдельная изолированная
-PostgreSQL matrix: 11 passed; forward migration `20260923_0009` успешно
-upgrade-нута на чистой временной БД. Глобальные gate counts не заявляются.
+BL-04 владеет REQ-FR-137..143 и DONE на exact SHA `40ab192`: `make verify`
+успешен (backend 300 passed, 37 skipped; frontend 3 tests passed и build
+passed; migration round-trip `0001 -> 0009 -> 0001 -> 0009`); изолированная
+PostgreSQL matrix — 11 passed; временные ресурсы очищены; push в `main`
+выполнен (`9d5863e..40ab192`).
 Следующий этап IE-01 — NOT STARTED.
