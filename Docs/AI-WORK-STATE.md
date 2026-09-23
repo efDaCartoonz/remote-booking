@@ -78,11 +78,14 @@ BL-03 implementation scope: в локальном workspace завершена �
 REQ-FR-154 (только dashboard summary counters; REQ-FR-154 не заявляется полностью
 закрытым; требования REQ-FR-137..143 и 156..160 не входят в скоуп BL-03).
 Автопродление сессий BL-04 имеет статус NOT STARTED и владеет REQ-FR-137..143.
-Статус и доказательства: локальное сфокусированное подтверждение —
-`75 passed, 7 skipped`, проверки Ruff check и format PASS. Любое заявление
-финального статуса DONE обусловлено pending exact-SHA quality gate; финальный
-exact-SHA, Docker runtime, PostgreSQL runtime, stage, deployment, commit и push
-не заявляются. **WS-04 / BL-03: IMPLEMENTATION COMPLETED (pending exact-SHA gate).**
+Статус и доказательства: создан целевой scoped коммит `09cb6cc`.
+Локальные сфокусированные проверки: `75 passed, 7 skipped`, проверки Ruff
+check и format PASS. Обязательный exact-SHA quality gate (`make verify`)
+недоступен из-за отсутствия Docker в локальном окружении (`UNAVAILABLE:
+required command not found: docker`). Статус DONE не достигнут; финальный
+exact-SHA Docker/PostgreSQL gate, stage, deployment и push не заявляются.
+Milestone BL-03 остаётся NOT DONE в ожидании isolated exact-SHA Docker/PostgreSQL
+gate. **WS-04 / BL-03: NOT DONE (scoped commit `09cb6cc` created, gate unavailable: Docker missing).**
 
 ## Границы и метод
 
@@ -291,7 +294,7 @@ exact-SHA, Docker runtime, PostgreSQL runtime, stage, deployment, commit и push
 
 ## Ровно один следующий milestone
 
-**BL-04 — Автопродление и background policy completion.** Функциональный скоуп
-BL-03 реализован в локальном workspace (финальный статус DONE обусловлен
-pending exact-SHA quality gate). Milestone BL-04 имеет статус NOT STARTED,
-владеет REQ-FR-137..143 и не начинается автоматически.
+**BL-04 — Автопродление и background policy completion.** Создан scoped commit
+`09cb6cc` для BL-03, но milestone BL-03 остаётся NOT DONE в ожидании недоступного
+exact-SHA Docker/PostgreSQL quality gate. Milestone BL-04 имеет статус
+NOT STARTED, владеет REQ-FR-137..143 и не начинается автоматически.
