@@ -23,6 +23,7 @@ from app.cards.repository import (
     PostgresCardRepository,
 )
 from app.cards.schemas import (
+    CardEndPendingResultRequest,
     CardAssignRequest,
     CardCompleteRequest,
     CardCreateRequest,
@@ -236,6 +237,26 @@ def start_card(
 ) -> CardResponse:
     return _handle_change(
         lambda: service.start_card(
+            card_id,
+            actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
+            comment=payload.comment,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+    )
+
+
+@router.post("/{card_id}/end-pending-result", response_model=CardResponse)
+def end_pending_result(
+    card_id: UUID,
+    payload: CardEndPendingResultRequest,
+    request: Request,
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    service: Annotated[CardService, Depends(get_card_service)],
+) -> CardResponse:
+    return _handle_change(
+        lambda: service.end_pending_result(
             card_id,
             actor_user_id=user.id,
             actor_role_ids=role_ids(user.roles),

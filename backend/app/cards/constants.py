@@ -11,6 +11,7 @@ class CardStatus(IntEnum):
     REJECTED = 4
     COMPLETED = 5
     CANCELLED = 6
+    COMPLETED_PENDING_RESULT = 7
 
 
 class CardStatusSlug(StrEnum):
@@ -21,6 +22,7 @@ class CardStatusSlug(StrEnum):
     REJECTED = "rejected"
     COMPLETED = "completed"
     CANCELLED = "cancelled"
+    COMPLETED_PENDING_RESULT = "completed_pending_result"
 
 
 class AssignmentMethod(IntEnum):
@@ -112,6 +114,7 @@ CARD_STATUS_LABELS: dict[CardStatus, str] = {
     CardStatus.REJECTED: "Отклонено",
     CardStatus.COMPLETED: "Завершено",
     CardStatus.CANCELLED: "Отменено",
+    CardStatus.COMPLETED_PENDING_RESULT: "Окончено",
 }
 
 CARD_STATUS_SLUGS: dict[CardStatus, CardStatusSlug] = {
@@ -122,6 +125,7 @@ CARD_STATUS_SLUGS: dict[CardStatus, CardStatusSlug] = {
     CardStatus.REJECTED: CardStatusSlug.REJECTED,
     CardStatus.COMPLETED: CardStatusSlug.COMPLETED,
     CardStatus.CANCELLED: CardStatusSlug.CANCELLED,
+    CardStatus.COMPLETED_PENDING_RESULT: CardStatusSlug.COMPLETED_PENDING_RESULT,
 }
 
 TERMINAL_STATUSES = frozenset({CardStatus.COMPLETED, CardStatus.CANCELLED})
@@ -143,8 +147,15 @@ ALLOWED_STATUS_TRANSITIONS: dict[CardStatus, frozenset[CardStatus]] = {
     CardStatus.REJECTED: frozenset(
         {CardStatus.CREATED, CardStatus.ASSIGNED, CardStatus.CANCELLED}
     ),
-    CardStatus.IN_PROGRESS: frozenset({CardStatus.COMPLETED, CardStatus.CANCELLED}),
+    CardStatus.IN_PROGRESS: frozenset(
+        {
+            CardStatus.COMPLETED,
+            CardStatus.COMPLETED_PENDING_RESULT,
+            CardStatus.CANCELLED,
+        }
+    ),
     CardStatus.COMPLETED: frozenset(),
+    CardStatus.COMPLETED_PENDING_RESULT: frozenset({CardStatus.COMPLETED}),
     CardStatus.CANCELLED: frozenset(),
 }
 

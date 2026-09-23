@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import psycopg
+
 from datetime import UTC, datetime, timedelta
 from collections.abc import Callable, Collection
 from dataclasses import dataclass
@@ -1025,6 +1027,30 @@ class CardService:
             action=CardAction.CANCEL,
         )
 
+    def end_pending_result(
+        self,
+        public_id: UUID,
+        *,
+        actor_user_id: int | None,
+        actor_role_ids: Collection[int] | None = None,
+        actor_type: ActorType = ActorType.INTERNAL_USER,
+        comment: str | None,
+        ip_address: str | None,
+        user_agent: str | None,
+    ) -> CardRecord:
+        return self._change_status(
+            public_id,
+            target_status=CardStatus.COMPLETED_PENDING_RESULT,
+            actor_user_id=actor_user_id,
+            actor_role_ids=actor_role_ids,
+            actor_type=actor_type,
+            comment=comment,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            action=CardAction.END_PENDING_RESULT,
+            actual_end_at=self.clock(),
+        )
+
     def _change_status(
         self,
         public_id: UUID,
@@ -1032,6 +1058,7 @@ class CardService:
         target_status: CardStatus,
         actor_user_id: int,
         actor_role_ids: Collection[int] | None,
+        actor_type: ActorType = ActorType.INTERNAL_USER,
         comment: str | None,
         ip_address: str | None,
         user_agent: str | None,
@@ -1091,22 +1118,30 @@ class CardService:
                 )
 
         old_snapshot = _card_snapshot(card)
-        updated = self.repository.update_card_status(
-            public_id,
-            StatusUpdateData(
-                status=target_status,
-                actor_user_id=actor_user_id,
-                l2_engineer_id=l2_engineer_id,
-                update_l2_engineer_id=(
-                    l2_engineer_id is not None or target_status == CardStatus.REJECTED
+        try:
+            updated = self.repository.update_card_status(
+                public_id,
+                StatusUpdateData(
+                    status=target_status,
+                    actor_user_id=actor_user_id,
+                    l2_engineer_id=l2_engineer_id,
+                    update_l2_engineer_id=(
+                        l2_engineer_id is not None
+                        or target_status == CardStatus.REJECTED
+                    ),
+                    actual_start_at=actual_start_at,
+                    actual_end_at=actual_end_at,
+                    result_code=result_code,
+                    engineer_report=engineer_report,
+                    actual_duration_minutes=actual_duration_minutes,
                 ),
-                actual_start_at=actual_start_at,
-                actual_end_at=actual_end_at,
-                result_code=result_code,
-                engineer_report=engineer_report,
-                actual_duration_minutes=actual_duration_minutes,
-            ),
-        )
+            )
+        except psycopg.errors.UniqueViolation as e:
+            if "ix_one_in_progress_per_l2" in str(e):
+                raise InvalidCardTransitionError(
+                    "engineer_already_has_in_progress_card"
+                )
+            raise
         if updated is None:
             raise CardNotFoundError
 
@@ -1115,14 +1150,14 @@ class CardService:
             card_id=updated.id,
             event_type=CardEventType.STATUS_CHANGED,
             actor_user_id=actor_user_id,
-            actor_type=ActorType.INTERNAL_USER,
+            actor_type=actor_type,
             old_values=old_snapshot,
             new_values=new_snapshot,
             comment=comment,
         )
         self.repository.add_audit_log(
             actor_user_id=actor_user_id,
-            actor_type=ActorType.INTERNAL_USER,
+            actor_type=actor_type,
             action=AuditAction.UPDATE,
             entity_id=updated.id,
             old_values=old_snapshot,

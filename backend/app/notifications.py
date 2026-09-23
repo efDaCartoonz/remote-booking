@@ -25,6 +25,7 @@ NOTIFICATION_EVENT_CODES = {
     "l2_reminder": 4,
     "l1_reminder": 5,
     "urgent_collision": 6,
+    "card_ended_automatically": 7,
 }
 NOTIFICATION_CHANNEL_CODES = {"telegram": 0, "bitrix24": 1}
 SAFE_NOTIFICATION_PAYLOAD_KEYS = frozenset({"card_id", "assignment"})

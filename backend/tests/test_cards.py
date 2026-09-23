@@ -2821,3 +2821,67 @@ def test_omnidesk_note_intent_idempotency() -> None:
     )
     assert intent_id_2 == 0
     assert len(repository.omnidesk_note_intents) == 1
+
+
+def test_end_pending_result_api_success() -> None:
+    repository = FakeCardRepository()
+
+    seed_l2_candidate(repository, 101)
+    repository.users = [
+        type(
+            "User", (), {"id": 101, "roles": [type("Role", (), {"id": RoleId.L2})()]}
+        )()
+    ]
+
+    service = CardService(repository=repository)
+
+    card = service.create_card(
+        CardCreateRequest(
+            omnidesk_ticket_number="101-123456",
+            planned_start_at=datetime.now(UTC),
+            planned_duration_minutes=30,
+            l2_engineer_id=101,
+        ),
+        actor_user_id=101,
+        ip_address="127.0.0.1",
+        user_agent="test",
+        manual_assignment=True,
+        allow_out_of_hours=True,
+    )
+    service.confirm_card(
+        card.public_id,
+        actor_user_id=101,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+    service.start_card(
+        card.public_id,
+        actor_user_id=101,
+        comment=None,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    import app.api.cards as cards_api
+    from fastapi.testclient import TestClient
+    from fastapi import FastAPI
+
+    app_fixture = FastAPI()
+    app_fixture.include_router(cards_api.router)
+
+    from app.auth.dependencies import get_current_user
+
+    app_fixture.dependency_overrides[get_current_user] = lambda: repository.users[0]
+    app_fixture.dependency_overrides[cards_api.get_card_service] = lambda: service
+
+    test_client = TestClient(app_fixture)
+
+    response = test_client.post(
+        f"/api/v1/cards/{card.public_id}/end-pending-result",
+        headers={"Authorization": "Bearer test"},
+        json={"comment": "ending without result"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "completed_pending_result"

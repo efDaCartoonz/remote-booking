@@ -22,7 +22,7 @@ manager API/frontend и не является подтверждением stage
 isolated PostgreSQL BL-03 behavioral matrix 7/7 passed с подтверждённой очисткой).
 Финальный exact-SHA gate документационного коммита ещё не выполнялся; внешняя доставка
 Omnidesk не заявляется (IE-01); REQ-FR-154 не расширяется сверх счётчиков dashboard;
-BL-03 не подтверждён на stage и не заявляется как stage-proven; BL-04 остаётся не начат (NOT STARTED).
+BL-03 не подтверждён на stage и не заявляется как stage-proven. BL-04 implementation accepted; final exact-SHA gate and push pending, поэтому он ещё не DONE. Изолированная PostgreSQL matrix BL-04 прошла 11 проверок; forward migration `20260923_0009` успешно обновила чистую временную БД. Глобальные gate counts не заявляются. Следующий этап IE-01 — NOT STARTED.
 
 Минимальный внутренний frontend подтверждён на доверенном LAN stage: ссылка из
 контролируемого Telegram-уведомления ведёт к login, возвращает на карточку после
@@ -121,8 +121,8 @@ BL-03 не подтверждён на stage и не заявляется как
    - идемпотентное создание intent во внутренний outbox заметок Omnidesk (`omnidesk_internal_note_outbox`) при завершении карточки без раскрытия `case_id` (заметка Omnidesk является только идемпотентным внутренним outbox intent, внешняя доставка относится к IE-01);
    - фиксация событий (`CardEventType.URGENT_COLLISION`), записей аудита и уведомлений;
    - метрики срочных коллизий в панели руководителя: подсчёт суммарного количества событий `urgent_collision` по карточкам выборки (REQ-FR-154 не заявляется полностью закрытым: реализованы только суммарные счётчики в dashboard summary);
-   - границы SRS: BL-03 закрывает REQ-FR-099..125, 144..145 и частичный REQ-FR-154 (только dashboard summary counters; REQ-FR-154 не заявляется полностью закрытым; требования REQ-FR-137..143 и 156..160 не заявляются в BL-03; автопродление сессий BL-04 имеет статус NOT STARTED и владеет REQ-FR-137..143);
-   - статус подтверждения: на candidate HEAD `34aba3362bbfd8bf8ef37a511e540e1f916f232b` пройден exact quality gate: backend regression (297 passed, 26 skipped), frontend native suite (3 tests passed) и build passed, Ruff check/format PASS, migration round-trip `0001 -> 20260922_0008 -> 0001 -> 0008` (`20260901_0001 → 20260922_0008 → 20260901_0001 → 20260922_0008`), isolated PostgreSQL BL-03 behavioral matrix 7/7 passed с подтверждённым cleanup временных ресурсов. Финальный exact-SHA quality gate после обновления документации ещё не проводился; внешняя доставка Omnidesk не заявляется (IE-01); stage, deployment и push не заявляются; BL-04 остаётся не начат (NOT STARTED).
+   - границы SRS: BL-03 закрывает REQ-FR-099..125, 144..145 и частичный REQ-FR-154 (только dashboard summary counters; REQ-FR-154 не заявляется полностью закрытым; требования REQ-FR-137..143 и 156..160 не заявляются в BL-03; BL-04 владеет REQ-FR-137..143);
+   - статус подтверждения: на candidate HEAD `34aba3362bbfd8bf8ef37a511e540e1f916f232b` пройден exact quality gate: backend regression (297 passed, 26 skipped), frontend native suite (3 tests passed) и build passed, Ruff check/format PASS, migration round-trip `0001 -> 20260922_0008 -> 0001 -> 0008` (`20260901_0001 → 20260922_0008 → 20260901_0001 → 20260922_0008`), isolated PostgreSQL BL-03 behavioral matrix 7/7 passed с подтверждённым cleanup временных ресурсов. Финальный exact-SHA quality gate после обновления документации ещё не проводился; внешняя доставка Omnidesk не заявляется (IE-01); stage и deployment не заявляются. BL-04 implementation accepted, но финальный exact-SHA gate и push pending; evidence BL-04 ограничено отдельной матрицей PostgreSQL 11 passed и forward upgrade миграции `20260923_0009` в чистой временной БД. Глобальные gate counts не заявляются.
 
 ## Состав Репозитория
 

@@ -87,6 +87,9 @@ def client_for(
 MANAGER = UserAuthRecord(
     1, "manager", "hash", "Manager", None, (RoleRecord(3, "Руководитель"),)
 )
+ADMIN = UserAuthRecord(
+    2, "admin", "hash", "Admin", None, (RoleRecord(4, "Администратор"),)
+)
 L1 = UserAuthRecord(1, "l1", "hash", "L1", None, (RoleRecord(1, "L1"),))
 
 
@@ -110,6 +113,41 @@ def test_manager_requires_session_and_role(monkeypatch) -> None:
 
     monkeypatch.setattr(manager_api, "db_connection", fail_connection)
     assert TestClient(app).get("/api/v1/manager/cards").status_code == 403
+
+
+def test_admin_can_operationally_change_session_extension_interval(monkeypatch) -> None:
+    client, _ = client_for(ADMIN)
+    writes: list[tuple[int, int]] = []
+
+    class SettingsRepository:
+        def __init__(self, _connection) -> None:
+            pass
+
+        def get_extension_interval(self) -> int:
+            return writes[-1][0] if writes else 900
+
+        def set_extension_interval(
+            self, *, interval_seconds: int, actor_user_id: int
+        ) -> None:
+            writes.append((interval_seconds, actor_user_id))
+
+    @contextmanager
+    def fake_connection():
+        yield object()
+
+    monkeypatch.setattr(manager_api, "db_connection", fake_connection)
+    monkeypatch.setattr(manager_api, "AdministrativeRepository", SettingsRepository)
+
+    path = "/api/v1/manager/settings/session-extension-interval"
+    assert client.get(path).json() == {"interval_seconds": 900}
+    response = client.put(path, json={"interval_seconds": 1_200})
+    assert response.status_code == 200
+    assert response.json() == {"interval_seconds": 1_200}
+    assert writes == [(1_200, ADMIN.id)]
+    assert client.put(path, json={"interval_seconds": 901}).status_code == 422
+
+    manager_client, _ = client_for(MANAGER)
+    assert manager_client.put(path, json={"interval_seconds": 1_200}).status_code == 403
 
 
 def test_manager_validates_status_dates_and_limit() -> None:

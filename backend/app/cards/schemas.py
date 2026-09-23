@@ -111,6 +111,10 @@ class CardRejectRequest(BaseModel):
     rejection_reason: str = Field(min_length=1)
 
 
+class CardEndPendingResultRequest(BaseModel):
+    comment: str | None = None
+
+
 class CardCompleteRequest(BaseModel):
     result_code: int = Field(ge=0)
     engineer_report: str = Field(min_length=1)

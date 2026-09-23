@@ -9,7 +9,7 @@ readonly GATE_COMPOSE_FILES="-f docker-compose.yml -f docker-compose.quality-gat
 
 usage() {
     cat <<'EOF'
-Usage: ./scripts/quality-gate.sh {all|backend|frontend|compose|migrations}
+Usage: ./scripts/quality-gate.sh {all|backend|frontend|compose|migrations|bl04}
 
 Runs only checks that use source-controlled inputs in isolated Docker Compose
 containers. It removes its containers and volumes when it finishes. It never
@@ -77,8 +77,22 @@ run_migrations() {
              && PYTHONPATH=/app python scripts/migration_contract_check.py check-baseline \
              && alembic upgrade head \
              && PYTHONPATH=/app python scripts/migration_contract_check.py check-head \
-             && alembic current | grep -qx "20260922_0008 (head)" \
-             && alembic heads | grep -qx "20260922_0008 (head)"'
+             && alembic current | grep -qx "20260923_0009 (head)" \
+             && alembic heads | grep -qx "20260923_0009 (head)"'
+    )
+}
+
+run_bl04_matrix() {
+    require_command docker
+    (
+        cd "$ROOT_DIR"
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
+            --env-file .env.example up --detach postgres
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
+            --env-file .env.example run --rm backend alembic upgrade head
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
+            --env-file .env.example run --rm -e RDM_PG_INTEGRATION=1 quality-backend sh -ec \
+            'pytest -v tests/test_bl04_postgres.py'
     )
 }
 
@@ -92,11 +106,13 @@ case "$MODE" in
         run_frontend
         run_compose_config
         run_migrations
+        run_bl04_matrix
         ;;
     backend) run_backend ;;
     frontend) run_frontend ;;
     compose) run_compose_config ;;
     migrations) run_migrations ;;
+    bl04) run_bl04_matrix ;;
     -h|--help) usage ;;
     *)
         usage >&2

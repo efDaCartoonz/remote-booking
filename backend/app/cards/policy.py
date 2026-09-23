@@ -15,6 +15,7 @@ class CardAction(StrEnum):
     REJECT = "reject"
     START = "start"
     COMPLETE = "complete"
+    END_PENDING_RESULT = "end_pending_result"
     CANCEL = "cancel"
     RESCHEDULE = "reschedule"
     MARK_CLIENT_INFORMED = "mark_client_informed"
@@ -100,6 +101,19 @@ def authorize_card_action(
         return
 
     if action == CardAction.COMPLETE:
+        if status == CardStatus.COMPLETED_PENDING_RESULT:
+            if int(RoleId.L2) not in roles or card.l2_engineer_id != actor_user_id:
+                _forbidden("only_assigned_l2_may_submit_missing_result")
+        else:
+            _require_manager_or_assigned_l2(
+                roles=roles, card=card, actor_user_id=actor_user_id
+            )
+        _require_status(
+            status, CardStatus.IN_PROGRESS, CardStatus.COMPLETED_PENDING_RESULT
+        )
+        return
+
+    if action == CardAction.END_PENDING_RESULT:
         _require_manager_or_assigned_l2(
             roles=roles, card=card, actor_user_id=actor_user_id
         )

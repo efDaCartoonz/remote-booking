@@ -273,8 +273,8 @@ notifications; schedule/absence/calendar/out-of-hours computation.
   счётчики срочных коллизий в dashboard summary руководителя (REQ-FR-154 не
   заявляется полностью закрытым сверх счётчиков dashboard). Финальный exact-SHA
   quality gate документационного коммита ещё не выполнялся; внешняя доставка
-  Omnidesk, stage, deployment и push не заявляются; BL-04 остаётся не начат
-  (NOT STARTED).
+  Omnidesk, stage и deployment не заявляются; BL-04 implementation accepted,
+  final exact-SHA gate and push pending.
 - **Definition of Done:** выполнен на candidate HEAD
   `34aba3362bbfd8bf8ef37a511e540e1f916f232b`: exact quality gate прошёл
   backend regression (297 passed, 26 skipped), frontend native suite
@@ -284,18 +284,31 @@ notifications; schedule/absence/calendar/out-of-hours computation.
   cleanup временных ресурсов подтверждён. Финальный exact-SHA gate после
   обновления документации ещё не проводился; внешняя доставка Omnidesk не
   заявляется (IE-01); REQ-FR-154 не заявляется сверх счётчиков dashboard;
-  BL-04 остаётся не начат (NOT STARTED).
+  BL-04 implementation accepted, final exact-SHA gate and push pending.
 
 ### BL-04 — Автопродление и background policy completion
 
 - **Результат в Git:** scheduled extension processor with configurable interval,
-collision delegation, event/audit and idempotency/lock tests.
+automatic end after 12 hours, result-report completion, collision delegation,
+event/audit and idempotency/lock behavior. Automatic end sets
+`COMPLETED_PENDING_RESULT` («Окончено»), records the exact comment
+`завершено автоматически`, and notifies the assigned L2 and manager. A valid
+report permits direct `IN_PROGRESS` → «Завершено»; only the assigned L2 may
+submit a missing report. Each L2 may have only one `IN_PROGRESS` card.
+- **Правила коллизий:** extension displaces only `ASSIGNED`/`CONFIRMED` cards
+under BL-03 rules; otherwise extension is rejected and the affected card is
+returned to L1 under BL-03 rules.
+- **Предпосылка данных:** clean-model premise; no deployed legacy database with
+the old constraints exists.
 - **SRS:** REQ-FR-137..143 (владеет требованиями автопродления); Technical Design §9.
 - **Зависимости:** DB-02, BL-03, FI-01.
-- **Статус:** NOT STARTED (автопродление сессий не начато и полностью относится
-  к данному milestone).
-- **Definition of Done:** worker safely processes due records once, persists
-each extension, defers collision to urgent policy and passes time-boundary tests.
+- **Статус:** implementation accepted; awaiting final exact-SHA gate and push.
+- **Подтверждённое evidence:** isolated PostgreSQL matrix — 11 passed;
+  forward migration `20260923_0009` upgraded a clean temporary database.
+  Это не подтверждает прохождение глобального quality gate.
+- **Definition of Done:** implementation and isolated database evidence are
+  accepted; final exact-SHA gate and push remain outstanding, поэтому BL-04
+  ещё не DONE.
 
 ## 5. Frontend
 
@@ -530,7 +543,8 @@ next functional milestone and never substitutes for its tests.
 
 - **CURRENT WORKSTREAM:** Backend business logic.
 - **CURRENT MILESTONE:** BL-04 — Автопродление и background policy completion
-  (остаётся NOT STARTED, владеет REQ-FR-137..143; не начинать автоматически).
+  (implementation accepted; final exact-SHA gate and push pending; not DONE).
+- **NEXT MILESTONE:** IE-01 — NOT STARTED.
 - **LAST COMPLETED MILESTONE:** BL-03 — Urgent, retroactive, execution and completion
   (DONE на implementation candidate `34aba3362bbfd8bf8ef37a511e540e1f916f232b`;
   финальный exact-SHA gate документации ещё не проводился, внешняя доставка Omnidesk

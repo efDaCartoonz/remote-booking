@@ -7,8 +7,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi import status as http_status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
+from app.admin.repository import AdministrativeRepository
 from app.auth.dependencies import get_current_user, require_roles
 from app.auth.store import UserAuthRecord
 from app.cards.constants import CardStatus, CardStatusSlug, RoleId, status_slug
@@ -119,6 +120,43 @@ def get_manager_filters(
 
 
 require_manager_role = require_roles(int(RoleId.MANAGER))
+require_admin_role = require_roles(int(RoleId.ADMIN))
+
+
+class SessionExtensionIntervalUpdate(BaseModel):
+    interval_seconds: int = Field(ge=60, le=86_400, multiple_of=60)
+
+
+class SessionExtensionIntervalResponse(BaseModel):
+    interval_seconds: int
+
+
+@router.get(
+    "/settings/session-extension-interval",
+    response_model=SessionExtensionIntervalResponse,
+)
+def get_session_extension_interval(
+    _user: Annotated[UserAuthRecord, Depends(require_admin_role)],
+) -> SessionExtensionIntervalResponse:
+    with db_connection() as connection:
+        seconds = AdministrativeRepository(connection).get_extension_interval()
+    return SessionExtensionIntervalResponse(interval_seconds=seconds)
+
+
+@router.put(
+    "/settings/session-extension-interval",
+    response_model=SessionExtensionIntervalResponse,
+)
+def update_session_extension_interval(
+    payload: SessionExtensionIntervalUpdate,
+    user: Annotated[UserAuthRecord, Depends(require_admin_role)],
+) -> SessionExtensionIntervalResponse:
+    with db_connection() as connection:
+        AdministrativeRepository(connection).set_extension_interval(
+            interval_seconds=payload.interval_seconds,
+            actor_user_id=user.id,
+        )
+    return SessionExtensionIntervalResponse(interval_seconds=payload.interval_seconds)
 
 
 def _manager_ticket(client: OmnideskTicketClient, case_id: str, case_number: str):

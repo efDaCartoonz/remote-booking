@@ -88,6 +88,8 @@ def test_admin_storage_is_audited_and_calendar_is_a_policy_source(
             actor_user_id=92000,
             comment="manager decision",
         )
+        with pytest.raises(ValueError, match="whole_minutes"):
+            repository.set_extension_interval(interval_seconds=901, actor_user_id=92000)
         repository.set_extension_interval(interval_seconds=900, actor_user_id=92000)
         assert repository.is_out_of_hours(
             user_id=92000,
@@ -178,6 +180,11 @@ def test_extension_and_setting_constraints_reject_invalid_values(
         with pytest.raises(psycopg.errors.CheckViolation):
             connection.execute(
                 "UPDATE system_settings SET value='30'::jsonb WHERE key='session_extension_interval_seconds'"
+            )
+        connection.rollback()
+        with pytest.raises(psycopg.errors.CheckViolation):
+            connection.execute(
+                "UPDATE system_settings SET value='901'::jsonb WHERE key='session_extension_interval_seconds'"
             )
         connection.rollback()
         with pytest.raises(psycopg.errors.CheckViolation):

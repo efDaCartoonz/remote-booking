@@ -161,9 +161,27 @@ class AdministrativeRepository:
             new_values={"pool_code": pool_code, "enabled": enabled, "comment": comment},
         )
 
+    def get_extension_interval(self) -> int:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT value FROM system_settings WHERE key=%s",
+                ("session_extension_interval_seconds",),
+            )
+            row = cursor.fetchone()
+            if row and row["value"] is not None:
+                return int(row["value"])
+            return 900
+
     def set_extension_interval(
         self, *, interval_seconds: int, actor_user_id: int
     ) -> None:
+        if (
+            isinstance(interval_seconds, bool)
+            or not isinstance(interval_seconds, int)
+            or not 60 <= interval_seconds <= 86_400
+            or interval_seconds % 60 != 0
+        ):
+            raise ValueError("session_extension_interval_must_be_whole_minutes")
         with self.connection.cursor() as cursor:
             cursor.execute(
                 "SELECT value FROM system_settings WHERE key=%s FOR UPDATE",
@@ -314,6 +332,13 @@ class AdministrativeRepository:
         interval_seconds: int,
         collision_card_id: int | None,
     ) -> int:
+        if (
+            isinstance(interval_seconds, bool)
+            or not isinstance(interval_seconds, int)
+            or not 60 <= interval_seconds <= 86_400
+            or interval_seconds % 60 != 0
+        ):
+            raise ValueError("session_extension_interval_must_be_whole_minutes")
         with self.connection.cursor() as cursor:
             cursor.execute(
                 "SELECT status_code FROM connection_cards WHERE id=%s FOR UPDATE",
@@ -363,6 +388,7 @@ class AdministrativeRepository:
             cursor.execute(
                 """
                 UPDATE connection_cards SET extension_count=extension_count + 1,
+                    planned_duration_minutes=planned_duration_minutes + %s,
                     extension_collision_at=CASE WHEN %s THEN now() ELSE extension_collision_at END,
                     extension_collision_flag=extension_collision_flag OR %s,
                     extension_collision_details=CASE WHEN %s THEN jsonb_build_object('extension_id', %s::bigint, 'collision_card_id', %s::bigint) ELSE extension_collision_details END,
@@ -370,6 +396,7 @@ class AdministrativeRepository:
                 WHERE id=%s
                 """,
                 (
+                    interval_seconds // 60,
                     collision_card_id is not None,
                     collision_card_id is not None,
                     collision_card_id is not None,

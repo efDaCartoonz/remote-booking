@@ -65,6 +65,9 @@ class CardRecord:
     created_by_id: int | None
     created_at: datetime
     updated_at: datetime
+    extension_count: int = 0
+    extension_collision_at: datetime | None = None
+    extension_collision_flag: bool = False
     actual_duration_minutes: int | None = None
     client_informed: bool = False
     l1_owner_name: str | None = None
@@ -130,7 +133,7 @@ class CreateCardData:
 @dataclass(frozen=True)
 class StatusUpdateData:
     status: CardStatus
-    actor_user_id: int
+    actor_user_id: int | None
     l2_engineer_id: int | None = None
     update_l2_engineer_id: bool = False
     actual_start_at: datetime | None = None
@@ -190,6 +193,14 @@ class CardRepository(Protocol):
     ) -> int: ...
 
     def list_conflicting_active_cards_for_update(
+        self,
+        *,
+        l2_engineer_id: int,
+        planned_start_at: datetime,
+        planned_end_at: datetime,
+    ) -> list[CardRecord]: ...
+
+    def list_displaceable_active_cards_for_update(
         self,
         *,
         l2_engineer_id: int,
@@ -1229,6 +1240,34 @@ class PostgresCardRepository:
             rows = cursor.fetchall()
         return [_card_from_row(row) for row in rows]
 
+    def list_displaceable_active_cards_for_update(
+        self,
+        *,
+        l2_engineer_id: int,
+        planned_start_at: datetime,
+        planned_end_at: datetime,
+    ) -> list[CardRecord]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT *
+                FROM connection_cards
+                WHERE l2_engineer_id = %(l2_engineer_id)s
+                  AND status_code IN (1, 2)
+                  AND planned_start_at < %(planned_end_at)s
+                  AND planned_start_at + planned_duration_minutes * interval '1 minute' > %(planned_start_at)s
+                ORDER BY planned_start_at ASC, id ASC
+                FOR UPDATE
+                """,
+                {
+                    "l2_engineer_id": l2_engineer_id,
+                    "planned_start_at": planned_start_at,
+                    "planned_end_at": planned_end_at,
+                },
+            )
+            rows = cursor.fetchall()
+        return [_card_from_row(row) for row in rows]
+
     def get_card_by_public_id(self, public_id: UUID) -> CardRecord | None:
         return self._get_card(public_id, lock=False)
 
@@ -1633,6 +1672,9 @@ def _card_from_row(row: dict[str, Any]) -> CardRecord:
         created_by_id=row["created_by_id"],
         created_at=row["created_at"],
         updated_at=row["updated_at"],
+        extension_count=row.get("extension_count", 0),
+        extension_collision_at=row.get("extension_collision_at"),
+        extension_collision_flag=row.get("extension_collision_flag", False),
         actual_duration_minutes=row.get("actual_duration_minutes"),
         client_informed=row.get("client_informed", False),
         l1_owner_name=row.get("l1_owner_name"),
