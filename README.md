@@ -12,6 +12,13 @@ stage контролируемыми Telegram- и Bitrix24-проверками;
 напоминания подтверждены только для внутреннего изолированного контура.
 Production scanner и delivery остаются выключенными.
 
+Локальная ветка содержит candidate внутреннего Omnidesk case index/backfill
+(`20260914_0006`, `2815d2e`). Candidate не применён на stage, не меняет
+manager API/frontend и не является подтверждением stage или production.
+Возможности BL-03 (срочные коллизии, ретроспективная регистрация, завершение)
+также являются локальным кандидатом (pending exact-SHA quality gate, commit и push),
+не подтверждены на stage и не заявляются как stage-proven или fully implemented.
+
 Минимальный внутренний frontend подтверждён на доверенном LAN stage: ссылка из
 контролируемого Telegram-уведомления ведёт к login, возвращает на карточку после
 входа и поддерживает logout и UI-ветку `404`. Для HTTP stage допустим
@@ -99,12 +106,26 @@ Production scanner и delivery остаются выключенными.
   - использует `card_events.id` и серверный `dedupe_key`, поэтому повтор одного
     исходного события не создаёт новые intents или аудит;
   - не меняет статус карточки и не делает прямых внешних HTTP-вызовов.
+- Локальный кандидат: срочные коллизии, ретроспективная регистрация и завершение (BL-03, local candidate pending exact-SHA quality gate / commit / push; не является stage-proven функциональностью и не заявляется как fully implemented):
+  - вытеснение планов в статусах `ASSIGNED` и `CONFIRMED` при срочных коллизиях с автоматическим переназначением либо переводом в `Отклонено` (REJECTED→L1 follow-up) при исчерпании кандидатов;
+  - сброс флага и времени просрочки (`overdue_flag`, `overdue_at`) у вытесненной карточки;
+  - безопасный отказ при коллизии с карточкой в статусе `IN_PROGRESS` без каких-либо мутаций в БД (карточки, события и аудит остаются неизменными);
+  - ретроспективная саморегистрация L2 (retroactive self-registration): автоматический расчёт фактической длительности выполняется при создании уже завершённой ретроспективной карточки, а не при последующем завершении карточки in-progress (обычное завершение может принимать опциональную длительность); строгая валидация активного кода результата, отложенное создание outbox intent (для `in_progress` intent не формируется до завершения);
+  - валидация активных кодов результата по каталогу `connection_results` (запрет неизвестных/неактивных кодов);
+  - старт карточки (`start_card`) фиксирует только время фактического начала (`actual_start_at`); код результата (`result_code`) и фактическая длительность (`actual_duration_minutes`) при старте не фиксируются (фиксируются при завершении);
+  - идемпотентное создание intent во внутренний outbox заметок Omnidesk (`omnidesk_internal_note_outbox`) при завершении карточки без раскрытия `case_id` (заметка Omnidesk является только идемпотентным внутренним outbox intent, внешняя доставка относится к IE-01);
+  - фиксация событий (`CardEventType.URGENT_COLLISION`), записей аудита и уведомлений;
+  - метрики срочных коллизий в панели руководителя: подсчёт суммарного количества событий `urgent_collision` по карточкам выборки (REQ-FR-154 не заявляется полностью закрытым: реализованы только суммарные счётчики в dashboard summary);
+  - границы SRS: BL-03 закрывает REQ-FR-099..125, 144..145 и частичный REQ-FR-154 (только dashboard summary counters; REQ-FR-154 не заявляется полностью закрытым; требования REQ-FR-137..143 и 156..160 не заявляются в BL-03; автопродление сессий BL-04 имеет статус NOT STARTED и владеет REQ-FR-137..143);
+  - статус подтверждения: подтверждено локальными сфокусированными проверками (75 passed, 7 skipped; Ruff check и format PASS); статус представляет собой local candidate pending exact-SHA quality gate / commit / push, без заявлений о подтверждении на stage, Docker runtime, PostgreSQL runtime, deployment, commit или push.
 
 ## Состав Репозитория
 
 - `backend/` — FastAPI-приложение, Alembic-миграции, Celery entrypoints и тесты.
 - `frontend/` — каркас Vue 3 + Vite.
 - `Docs/` — бизнес-концепция, SRS, технический проект и схема БД.
+- `Docs/RDM-Coordinator-Model-Economy-Workflow.md` — инструкция координатору
+  по экономии моделей, эскалации и контролю лимитов.
 - `decisions/` — зафиксированные проектные решения.
 - `scripts/` — эксплуатационные вспомогательные скрипты.
 - `docker-compose.yml` — локальный/dev/stage контур сервисов.
@@ -193,6 +214,9 @@ upgrade до head gate записывает базовые `users` и `connectio
 тикет и отсутствие пересечения активных назначений L2. Проверка использует
 только `.env.example` и удаляет временные containers/volumes после завершения.
 
+Локальный candidate head: `20260914_0006`; он требует отдельного
+migration/PostgreSQL gate до публикации.
+
 ## API
 
 Health:
@@ -209,6 +233,10 @@ Health:
 Внутренние карточки:
 
 - `POST /api/v1/cards`
+- `POST /api/v1/cards/l1`
+- `POST /api/v1/cards/l2`
+- `POST /api/v1/cards/l2/urgent`
+- `POST /api/v1/cards/l2/retroactive`
 - `GET /api/v1/cards/{card_id}`
 - `POST /api/v1/cards/{card_id}/assign`
 - `POST /api/v1/cards/{card_id}/confirm`
@@ -453,6 +481,11 @@ Bitrix24) завершились `sent`, `attempts=1`, audit=1 без retry и �
 получение и открытие ссылки подтверждены вручную. Synthetic card, source event,
 intents, audit и пользователи удалены по marker. Queue и active schedules равны
 нулю, `REMINDER_SCANNER_ENABLED=false` и `NOTIFICATION_DELIVERY_ENABLED=false`.
+
+Локальный candidate Omnidesk case index/backfill (`20260914_0006`) добавляет
+внутренний индекс, checkpoint/conflict ledger и явно запускаемый ограниченный
+resumable backfill с dry-run. Manager API и frontend пока не переключены;
+candidate не считается stage-gate.
 
 ## Завершение Каждого Этапа
 

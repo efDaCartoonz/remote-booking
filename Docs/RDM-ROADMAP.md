@@ -1,7 +1,10 @@
 # RDM — операционная дорожная карта
 
-Дата: 16 сентября 2026.
-Baseline: `origin/main` = `7ab7f38b16ce9b40204ad80b06e94e6f0d452666`.
+Дата актуализации статусов: 22 сентября 2026.
+Remote baseline: `origin/main` = `7ab7f38b16ce9b40204ad80b06e94e6f0d452666`.
+Local development baseline: merge `7771821`, объединяющий текущую локальную
+линию с `1643140` (FI-01) и `6de632d` (DB-01).
+Последний подтверждённый milestone baseline: `bee0f7d` (BL-02).
 
 ## Правила статуса и планирования
 
@@ -17,6 +20,11 @@ versioned результата. Статусы stage/RPi из `PROJECT.md` сч�
 документальным свидетельством и должны подтверждаться отдельно при новом
 stage-gate.
 
+После подтверждённого завершения milestone в этом файле обновляются его статус,
+revision и Definition of Done, а в `Docs/AI-WORK-STATE.md` добавляется краткая
+запись с результатами gate и границами проверки. Публикация, stage/RPi deploy
+и production status фиксируются отдельно и не следуют из локального `DONE`.
+
 Техническая граница всех следующих работ: внутренний Omnidesk `case_id` не
 попадает в browser/API URL/DOM/ошибки/logs manager-контуров; он допускается
 только во внутренних backend/DB/Redis слоях.
@@ -26,16 +34,17 @@ stage-gate.
 **Цель:** сделать каждую последующую поставку воспроизводимо проверяемой от
 чистого Git revision.
 
-**Статус:** DONE.
+**Статус:** DONE — FI-01 завершён в `1643140`; его quality-gate contract
+доступен в local development baseline.
 
 **Связанные SRS:** NFR-001..029, SEC-001..008; Technical Design §§2–5, 14, 17.
 
 **Уже есть:** Docker Compose с PostgreSQL, Redis, FastAPI, Celery и Vue;
 Dockerfiles и systemd unit (`docker-compose.yml`, `backend/Dockerfile`,
 `frontend/Dockerfile`, `deploy/systemd/rdm-compose.service`); backend tests.
-Commits: начальный baseline, `b8b5de6`/`5d03bdb` (Ruff corrective) и FI-01
-quality-gate commit. `Makefile`, `scripts/quality-gate.sh`, native frontend
-test command и no-port Compose overlay дают воспроизводимый local/stage path.
+Commits: начальный baseline, `b8b5de6`/`5d03bdb` (Ruff corrective) и
+`1643140`. `Makefile`, `scripts/quality-gate.sh`, native frontend test command
+и no-port Compose overlay дают воспроизводимый local path.
 
 **Критерий завершения workstream:** clean revision проходит единый
 source-controlled backend/frontend/migration/Compose gate без ручной
@@ -50,18 +59,19 @@ source-controlled backend/frontend/migration/Compose gate без ручной
 - **SRS:** NFR-001..006, NFR-020..029; Technical Design §17.
 - **Зависимости:** нет.
 - **Статус:** DONE — source-controlled `make verify` объединяет backend tests,
-  Ruff, frontend `npm ci`/test/build, Compose config и изолированный migration
-  smoke; `docker-compose.quality-gate.yml` исключает host-port conflicts.
-- **Definition of Done:** gate выполняется с checkout нужного commit, явно
-  разделяет unavailable от failed, не требует секретов и становится required
-  before integration/stage milestones.
+  Ruff, frontend `npm ci`/test/build, Compose config и isolated migration smoke.
+  Corrective commits `5da4ba5`..`269b7ca` исполняют этот путь целиком в
+  versioned Docker containers без host Python/pytest/npm и подтверждены на
+  isolated Docker runtime 17 сентября 2026.
+- **Definition of Done:** выполнен в `1643140`, corrective evidence —
+  `269b7ca`.
 
 ## 2. Database
 
 **Цель:** довести схему PostgreSQL и миграции до всех принятых доменных
 инвариантов, не смешивая schema presence с бизнес-готовностью.
 
-**Статус:** PARTIAL — DB-01 завершён; дальнейшие административные и
+**Статус:** PARTIAL — DB-01 завершён; последующие административные и
 policy-изменения остаются в DB-02.
 
 **Связанные SRS:** DATA-001..056, REQ-FR-028..035, 126..145, 156..165;
@@ -83,10 +93,9 @@ runtime head согласованы на `20260904_0005`.
 - **SRS:** DATA-001..020, NFR-020..029.
 - **Зависимости:** FI-01.
 - **Статус:** DONE — `make verify-migrations` поднимает изолированный
-  PostgreSQL 16, сохраняет seeded данные baseline через
-  `0001 → head → 0001 → head` и фиксирует active-ticket, L2-overlap и
-  reminder-schedule invariants; README указывает `20260904_0005`.
-- **Definition of Done:** выполнен.
+  PostgreSQL 16, сохраняет seeded данные через `0001 → head → 0001 → head` и
+  проверяет active-ticket, L2-overlap и reminder-schedule invariants.
+- **Definition of Done:** выполнен в `6de632d`.
 
 ### DB-02 — Административные данные и планировочные политики
 
@@ -134,13 +143,13 @@ manager request/response/preflight contract, миграция если storage �
   Concept BR-001/BR-024; Technical Design §§6, 10, 12.
 - **Зависимости:** FI-01 и DB-01 gate; точный Omnidesk lookup contract должен
   быть доказан до переключения public API.
-- **Статус:** PARTIAL — реализованы manager-create/preflight и tests
-  (`741acc3`, `test_manager_create_contract.py`), но они требуют/возвращают
-  `case_id`.
-- **Definition of Done:** browser-facing request/response/URL/error/DOM не
-  содержат `case_id`; backend доказывает ровно один тикет или безопасно
-  отказывает; full regression suite проходит; существующий Frame contract не
-  регрессирует.
+- **Статус:** DONE — `case_number` является единственным browser-facing
+  идентификатором; backend разрешает его через внутренний index, а `case_id`
+  остаётся в backend/DB-контуре. Покрыты 401/403/404/409/422, ambiguity,
+  повторная проверка ответа Omnidesk, conflicts и отсутствие public leak.
+  Docker-only quality gate на `269b7ca` подтвердил PostgreSQL migration smoke,
+  backend/Frame regression, frontend tests и production build; временные
+  resources очищены. Функциональная реализация — `b5f9dc7`.
 
 ### BE-02 — Централизованная RBAC и action policy
 
@@ -149,10 +158,13 @@ checks для create, assign, confirm, reject, start, complete, cancel,
 reschedule; запрещённые действия возвращают согласованные 403/409.
 - **SRS:** REQ-FR-001..005, 046..054, 071..098, SEC-001..008.
 - **Зависимости:** FI-01, BE-01.
-- **Статус:** PARTIAL — `require_roles` и отдельные ownership checks есть,
-  но generic actions требуют только authenticated session.
-- **Definition of Done:** role × action × card-status test matrix проходит;
-policy вызывается до изменения данных; audit сохраняет фактического actor.
+- **Статус:** DONE — единый `CardAction` policy применяется к manager/L1/L2
+  card actions до записи, различает role/ownership (`403`) и state (`409`) и
+  сохраняет фактического actor в event/audit. Commit `8e5dc19`; Docker-only
+  quality gate прошёл на isolated runtime.
+- **Definition of Done:** выполнен в `8e5dc19`: role × action × card-status
+  matrix, negative API regressions, BE-01 contract и Docker quality gate
+  подтверждены.
 
 ### BE-03 — Контракты создания по ролям
 
@@ -200,12 +212,14 @@ manual reassignment, overdue → L1 assignment, повторной criticality/e
 и закрытия L1 tasks после self-reschedule клиента.
 - **SRS:** REQ-FR-036..082, 083..090.
 - **Зависимости:** BE-02, DB-02.
-- **Статус:** PARTIAL — initial/reject reassign, L1 follow-up и reminders
-существуют; manager-for-L2, full overdue и all required reschedule branches не
-закрыты.
-- **Definition of Done:** cycle/attempt/reminder remain consistent under
-repeat/stale/concurrent actions; all L2/L1 escalation scenarios проходят
-integration tests without duplicate intents.
+- **Статус:** DONE — functional completion `10f71dd`. Exact-SHA isolated
+  PostgreSQL 16 acceptance подтвердил manager reassignment, overdue L2 → L1,
+  trusted Omnidesk reschedule, persisted cycle/attempt/reminder/event/audit,
+  repeat/idempotency и stale/conflict branches без duplicate lifecycle records.
+- **Definition of Done:** выполнен: exact-SHA gate прошёл backend regression,
+  PostgreSQL behavioral integration, migration `0001 → head → 0001 → head`,
+  Ruff, frontend tests/production build и Compose validation в temporary
+  projects без stage checkout, `.env` или persistent volumes.
 
 ### BL-02 — Время, отмена и планировочные ограничения
 
@@ -214,31 +228,62 @@ time changes/cancel by actor, release reservations, audit reason и
 notifications; schedule/absence/calendar/out-of-hours computation.
 - **SRS:** REQ-FR-034..035, 083..098, 126..136, 156..160.
 - **Зависимости:** BE-02, DB-02, BL-01.
-- **Статус:** PARTIAL — L1 reschedule rejected card и base cancel существуют,
-  но полный role/state/time policy не реализован.
-- **Definition of Done:** every allowed/forbidden transition from SRS has
-service and API tests; PostgreSQL exclusion and reminder cleanup remain
-correct after time/cancel changes.
+- **Статус:** DONE — functional completion и exact-SHA acceptance на
+  `bee0f7d`. Подтверждены role/state/API matrix для переноса и отмены,
+  scheduling window и availability policy, urgent out-of-hours exception,
+  manager cancel для `in_progress`, освобождение L2 reservation, закрытие
+  assignment cycle/attempt и reminder cleanup без duplicate lifecycle records.
+- **Definition of Done:** выполнен: exact-SHA isolated gate прошёл backend
+  regression (`284 passed, 18 skipped`), Ruff check/format, frontend tests и
+  production build, Compose validation и migration
+  `0001 → head → 0001 → head`; отдельная PostgreSQL behavioral matrix
+  прошла с результатом `118 passed`. Temporary checkout, containers и volumes
+  очищены; stage checkout, `.env`, services и persistent volumes не изменялись.
 
 ### BL-03 — Urgent, retroactive, execution and completion
 
-- **Результат в Git:** urgent collision workflow, retroactive self-registration,
-result catalogue validation, actual duration and Omnidesk-note intent on
-completion.
-- **SRS:** REQ-FR-099..125, 137..145, 154, 156..160.
+- **Результат в Git:** вытеснение планов при срочных коллизиях (reassign или
+  REJECTED→L1), безопасный отказ при коллизии с `in_progress`, ретроспективная
+  саморегистрация L2 с авторасчётом длительности при создании уже завершённой
+  карточки (при завершении in_progress авторасчёта нет; обычное завершение
+  принимает опциональную длительность), валидация активных кодов результата по
+  каталогу, фиксация только `actual_start_at` при старте (код результата и
+  длительность при старте не фиксируются; фиксируются при завершении),
+  идемпотентный intent во внутренний Omnidesk note outbox без раскрытия `case_id`
+  (заметка Omnidesk — только внутренний outbox intent, внешняя доставка
+  относится к IE-01), события/аудит/уведомления и суммарные счётчики срочных
+  коллизий в dashboard summary руководителя.
+- **SRS:** REQ-FR-099..125, 144..145, частичный REQ-FR-154 (только dashboard
+  summary counters; REQ-FR-154 не заявляется полностью закрытым;
+  REQ-FR-137..143 и 156..160 не входят в границы BL-03; автопродление сессий
+  относится к BL-04).
 - **Зависимости:** BE-03, DB-02, BL-02.
-- **Статус:** PARTIAL — generic start/complete and storage fields exist; special
-  policies, catalogue and collision workflow отсутствуют.
-- **Definition of Done:** each flow preserves lifecycle and audit, records
-mandatory result/work report, and has conflict/idempotency tests.
+- **Статус:** IMPLEMENTATION COMPLETED (локальные сфокусированные тесты:
+  `75 passed, 7 skipped`, Ruff check и format PASS). Финальный статус DONE
+  обусловлен ожиданием isolated exact-SHA quality gate; финальный exact-SHA,
+  Docker runtime, PostgreSQL runtime, stage, deployment, commit и push не
+  заявляются.
+- **Definition of Done:** функциональный скоуп реализован: вытеснение
+  ASSIGNED/CONFIRMED с переназначением или переводом в REJECTED→L1, безопасный
+  отказ при коллизии с IN_PROGRESS без мутаций данных, ретроспективная L2
+  регистрация (авторасчёт длительности при создании уже завершённой карточки,
+  а не при последующем завершении in_progress; обычное завершение принимает
+  опциональную длительность) с отложенным outbox, валидация по справочнику
+  результатов, фиксация только actual_start_at при старте (код и длительность не
+  фиксируются при старте), идемпотентный Omnidesk internal-note outbox intent
+  без case_id (внутренний outbox intent; внешняя доставка в IE-01),
+  события/аудит/уведомления и суммарные счётчики коллизий в manager summary
+  (REQ-FR-154 не закрыт полностью). Закрытие DONE ожидает isolated exact-SHA
+  gate.
 
 ### BL-04 — Автопродление и background policy completion
 
 - **Результат в Git:** scheduled extension processor with configurable interval,
 collision delegation, event/audit and idempotency/lock tests.
-- **SRS:** REQ-FR-137..145; Technical Design §9.
+- **SRS:** REQ-FR-137..143 (владеет требованиями автопродления); Technical Design §9.
 - **Зависимости:** DB-02, BL-03, FI-01.
-- **Статус:** NOT STARTED.
+- **Статус:** NOT STARTED (автопродление сессий не начато и полностью относится
+  к данному milestone).
 - **Definition of Done:** worker safely processes due records once, persists
 each extension, defers collision to urgent policy and passes time-boundary tests.
 
@@ -473,7 +518,9 @@ next functional milestone and never substitutes for its tests.
 
 ## Текущий фокус
 
-- **CURRENT WORKSTREAM:** Backend core.
-- **CURRENT MILESTONE:** BE-03 — контракты создания по ролям (DONE).
-- **NEXT MILESTONE:** BL-01 — полное назначение, переназначение и overdue
-  L2/L1; другой workstream, не начинать автоматически.
+- **CURRENT WORKSTREAM:** Backend business logic.
+- **CURRENT MILESTONE:** BL-03 — Urgent, retroactive, execution and completion
+  (функциональная реализация завершена локально, финальное закрытие DONE
+  обусловлено pending exact-SHA gate).
+- **NEXT MILESTONE:** BL-04 — Автопродление и background policy completion
+  (NOT STARTED, владеет REQ-FR-137..143; не начинать автоматически).

@@ -991,6 +991,7 @@ class PostgresCardRepository:
         status: CardStatus,
         l2_engineer_id: int | None,
         increment_unsuccessful_cycle_count: bool,
+        clear_overdue_flag: bool = False,
     ) -> CardRecord:
         with self.connection.cursor() as cursor:
             cursor.execute(
@@ -998,6 +999,14 @@ class PostgresCardRepository:
                 UPDATE connection_cards
                 SET status_code = %(status_code)s,
                     l2_engineer_id = %(l2_engineer_id)s,
+                    overdue_flag = CASE
+                        WHEN %(clear_overdue_flag)s THEN FALSE
+                        ELSE overdue_flag
+                    END,
+                    overdue_at = CASE
+                        WHEN %(clear_overdue_flag)s THEN NULL
+                        ELSE overdue_at
+                    END,
                     unsuccessful_cycle_count = unsuccessful_cycle_count + CASE
                         WHEN %(increment_unsuccessful_cycle_count)s THEN 1
                         ELSE 0
@@ -1010,6 +1019,7 @@ class PostgresCardRepository:
                     "card_id": card_id,
                     "status_code": int(status),
                     "l2_engineer_id": l2_engineer_id,
+                    "clear_overdue_flag": clear_overdue_flag,
                     "increment_unsuccessful_cycle_count": (
                         increment_unsuccessful_cycle_count
                     ),
@@ -1139,14 +1149,12 @@ class PostgresCardRepository:
                     count(*) FILTER (WHERE c.status_code = 4) AS rejected,
                     count(*) FILTER (WHERE c.overdue_flag) AS overdue,
                     count(*) FILTER (WHERE c.urgency_code > 0) AS urgent,
-                    count(*) FILTER (
-                        WHERE EXISTS (
-                            SELECT 1 FROM card_events ce
-                            WHERE ce.card_id = c.id
-                              AND ce.event_type_code = %(urgent_collision_event)s
-                              AND ce.comment = 'urgent_collision'
-                        )
-                    ) AS urgent_collision
+                    COALESCE(SUM((
+                        SELECT count(*) FROM card_events ce
+                        WHERE ce.card_id = c.id
+                          AND ce.event_type_code = %(urgent_collision_event)s
+                          AND ce.comment = 'urgent_collision'
+                    )), 0) AS urgent_collision
                     FROM connection_cards c WHERE {where}""",
                 {
                     **params,
@@ -1205,8 +1213,8 @@ class PostgresCardRepository:
                 SELECT *
                 FROM connection_cards
                 WHERE l2_engineer_id = %(l2_engineer_id)s
-                  AND urgency_code = 0
                   AND status_code IN (1, 2, 3)
+                  AND (urgency_code = 0 OR status_code = 3)
                   AND planned_start_at < %(planned_end_at)s
                   AND planned_start_at + planned_duration_minutes * interval '1 minute' > %(planned_start_at)s
                 ORDER BY planned_start_at ASC, id ASC

@@ -189,9 +189,12 @@ class FakeCardRepository:
         for card in self.cards.values():
             if (
                 card.l2_engineer_id == l2_engineer_id
-                and card.urgency_code == 0
                 and CardStatus(card.status_code)
                 in {CardStatus.ASSIGNED, CardStatus.CONFIRMED, CardStatus.IN_PROGRESS}
+                and (
+                    card.urgency_code == 0
+                    or CardStatus(card.status_code) == CardStatus.IN_PROGRESS
+                )
                 and card.planned_start_at < planned_end_at
                 and planned_start_at
                 < card.planned_start_at
@@ -635,6 +638,7 @@ class FakeCardRepository:
         status: CardStatus,
         l2_engineer_id: int | None,
         increment_unsuccessful_cycle_count: bool,
+        clear_overdue_flag: bool = False,
     ) -> CardRecord:
         for public_id, card in self.cards.items():
             if card.id != card_id:
@@ -643,6 +647,7 @@ class FakeCardRepository:
                 card,
                 status_code=int(status),
                 l2_engineer_id=l2_engineer_id,
+                overdue_flag=(False if clear_overdue_flag else card.overdue_flag),
                 unsuccessful_cycle_count=card.unsuccessful_cycle_count
                 + int(increment_unsuccessful_cycle_count),
                 updated_at=datetime.now(UTC),
@@ -2384,6 +2389,104 @@ def test_l2_urgent_collision_exhaustion_rejects_and_assigns_l1() -> None:
         user_agent=None,
     )
     assert len(notifications.notifications) == before
+
+
+def test_l2_urgent_collision_rejects_in_progress_without_mutations() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    service = CardService(repository)
+    normal = service.create_card(
+        create_payload(l2_engineer_id=20, omnidesk_ticket_number="123-456788"),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        manual_assignment=True,
+        allow_out_of_hours=True,
+    )
+    service.start_card(
+        normal.public_id,
+        actor_user_id=20,
+        comment="Started",
+        ip_address=None,
+        user_agent=None,
+    )
+    before_cards = dict(repository.cards)
+    before_events = list(repository.events)
+    before_audit = list(repository.audit)
+    before_cycles = list(repository.cycles)
+    before_attempts = list(repository.attempts)
+
+    with pytest.raises(
+        InvalidCardTransitionError, match="urgent_collision_in_progress"
+    ):
+        service.create_card(
+            create_payload(omnidesk_ticket_number="123-456789"),
+            actor_user_id=20,
+            ip_address=None,
+            user_agent=None,
+            allow_out_of_hours=True,
+            role_create_plan=_urgent_plan(),
+        )
+
+    assert repository.cards == before_cards
+    assert repository.events == before_events
+    assert repository.audit == before_audit
+    assert repository.cycles == before_cycles
+    assert repository.attempts == before_attempts
+
+    in_progress = repository.cards[normal.public_id]
+    assert in_progress.status_code == int(CardStatus.IN_PROGRESS)
+    assert in_progress.l2_engineer_id == 20
+
+
+@pytest.mark.parametrize("initial_status", (CardStatus.ASSIGNED, CardStatus.CONFIRMED))
+def test_l2_urgent_collision_displacement_clears_overdue_flag(
+    initial_status: CardStatus,
+) -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    service = CardService(repository)
+    normal = service.create_card(
+        create_payload(l2_engineer_id=20, omnidesk_ticket_number="123-456788"),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        manual_assignment=True,
+        allow_out_of_hours=True,
+    )
+    overdue_card, _ = repository.mark_l2_assignment_overdue(card_id=normal.id)
+    assert overdue_card.overdue_flag is True
+
+    if initial_status == CardStatus.CONFIRMED:
+        service.confirm_card(
+            normal.public_id,
+            actor_user_id=20,
+            comment="Confirmed while overdue",
+            ip_address=None,
+            user_agent=None,
+        )
+        confirmed = repository.cards[normal.public_id]
+        assert confirmed.status_code == int(CardStatus.CONFIRMED)
+        assert confirmed.overdue_flag is True
+
+    urgent = service.create_card(
+        create_payload(omnidesk_ticket_number="123-456789"),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+        allow_out_of_hours=True,
+        role_create_plan=_urgent_plan(),
+    )
+
+    displaced = repository.get_card_by_id_for_update(normal.id)
+    assert urgent.status_code == int(CardStatus.ASSIGNED)
+    assert urgent.l2_engineer_id == 20
+    assert displaced is not None
+    assert displaced.overdue_flag is False
+    assert displaced.l2_engineer_id == 30
+    assert displaced.status_code == int(CardStatus.ASSIGNED)
 
 
 @pytest.mark.parametrize("reason", ("absence", "collision"))

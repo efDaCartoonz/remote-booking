@@ -33,7 +33,7 @@ type Card = {
 type HistoryEntry = { event_label: string; actor_label: string; created_at: string };
 type ApiError = Error & { status: number; detail?: unknown };
 type ManagerCard = { public_id: string; number: string; omnidesk_ticket_number: string; status: string; status_label: string; planned_start_at: string; planned_end_at: string; planned_duration_minutes: number; l1_owner_name: string | null; l2_engineer_name: string | null; urgent: boolean; overdue: boolean; out_of_hours: boolean };
-type ManagerData = { summary: { assigned: number; confirmed: number; rejected: number; overdue: number }; items: ManagerCard[]; limit: number };
+type ManagerData = { summary: { assigned: number; confirmed: number; rejected: number; overdue: number; urgent: number; urgent_collision: number }; items: ManagerCard[]; limit: number };
 type TicketPreflight = { case_number: string; status: string; client_display_name: string | null; can_create: boolean };
 type L2Option = { user_id: number; display_name: string; available: boolean; reason_code: string | null };
 type CreateWindowBounds = { min: Date; max: Date };
@@ -606,7 +606,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
       </template>
       <template v-else-if="managerPath && manager">
         <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ browserTimeZone }}</p></div><div class="top-actions"><a class="button-link" href="/manager/cards/new">+ Создать карточку</a><button class="secondary" @click="logout">Выйти</button></div></header>
-        <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div></div>
+        <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div><div class="panel"><strong>{{ manager.summary.urgent }}</strong><span>Срочно</span></div><div class="panel"><strong>{{ manager.summary.urgent_collision }}</strong><span>Коллизии</span></div></div>
         <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>Дата с<input v-model="managerFrom" type="date" /></label><label>Дата по<input v-model="managerTo" type="date" /></label><button>Применить</button></form>
         <p v-if="managerError" class="error" role="alert">{{ managerError }} <button class="secondary" @click="loadManager">Повторить</button></p>
         <p v-if="managerLoading" class="hint" role="status">Загрузка календаря…</p>

@@ -100,6 +100,7 @@ class AssignmentRepository(Protocol):
         status: CardStatus,
         l2_engineer_id: int | None,
         increment_unsuccessful_cycle_count: bool,
+        clear_overdue_flag: bool = False,
     ) -> CardRecord: ...
 
     def add_card_event(

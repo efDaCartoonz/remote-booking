@@ -448,13 +448,18 @@ class CardService:
                 actual_duration_minutes = derived_minutes
 
         urgent_collision_cards: list[CardRecord] = []
-        if role_create_plan is not None and role_create_plan.urgency_code > 0:
+        if urgency_code > 0:
             urgent_collision_cards = self._find_urgent_collisions(
                 l2_engineer_id=l2_engineer_id,
                 planned_start_at=payload.planned_start_at,
                 planned_end_at=payload.planned_start_at
                 + timedelta(minutes=payload.planned_duration_minutes),
             )
+            if any(
+                CardStatus(card.status_code) == CardStatus.IN_PROGRESS
+                for card in urgent_collision_cards
+            ):
+                raise InvalidCardTransitionError("urgent_collision_in_progress")
 
         out_of_hours_flag = False
         if l2_engineer_id is not None and (
@@ -620,6 +625,8 @@ class CardService:
     ) -> _UrgentCollision:
         if actor_user_id is None:
             raise InvalidCardTransitionError("actor_user_required")
+        if CardStatus(card.status_code) == CardStatus.IN_PROGRESS:
+            raise InvalidCardTransitionError("urgent_collision_in_progress")
         affected_l1_id = card.l1_owner_id
         affected_l2_id = card.l2_engineer_id
         old_values = _card_snapshot(card)
@@ -662,6 +669,7 @@ class CardService:
             status=CardStatus.CREATED,
             l2_engineer_id=None,
             increment_unsuccessful_cycle_count=False,
+            clear_overdue_flag=True,
         )
 
         new_values = {
