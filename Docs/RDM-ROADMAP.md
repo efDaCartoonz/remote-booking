@@ -1,10 +1,10 @@
 # RDM — операционная дорожная карта
 
-Дата актуализации статусов: 22 сентября 2026.
+Дата актуализации статусов: 23 сентября 2026.
 Remote baseline: `origin/main` = `7ab7f38b16ce9b40204ad80b06e94e6f0d452666`.
 Local development baseline: merge `7771821`, объединяющий текущую локальную
 линию с `1643140` (FI-01) и `6de632d` (DB-01).
-Последний подтверждённый milestone baseline: `bee0f7d` (BL-02).
+Последний подтверждённый milestone baseline: `34aba3362bbfd8bf8ef37a511e540e1f916f232b` (BL-03).
 
 ## Правила статуса и планирования
 
@@ -258,24 +258,33 @@ notifications; schedule/absence/calendar/out-of-hours computation.
   REQ-FR-137..143 и 156..160 не входят в границы BL-03; автопродление сессий
   относится к BL-04).
 - **Зависимости:** BE-03, DB-02, BL-02.
-- **Статус:** IMPLEMENTATION SCOPED COMMIT CREATED (`09cb6cc`).
-  Финальный статус DONE обусловлен ожиданием isolated exact-SHA quality gate
-  (`make verify` / Docker runtime); gate недоступен из-за отсутствия Docker
-  в окружении (`UNAVAILABLE: required command not found: docker`).
-  Финальный exact-SHA Docker/PostgreSQL gate, stage, deployment и push
-  не заявляются; milestone BL-03 остаётся NOT DONE.
-- **Definition of Done:** функциональный скоуп реализован и зафиксирован
-  в scoped commit `09cb6cc`: вытеснение ASSIGNED/CONFIRMED с переназначением
-  или переводом в REJECTED→L1, безопасный отказ при коллизии с IN_PROGRESS без
-  мутаций данных, ретроспективная L2 регистрация (авторасчёт длительности при
-  создании уже завершённой карточки, а не при последующем завершении in_progress;
-  обычное завершение принимает опциональную длительность) с отложенным outbox,
-  валидация по справочнику результатов, фиксация только actual_start_at при
-  старте (код и длительность не фиксируются при старте), идемпотентный Omnidesk
-  internal-note outbox intent без case_id (внутренний outbox intent; внешняя
-  доставка в IE-01), события/аудит/уведомления и суммарные счётчики коллизий
-  в manager summary (REQ-FR-154 не закрыт полностью). Закрытие DONE ожидает
-  isolated exact-SHA Docker/PostgreSQL gate.
+- **Статус:** DONE — реализация и exact candidate quality gate на
+  `34aba3362bbfd8bf8ef37a511e540e1f916f232b`. Подтверждены вытеснение планов
+  в ASSIGNED/CONFIRMED при срочных коллизиях (переназначение либо перевод в
+  REJECTED→L1 со сбросом overdue), безопасный отказ при коллизии с IN_PROGRESS
+  без мутаций в БД, ретроспективная L2 саморегистрация с авторасчётом
+  длительности при создании уже завершённой карточки (при обычном завершении
+  in_progress авторасчёта нет, принимается опциональная длительность),
+  валидация активных кодов результата по каталогу connection_results, фиксация
+  только actual_start_at при старте (код и длительность не фиксируются при
+  старте, фиксируются при завершении), идемпотентный intent во внутренний
+  Omnidesk note outbox без раскрытия case_id (только внутренний outbox intent,
+  внешняя доставка относится к IE-01), события/аудит/уведомления и суммарные
+  счётчики срочных коллизий в dashboard summary руководителя (REQ-FR-154 не
+  заявляется полностью закрытым сверх счётчиков dashboard). Финальный exact-SHA
+  quality gate документационного коммита ещё не выполнялся; внешняя доставка
+  Omnidesk, stage, deployment и push не заявляются; BL-04 остаётся не начат
+  (NOT STARTED).
+- **Definition of Done:** выполнен на candidate HEAD
+  `34aba3362bbfd8bf8ef37a511e540e1f916f232b`: exact quality gate прошёл
+  backend regression (297 passed, 26 skipped), frontend native suite
+  (3 tests passed) и build passed, Ruff/format passed, migration round-trip
+  `0001 -> 20260922_0008 -> 0001 -> 0008` (`20260901_0001 → 20260922_0008 → 20260901_0001 → 20260922_0008`);
+  отдельная изолированная PostgreSQL BL-03 behavioral matrix прошла 7/7,
+  cleanup временных ресурсов подтверждён. Финальный exact-SHA gate после
+  обновления документации ещё не проводился; внешняя доставка Omnidesk не
+  заявляется (IE-01); REQ-FR-154 не заявляется сверх счётчиков dashboard;
+  BL-04 остаётся не начат (NOT STARTED).
 
 ### BL-04 — Автопродление и background policy completion
 
@@ -520,8 +529,9 @@ next functional milestone and never substitutes for its tests.
 ## Текущий фокус
 
 - **CURRENT WORKSTREAM:** Backend business logic.
-- **CURRENT MILESTONE:** BL-03 — Urgent, retroactive, execution and completion
-  (создан scoped commit `09cb6cc`, но milestone остаётся NOT DONE и ожидает
-  недоступный exact-SHA Docker/PostgreSQL gate).
-- **NEXT MILESTONE:** BL-04 — Автопродление и background policy completion
-  (NOT STARTED, владеет REQ-FR-137..143; не начинать автоматически).
+- **CURRENT MILESTONE:** BL-04 — Автопродление и background policy completion
+  (остаётся NOT STARTED, владеет REQ-FR-137..143; не начинать автоматически).
+- **LAST COMPLETED MILESTONE:** BL-03 — Urgent, retroactive, execution and completion
+  (DONE на implementation candidate `34aba3362bbfd8bf8ef37a511e540e1f916f232b`;
+  финальный exact-SHA gate документации ещё не проводился, внешняя доставка Omnidesk
+  не заявляется, REQ-FR-154 не заявляется сверх счётчиков dashboard).

@@ -16,10 +16,13 @@ Production scanner и delivery остаются выключенными.
 (`20260914_0006`, `2815d2e`). Candidate не применён на stage, не меняет
 manager API/frontend и не является подтверждением stage или production.
 Возможности BL-03 (срочные коллизии, ретроспективная регистрация, завершение)
-зафиксированы в scoped коммите `09cb6cc`, но обязательный exact-SHA quality gate
-недоступен из-за отсутствия Docker (`UNAVAILABLE: required command not found: docker`).
-Milestone BL-03 остаётся NOT DONE в ожидании exact-SHA Docker/PostgreSQL gate, не подтверждён
-на stage и не заявляется как stage-proven, fully implemented или завершённый.
+завершены (DONE) на implementation candidate HEAD `34aba3362bbfd8bf8ef37a511e540e1f916f232b`:
+пройден exact quality gate (backend 297 passed, 26 skipped; frontend native 3 tests passed
+и build passed; Ruff/format passed; migration round-trip `0001 -> 20260922_0008 -> 0001 -> 0008`;
+isolated PostgreSQL BL-03 behavioral matrix 7/7 passed с подтверждённой очисткой).
+Финальный exact-SHA gate документационного коммита ещё не выполнялся; внешняя доставка
+Omnidesk не заявляется (IE-01); REQ-FR-154 не расширяется сверх счётчиков dashboard;
+BL-03 не подтверждён на stage и не заявляется как stage-proven; BL-04 остаётся не начат (NOT STARTED).
 
 Минимальный внутренний frontend подтверждён на доверенном LAN stage: ссылка из
 контролируемого Telegram-уведомления ведёт к login, возвращает на карточку после
@@ -108,7 +111,7 @@ Milestone BL-03 остаётся NOT DONE в ожидании exact-SHA Docker/P
   - использует `card_events.id` и серверный `dedupe_key`, поэтому повтор одного
     исходного события не создаёт новые intents или аудит;
   - не меняет статус карточки и не делает прямых внешних HTTP-вызовов.
-- Скоуп BL-03: срочные коллизии, ретроспективная регистрация и завершение (создан scoped commit `09cb6cc`; обязательный exact-SHA quality gate недоступен из-за отсутствия Docker; BL-03 остаётся NOT DONE в ожидании exact-SHA Docker/PostgreSQL gate; не является stage-proven и не заявляется как fully implemented или завершённый):
+- Скоуп BL-03: срочные коллизии, ретроспективная регистрация и завершение (DONE на candidate HEAD `34aba3362bbfd8bf8ef37a511e540e1f916f232b`; не подтверждён на stage, финальный exact-SHA gate документации ещё не проводился, внешняя доставка Omnidesk не заявляется):
    - вытеснение планов в статусах `ASSIGNED` и `CONFIRMED` при срочных коллизиях с автоматическим переназначением либо переводом в `Отклонено` (REJECTED→L1 follow-up) при исчерпании кандидатов;
    - сброс флага и времени просрочки (`overdue_flag`, `overdue_at`) у вытесненной карточки;
    - безопасный отказ при коллизии с карточкой в статусе `IN_PROGRESS` без каких-либо мутаций в БД (карточки, события и аудит остаются неизменными);
@@ -119,7 +122,7 @@ Milestone BL-03 остаётся NOT DONE в ожидании exact-SHA Docker/P
    - фиксация событий (`CardEventType.URGENT_COLLISION`), записей аудита и уведомлений;
    - метрики срочных коллизий в панели руководителя: подсчёт суммарного количества событий `urgent_collision` по карточкам выборки (REQ-FR-154 не заявляется полностью закрытым: реализованы только суммарные счётчики в dashboard summary);
    - границы SRS: BL-03 закрывает REQ-FR-099..125, 144..145 и частичный REQ-FR-154 (только dashboard summary counters; REQ-FR-154 не заявляется полностью закрытым; требования REQ-FR-137..143 и 156..160 не заявляются в BL-03; автопродление сессий BL-04 имеет статус NOT STARTED и владеет REQ-FR-137..143);
-   - статус подтверждения: подтверждено локальными сфокусированными проверками (75 passed, 7 skipped; Ruff check и format PASS) и зафиксировано в scoped commit `09cb6cc`. Финальный exact-SHA quality gate недоступен (`UNAVAILABLE: required command not found: docker`). Milestone BL-03 остаётся NOT DONE в ожидании isolated exact-SHA Docker/PostgreSQL gate, без заявлений о подтверждении на stage, Docker runtime, PostgreSQL runtime, deployment или push.
+   - статус подтверждения: на candidate HEAD `34aba3362bbfd8bf8ef37a511e540e1f916f232b` пройден exact quality gate: backend regression (297 passed, 26 skipped), frontend native suite (3 tests passed) и build passed, Ruff check/format PASS, migration round-trip `0001 -> 20260922_0008 -> 0001 -> 0008` (`20260901_0001 → 20260922_0008 → 20260901_0001 → 20260922_0008`), isolated PostgreSQL BL-03 behavioral matrix 7/7 passed с подтверждённым cleanup временных ресурсов. Финальный exact-SHA quality gate после обновления документации ещё не проводился; внешняя доставка Omnidesk не заявляется (IE-01); stage, deployment и push не заявляются; BL-04 остаётся не начат (NOT STARTED).
 
 ## Состав Репозитория
 

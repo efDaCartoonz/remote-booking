@@ -47,8 +47,9 @@ behavioral matrix — `118 passed`. Temporary archive checkout, containers и
 volumes очищены; stage checkout, `.env`, services и persistent volumes не
 изменялись. **WS-04 / BL-02: DONE.**
 
-BL-03 implementation scope: в локальном workspace завершена реализация
-срочных коллизий, ретроспективной регистрации, исполнения и завершения работ:
+BL-03 completion: на implementation candidate `34aba3362bbfd8bf8ef37a511e540e1f916f232b`
+реализованы и подтверждены срочные коллизии, ретроспективная регистрация,
+исполнение и завершение работ:
 - вытеснение планов в статусах ASSIGNED и CONFIRMED при срочных коллизиях с
   автоматическим переназначением либо переводом в REJECTED→L1 follow-up, а
   также со сбросом флага и времени просрочки (overdue_flag, overdue_at);
@@ -78,14 +79,15 @@ BL-03 implementation scope: в локальном workspace завершена �
 REQ-FR-154 (только dashboard summary counters; REQ-FR-154 не заявляется полностью
 закрытым; требования REQ-FR-137..143 и 156..160 не входят в скоуп BL-03).
 Автопродление сессий BL-04 имеет статус NOT STARTED и владеет REQ-FR-137..143.
-Статус и доказательства: создан целевой scoped коммит `09cb6cc`.
-Локальные сфокусированные проверки: `75 passed, 7 skipped`, проверки Ruff
-check и format PASS. Обязательный exact-SHA quality gate (`make verify`)
-недоступен из-за отсутствия Docker в локальном окружении (`UNAVAILABLE:
-required command not found: docker`). Статус DONE не достигнут; финальный
-exact-SHA Docker/PostgreSQL gate, stage, deployment и push не заявляются.
-Milestone BL-03 остаётся NOT DONE в ожидании isolated exact-SHA Docker/PostgreSQL
-gate. **WS-04 / BL-03: NOT DONE (scoped commit `09cb6cc` created, gate unavailable: Docker missing).**
+Статус и доказательства: на candidate HEAD `34aba3362bbfd8bf8ef37a511e540e1f916f232b`
+пройден exact quality gate: backend 297 passed, 26 skipped; frontend native
+3 tests passed и build passed; Ruff/format passed; migration round-trip
+`0001 -> 20260922_0008 -> 0001 -> 0008` (`20260901_0001 → 20260922_0008 → 20260901_0001 → 20260922_0008`);
+отдельная изолированная PostgreSQL BL-03 behavioral matrix прошла 7/7 и
+cleanup временных ресурсов подтверждён. Финальный exact-SHA quality gate для
+документационного коммита ещё не выполнялся; внешняя доставка Omnidesk не
+заявляется (IE-01); stage, deployment и push не заявляются; BL-04 остаётся не
+начат (NOT STARTED). **WS-04 / BL-03: DONE.**
 
 ## Границы и метод
 
@@ -294,7 +296,9 @@ gate. **WS-04 / BL-03: NOT DONE (scoped commit `09cb6cc` created, gate unavailab
 
 ## Ровно один следующий milestone
 
-**BL-04 — Автопродление и background policy completion.** Создан scoped commit
-`09cb6cc` для BL-03, но milestone BL-03 остаётся NOT DONE в ожидании недоступного
-exact-SHA Docker/PostgreSQL quality gate. Milestone BL-04 имеет статус
-NOT STARTED, владеет REQ-FR-137..143 и не начинается автоматически.
+**BL-04 — Автопродление и background policy completion.** Milestone BL-03 завершён
+(DONE на implementation candidate `34aba3362bbfd8bf8ef37a511e540e1f916f232b`;
+финальный exact-SHA gate документации ещё не проводился, внешняя доставка
+Omnidesk не заявляется, REQ-FR-154 не расширяется сверх счётчиков dashboard).
+Milestone BL-04 остаётся не начат (NOT STARTED), владеет REQ-FR-137..143 и не
+начинается автоматически.
