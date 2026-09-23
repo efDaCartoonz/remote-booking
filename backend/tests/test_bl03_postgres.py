@@ -157,6 +157,7 @@ def test_completed_retroactive_persists_derived_duration_and_rejects_inactive_co
     now = datetime(2026, 9, 21, 10, tzinfo=UTC)
     with psycopg.connect(database_url, row_factory=dict_row) as connection:
         _seed(connection)
+        connection.commit()
         repository = PostgresCardRepository(connection)
         service = CardService(repository)
 
