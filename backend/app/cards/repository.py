@@ -1460,15 +1460,14 @@ class PostgresCardRepository:
             is_rescheduled_while_confirmed = (
                 new_status == 1
                 and old_status == 1
-                and new_values.get("planned_start_at") != old_values.get("planned_start_at")
+                and new_values.get("planned_start_at")
+                != old_values.get("planned_start_at")
             )
 
             # A queued warning belongs to one confirmation/schedule. Retire every
             # undelivered warning before creating the replacement so a move or
             # cancel/reconfirm cycle cannot send an obsolete message as well.
-            if (
-                old_status == 1 and new_status != 1
-            ) or is_rescheduled_while_confirmed:
+            if (old_status == 1 and new_status != 1) or is_rescheduled_while_confirmed:
                 cursor.execute(
                     """
                     UPDATE omnidesk_outbox
@@ -1518,10 +1517,17 @@ class PostgresCardRepository:
                             "payload": __import__("psycopg").types.json.Jsonb(
                                 {
                                     "content": template,
-                                    "planned_start_at": new_values.get("planned_start_at")
+                                    "planned_start_at": new_values.get(
+                                        "planned_start_at"
+                                    ),
                                 }
                             ),
-                            "next_attempt_at": __import__("datetime").datetime.fromisoformat(new_values["planned_start_at"]) - __import__("datetime").timedelta(minutes=15) if new_values.get("planned_start_at") else None,
+                            "next_attempt_at": __import__(
+                                "datetime"
+                            ).datetime.fromisoformat(new_values["planned_start_at"])
+                            - __import__("datetime").timedelta(minutes=15)
+                            if new_values.get("planned_start_at")
+                            else None,
                         },
                     )
 

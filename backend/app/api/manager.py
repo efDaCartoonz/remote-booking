@@ -177,7 +177,9 @@ def get_public_notification_settings(
     _user: Annotated[UserAuthRecord, Depends(require_admin_role)],
 ) -> PublicNotificationSettingsResponse:
     with db_connection() as connection:
-        settings = AdministrativeRepository(connection).get_public_notification_settings()
+        settings = AdministrativeRepository(
+            connection
+        ).get_public_notification_settings()
     return PublicNotificationSettingsResponse(**settings)
 
 
@@ -195,7 +197,9 @@ def update_public_notification_settings(
             template=payload.template,
             actor_user_id=user.id,
         )
-    return PublicNotificationSettingsResponse(enabled=payload.enabled, template=payload.template)
+    return PublicNotificationSettingsResponse(
+        enabled=payload.enabled, template=payload.template
+    )
 
 
 def _manager_ticket(client: OmnideskTicketClient, case_id: str, case_number: str):

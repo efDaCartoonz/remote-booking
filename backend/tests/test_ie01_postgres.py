@@ -521,9 +521,13 @@ def test_ie01_public_notification_revocation_and_timing(
     # Notification shouldn't be sent because the card is no longer CONFIRMED (1)
     assert len(client.public_messages) == 0
 
+
 def test_ie01_reschedule_and_cancellation_revocation(connection: psycopg.Connection):
     from app.cards.repository import PostgresCardRepository
-    from app.integrations.omnidesk_outbox import PostgresOmnideskOutboxRepository, deliver_pending_omnidesk_outbox
+    from app.integrations.omnidesk_outbox import (
+        PostgresOmnideskOutboxRepository,
+        deliver_pending_omnidesk_outbox,
+    )
 
     card_repo = PostgresCardRepository(connection)
     repo = PostgresOmnideskOutboxRepository(connection)
@@ -581,7 +585,10 @@ def test_ie01_reschedule_and_cancellation_revocation(connection: psycopg.Connect
         )
 
     with connection.cursor() as cursor:
-        cursor.execute("SELECT id, next_attempt_at, status_code FROM omnidesk_outbox WHERE card_id = %s AND action_type = 'public_notification' ORDER BY id", (card_id,))
+        cursor.execute(
+            "SELECT id, next_attempt_at, status_code FROM omnidesk_outbox WHERE card_id = %s AND action_type = 'public_notification' ORDER BY id",
+            (card_id,),
+        )
         rows = cursor.fetchall()
 
     # Keep history, but only the current schedule's intent remains deliverable.
@@ -590,11 +597,17 @@ def test_ie01_reschedule_and_cancellation_revocation(connection: psycopg.Connect
 
     # Fast forward time to process them
     with connection.cursor() as cursor:
-        cursor.execute("UPDATE omnidesk_outbox SET next_attempt_at = now() - interval '5 minutes' WHERE status_code = 0")
+        cursor.execute(
+            "UPDATE omnidesk_outbox SET next_attempt_at = now() - interval '5 minutes' WHERE status_code = 0"
+        )
 
     client = FakeOmnideskClient()
-    with patch("app.integrations.omnidesk_outbox.resolve_ticket_by_case_number") as mock_resolve:
-        mock_resolve.return_value = OmnideskTicket(case_id="c_resched", number=ticket, user_id="u1", status="open")
+    with patch(
+        "app.integrations.omnidesk_outbox.resolve_ticket_by_case_number"
+    ) as mock_resolve:
+        mock_resolve.return_value = OmnideskTicket(
+            case_id="c_resched", number=ticket, user_id="u1", status="open"
+        )
         deliver_pending_omnidesk_outbox(repo, client)
 
     # Only ONE public message should be sent (the valid t2 one).
@@ -603,7 +616,9 @@ def test_ie01_reschedule_and_cancellation_revocation(connection: psycopg.Connect
     assert client.public_messages[0][1] == "Перенесенное уведомление."
 
 
-def test_ie01_cancel_reconfirm_replaces_pending_public_notification(connection: psycopg.Connection):
+def test_ie01_cancel_reconfirm_replaces_pending_public_notification(
+    connection: psycopg.Connection,
+):
     card_repo = PostgresCardRepository(connection)
     ticket = next_ticket()
     with connection.cursor() as cursor:

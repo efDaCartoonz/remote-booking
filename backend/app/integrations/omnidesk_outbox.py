@@ -159,7 +159,9 @@ class PostgresOmnideskOutboxRepository:
             )
             source = cursor.fetchone()
             if source is None:
-                logger.error("Unable to notify about Omnidesk failure: source event missing")
+                logger.error(
+                    "Unable to notify about Omnidesk failure: source event missing"
+                )
                 return
             cursor.execute(
                 """
@@ -238,7 +240,9 @@ def deliver_pending_omnidesk_outbox(
             _process_intent(repository, client, intent)
             repository.mark_sent(intent.id, now)
         except Exception as exc:
-            sanitized_err = str(exc) if getattr(exc, "is_safe_error", False) else type(exc).__name__
+            sanitized_err = (
+                str(exc) if getattr(exc, "is_safe_error", False) else type(exc).__name__
+            )
             logger.error(
                 "Failed to process omnidesk outbox intent %d: %s",
                 intent.id,
@@ -312,11 +316,9 @@ def _process_intent(
                 expected_planned_start_at = datetime.fromisoformat(
                     expected_planned_start_at.replace("Z", "+00:00")
                 )
-            if (
-                actual_planned_start_at is None
-                or actual_planned_start_at.astimezone(UTC)
-                != expected_planned_start_at.astimezone(UTC)
-            ):
+            if actual_planned_start_at is None or actual_planned_start_at.astimezone(
+                UTC
+            ) != expected_planned_start_at.astimezone(UTC):
                 raise SuppressedIntent("public_notification_superseded")
 
         content = intent.payload.get("content")

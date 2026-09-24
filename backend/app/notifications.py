@@ -597,7 +597,10 @@ def _render_message(intent: NotificationIntent) -> str:
     ticket = intent.omnidesk_ticket_number or "не указан"
     card_number = intent.card_number or f"RDM-{intent.id}"
     url = f"{settings.notification_card_base_url.rstrip('/')}/cards/{intent.card_public_id}"
-    if intent.event_type_code == NOTIFICATION_EVENT_CODES["omnidesk_staff_mapping_missing"]:
+    if (
+        intent.event_type_code
+        == NOTIFICATION_EVENT_CODES["omnidesk_staff_mapping_missing"]
+    ):
         return (
             f"Не настроена связь исполнителя RDM с сотрудником Omnidesk. "
             f"Проверьте назначение в карточке {card_number}; тикет {ticket}. {url}"
