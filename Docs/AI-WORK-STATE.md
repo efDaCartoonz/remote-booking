@@ -3,7 +3,7 @@
 Дата reconciliation-аудита: 16 сентября 2026.
 Git baseline: `origin/main` = `7ab7f38b16ce9b40204ad80b06e94e6f0d452666` (`fix: validate manager card creation form`).
 
-IE-01 — Omnidesk write/outbox contract: текущий implementation candidate
+IE-01 — Omnidesk write/outbox contract: implementation candidate `f5398a2`
 реализует durable outbound intents для назначения L1/L2, внутренних заметок и
 15-минутного публичного предупреждения клиента по текущему каналу Omnidesk.
 Шаблон и административное отключение поддержаны; при переносе, отмене и
@@ -13,12 +13,14 @@ IE-01 — Omnidesk write/outbox contract: текущий implementation candidat
 для администратора и руководителя. Входящие Omnidesk webhooks/events и реальные
 внешние записи в рамках проверки не выполняются.
 
-IE-01 evidence so far: independent acceptance clean after scope correction;
-isolated PostgreSQL matrix 8 passed; compileall and `git diff --check` passed;
-temporary Docker resources cleaned. Forward migrations: `20260924_0010`,
-`20260924_0011`, `20260924_0012` (staff-mapping notification event type);
-historical migrations remain immutable. Final exact-SHA gate, commit and push
-are pending, so IE-01 is not yet DONE.
+IE-01 evidence: full exact-SHA `make verify` on `f5398a2` passed: backend 307
+passed, 45 skipped; Ruff check/format passed; frontend 3 passed and build
+passed; Compose config and migration upgrade/downgrade/upgrade through
+`20260924_0012` passed. The BL-04 PostgreSQL matrix in the gate passed 11 and
+the separate isolated IE-01 PostgreSQL matrix passed 8; temporary Docker
+resources were cleaned. Forward migrations `20260924_0010`, `20260924_0011`,
+`20260924_0012` were used and historical migrations remain immutable. IE-01 is
+DONE.
 
 Reconciliation 17 сентября 2026: локальный development baseline — merge
 `7771821`; он объединяет текущую локальную линию с FI-01 (`1643140`) и DB-01
@@ -320,4 +322,5 @@ BL-04 владеет REQ-FR-137..143 и DONE на exact SHA `40ab192`: `make ver
 passed; migration round-trip `0001 -> 0009 -> 0001 -> 0009`); изолированная
 PostgreSQL matrix — 11 passed; временные ресурсы очищены; push в `main`
 выполнен (`9d5863e..40ab192`).
-Следующий этап IE-01 — NOT STARTED.
+Следующий этап IE-02 — Notification and reminder E2E matrix после
+публикации IE-01.

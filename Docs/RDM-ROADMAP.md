@@ -400,7 +400,7 @@ notification); retry/rate-limit/error classification.
   retry/rate/error).
 - **Зависимости:** BE-01, BL-02, BL-03, FI-01; TD-OQ-002/003 must be resolved
 before writer payloads.
-- **Статус:** IMPLEMENTED — pending final exact-SHA gate and push. Реализован
+- **Статус:** DONE; реализация проверена на `f5398a2`. Реализован
   durable outbox для назначения L1/L2, внутренних заметок и публичного
   15-минутного предупреждения клиента; добавлены шаблон и административное
   отключение, а также delivery-time recheck/revocation при переносе, отмене и
@@ -409,10 +409,13 @@ before writer payloads.
   отката карточки.
 - **Миграции:** forward migrations `20260924_0010`, `20260924_0011`,
   `20260924_0012`; исторические миграции сохранены неизменными.
-- **Доказательства текущего кандидата:** независимая приёмка чистая после
-  устранения замечаний по scope; isolated PostgreSQL matrix — 8 passed;
-  compileall и `git diff --check` — passed; временные Docker-ресурсы очищены.
-  Финальные exact-SHA gate, commit и push ещё не выполнены.
+- **Доказательства текущего кандидата:** полный exact-SHA `make verify` на
+  `f5398a2` прошёл: backend — 307 passed, 45 skipped; Ruff check/format —
+  passed; frontend — 3 passed и build — passed; Compose config и миграционный
+  upgrade/downgrade/upgrade через `20260924_0012` — passed. BL-04 isolated
+  PostgreSQL matrix в gate — 11 passed; отдельная IE-01 isolated PostgreSQL
+  matrix — 8 passed; временные Docker-ресурсы очищены. Исторические миграции
+  сохранены неизменными.
 - **Definition of Done:** mocked client tests cover success, 4xx, retryable,
 429 and idempotent repeats; no external response body/secret/internal ID leaks.
 
@@ -555,10 +558,12 @@ next functional milestone and never substitutes for its tests.
 
 ## Текущий фокус
 
-- **CURRENT WORKSTREAM:** Backend business logic.
-- **CURRENT MILESTONE:** Backend business logic — завершена.
-- **NEXT MILESTONE:** IE-01 — NOT STARTED.
-- **LAST COMPLETED MILESTONE:** BL-04 — Auto-extension and background policy completion
+- **CURRENT WORKSTREAM:** Integration/E2E.
+- **CURRENT MILESTONE:** IE-01 — Omnidesk write/outbox contract — DONE.
+- **NEXT MILESTONE:** IE-02 — Notification and reminder E2E matrix.
+- **LAST COMPLETED MILESTONE:** IE-01 — Omnidesk write/outbox contract
+  (implementation gate passed on `f5398a2`, PostgreSQL matrix 8 passed);
+  BL-04 — Auto-extension and background policy completion
   (DONE на exact SHA `40ab192`; exact-SHA gate прошёл, commit pushed to `main`);
   BL-03 — Urgent, retroactive, execution and completion
   (DONE на implementation candidate `34aba3362bbfd8bf8ef37a511e540e1f916f232b`;

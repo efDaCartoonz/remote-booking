@@ -12,8 +12,10 @@ stage контролируемыми Telegram- и Bitrix24-проверками;
 напоминания подтверждены только для внутреннего изолированного контура.
 Production scanner и delivery остаются выключенными.
 
-IE-01 — Omnidesk write/outbox contract — реализован на текущем кандидате, но
-пока ожидает финальный exact-SHA gate, commit и push. Кандидат покрывает
+IE-01 — Omnidesk write/outbox contract — завершён; реализация проверена на
+`f5398a2`. Полный exact-SHA `make verify` прошёл: backend 307 passed, 45
+skipped; Ruff check/format, frontend 3 passed и build, Compose config и
+миграционный upgrade/downgrade/upgrade через `20260924_0012` прошли. Кандидат покрывает
 исходящие durable intents назначения L1/L2, внутренних заметок и публичного
 предупреждения клиента за 15 минут; поддерживает шаблон и административное
 отключение, а также повторную проверку актуальности при переносе, отмене и
@@ -22,9 +24,9 @@ IE-01 — Omnidesk write/outbox contract — реализован на теку�
 руководителя без отката карточки. Проверены isolated PostgreSQL 8/8,
 compileall и `git diff --check`; временные Docker-ресурсы очищены.
 Использованы forward migrations `20260924_0010`, `20260924_0011`,
-`20260924_0012`; исторические миграции не изменялись. Входящие webhooks/events
-и реальные записи в Omnidesk в проверках не выполнялись. IE-01 не объявляется
-DONE до финального gate.
+`20260924_0012`; исторические миграции не изменялись. BL-04 PG matrix в полном
+gate прошла 11 проверок. Входящие webhooks/events и реальные записи в Omnidesk
+в проверках не выполнялись.
 
 Локальная ветка содержит candidate внутреннего Omnidesk case index/backfill
 (`20260914_0006`, `2815d2e`). Candidate не применён на stage, не меняет
@@ -41,7 +43,8 @@ BL-04 завершён и отправлен в `main` коммитом `40ab192
 `make verify`: backend 300 passed, 37 skipped; frontend 3 tests passed и build
 passed; migration round-trip `0001 -> 0009 -> 0001 -> 0009`; отдельная
 изолированная PostgreSQL matrix BL-04 — 11 passed; временные Docker-ресурсы
-очищены. Push: `9d5863e..40ab192`. Следующий этап IE-01 — NOT STARTED.
+очищены. Push: `9d5863e..40ab192`. Следующий этап IE-02 — Notification and
+reminder E2E matrix, после публикации IE-01.
 
 Минимальный внутренний frontend подтверждён на доверенном LAN stage: ссылка из
 контролируемого Telegram-уведомления ведёт к login, возвращает на карточку после
