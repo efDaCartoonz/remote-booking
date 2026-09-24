@@ -1,28 +1,30 @@
 # RDM — операционная дорожная карта
 
-Дата актуализации статусов: 23 сентября 2026.
-Remote baseline: `origin/main` = `7ab7f38b16ce9b40204ad80b06e94e6f0d452666`.
-Local development baseline: merge `7771821`, объединяющий текущую локальную
-линию с `1643140` (FI-01) и `6de632d` (DB-01).
-Последний подтверждённый milestone baseline: `34aba3362bbfd8bf8ef37a511e540e1f916f232b` (BL-03).
+Дата актуализации статусов: 24 сентября 2026.
+Документальный baseline: `main`/`origin/main` = `7124301` (IE-01 в Git).
+Последний исторически закрытый milestone: IE-01; профильный gate реализации —
+`f5398a2`. После сверки кода BL-04 и IE-01 требуют корректировки и
+повторного gate.
 
 ## Правила статуса и планирования
 
 Эта roadmap построена от фактического Git baseline, `PROJECT.md`,
-`Docs/AI-WORK-STATE.md`, SRS, Concept и Technical Design. Код, старый commit
+SRS, Concept, `decisions/` и Technical Design. Код, старый commit
 или прежний stage-smoke сами по себе не закрывают milestone: готовность требует
 соответствия SRS, тестов в Git и профильной проверки окружения.
 
 `DONE` означает, что на baseline есть реализация, тесты и достаточное для
-workstream доказательство. `PARTIAL` означает, что имеется часть кода или
-тестов, но SRS-контракт не закрыт. `NOT STARTED` означает отсутствие нужного
-versioned результата. Статусы stage/RPi из `PROJECT.md` считаются историческим
-документальным свидетельством и должны подтверждаться отдельно при новом
-stage-gate.
+workstream доказательство. `CORRECTIVE REQUIRED` означает, что исторический gate
+прошёл, но позднейшая сверка обнаружила дефект в принятом сценарии: исправление
+и повторный профильный gate необходимы для восстановления статуса `DONE`.
+`PARTIAL` означает, что имеется часть кода или тестов, но SRS-контракт
+не закрыт. `NOT STARTED` означает отсутствие нужного
+versioned результата. Записи stage/RPi из `Docs/RDM-Stage-History.md` считаются
+историческим документальным свидетельством и требуют отдельного
+подтверждения при новом stage-gate.
 
 После подтверждённого завершения milestone в этом файле обновляются его статус,
-revision и Definition of Done, а в `Docs/AI-WORK-STATE.md` добавляется краткая
-запись с результатами gate и границами проверки. Публикация, stage/RPi deploy
+revision, результаты gate и границы проверки. Публикация, stage/RPi deploy
 и production status фиксируются отдельно и не следуют из локального `DONE`.
 
 Техническая граница всех следующих работ: внутренний Omnidesk `case_id` не
@@ -71,16 +73,17 @@ source-controlled backend/frontend/migration/Compose gate без ручной
 **Цель:** довести схему PostgreSQL и миграции до всех принятых доменных
 инвариантов, не смешивая schema presence с бизнес-готовностью.
 
-**Статус:** PARTIAL — DB-01 завершён; последующие административные и
-policy-изменения остаются в DB-02.
+**Статус:** DONE для запланированных DB-01 и DB-02. Поздние миграции
+IE-01 входят в интеграционный этап; текущее состояние stage-БД не проверено.
 
 **Связанные SRS:** DATA-001..056, REQ-FR-028..035, 126..145, 156..165;
 Technical Design §7.
 
-**Уже есть:** миграции `20260901_0001`…`20260904_0005`, таблицы карточек,
-ролей, графиков, распределения, cycles/attempts, audit, notification intents
-и reminders; exclusion constraint L2 (`backend/alembic/versions/`). README и
-runtime head согласованы на `20260904_0005`.
+**Уже есть:** миграции от `20260901_0001` до `20260924_0012`, таблицы
+карточек, ролей, графиков, распределения, циклов назначения, аудита,
+уведомлений, напоминаний, Omnidesk index/outbox и каталогов; exclusion
+constraint L2 (`backend/alembic/versions/`). README отражает head исходников
+`20260924_0012`; фактический head stage-БД не проверялся.
 
 **Критерий завершения workstream:** все новые доменные поля и ограничения
 вводятся только миграциями; upgrade/downgrade/re-upgrade проверены на
@@ -118,16 +121,16 @@ runtime head согласованы на `20260904_0005`.
 **Цель:** закрыть безопасный публичный API-контракт, аутентификацию и
 авторизацию до расширения пользовательских сценариев.
 
-**Статус:** PARTIAL.
+**Статус:** DONE для BE-01..03; новые контракты требуют отдельной проверки.
 
 **Связанные SRS:** REQ-FR-001..008, 023..035, 083..098; SEC-001..008;
 Technical Design §§4, 8, 12.
 
 **Уже есть:** cookie sessions/login/logout/me, базовые card/frame/manager API,
 manager-create (`backend/app/api/*`, `backend/app/auth/*`). Commits `741acc3`,
-`641aad2`, `39c6daa`, `c7105eb`, `6fc49c8`, `7ab7f38`. Текущий manager
-контракт по-прежнему раскрывает и требует `case_id`; generic state-changing
-endpoints не применяют полную role/action policy. См. `AI-WORK-STATE.md`.
+`641aad2`, `39c6daa`, `c7105eb`, `6fc49c8`, `7ab7f38`.
+Manager browser/API работает с `case_number` без раскрытия `case_id`;
+единая policy проверяет роль, владельца и состояние до записи.
 
 **Критерий завершения workstream:** каждый изменяющий endpoint имеет
 server-side authorization, ownership/state checks, стабильный публичный
@@ -188,7 +191,8 @@ self-create, urgent и retroactive L2; общая validation policy для 120 �
 **Цель:** довести lifecycle, назначение и фоновые действия до полного
 SRS-процесса с транзакционными инвариантами.
 
-**Статус:** PARTIAL.
+**Статус:** DONE для BL-01..03; BL-04 — CORRECTIVE REQUIRED.
+Stage-подтверждение поздних этапов отслеживается отдельно.
 
 **Связанные SRS:** REQ-FR-009..022, 036..165; Concept §§8–12; Technical
 Design §§7, 9, 11, 13.
@@ -271,18 +275,18 @@ notifications; schedule/absence/calendar/out-of-hours computation.
   Omnidesk note outbox без раскрытия case_id (только внутренний outbox intent,
   внешняя доставка относится к IE-01), события/аудит/уведомления и суммарные
   счётчики срочных коллизий в dashboard summary руководителя (REQ-FR-154 не
-  заявляется полностью закрытым сверх счётчиков dashboard). Финальный exact-SHA
-  quality gate документационного коммита ещё не выполнялся; внешняя доставка
-  Omnidesk, stage и deployment не заявляются.
+  заявляется полностью закрытым сверх счётчиков dashboard). Exact-SHA
+  quality gate implementation candidate пройден. Позднейший
+  `make verify` на `f5398a2` включает общий regression gate; stage и deployment
+  BL-03 не заявляются.
 - **Definition of Done:** выполнен на candidate HEAD
   `34aba3362bbfd8bf8ef37a511e540e1f916f232b`: exact quality gate прошёл
   backend regression (297 passed, 26 skipped), frontend native suite
   (3 tests passed) и build passed, Ruff/format passed, migration round-trip
   `0001 -> 20260922_0008 -> 0001 -> 0008` (`20260901_0001 → 20260922_0008 → 20260901_0001 → 20260922_0008`);
   отдельная изолированная PostgreSQL BL-03 behavioral matrix прошла 7/7,
-  cleanup временных ресурсов подтверждён. Финальный exact-SHA gate после
-  обновления документации ещё не проводился; внешняя доставка Omnidesk не
-  заявляется (IE-01); REQ-FR-154 не заявляется сверх счётчиков dashboard.
+  cleanup временных ресурсов подтверждён. Исходящий Omnidesk contract
+  реализован позднее в IE-01; REQ-FR-154 здесь ограничен счётчиками dashboard.
 
 ### BL-04 — Автопродление и background policy completion
 
@@ -300,13 +304,18 @@ returned to L1 under BL-03 rules.
 the old constraints exists.
 - **SRS:** REQ-FR-137..143 (владеет требованиями автопродления); Technical Design §9.
 - **Зависимости:** DB-02, BL-03, FI-01.
-- **Статус:** DONE; commit `40ab192` pushed to `main` (`9d5863e..40ab192`).
+- **Статус:** CORRECTIVE REQUIRED; commit `40ab192` pushed to `main`
+  (`9d5863e..40ab192`). Исторический gate пройден, однако versioned Compose
+  worker слушает только `notifications`, а `extend_sessions` направлен в
+  `scheduler`; scheduled task не исполняется в такой конфигурации.
 - **Подтверждённое evidence:** exact-SHA `make verify` на `40ab192` прошёл:
   backend 300 passed, 37 skipped; frontend 3 tests passed и build passed;
   migration round-trip `0001 -> 0009 -> 0001 -> 0009`. Изолированная
   PostgreSQL BL-04 matrix — 11 passed; временные Docker-ресурсы очищены.
-- **Definition of Done:** выполнен на exact SHA `40ab192`; commit доставлен
-  в `main`. Stage/deployment и внешняя доставка Omnidesk не заявляются.
+- **Definition of Done:** исторически зафиксирован на exact SHA `40ab192`;
+  commit доставлен в `main`. До восстановления `DONE` нужно исправить очередь
+  и подтвердить путь Beat → queue → worker на изолированном контуре.
+  Stage/deployment и внешняя доставка Omnidesk не заявляются.
 
 ## 5. Frontend
 
@@ -317,9 +326,9 @@ the old constraints exists.
 
 **Связанные SRS:** UI-001..051, REQ-FR-023..165; Technical Design §§5–6, 13, 17.
 
-**Уже есть:** один Vue SPA с login/logout, card detail/actions, manager list/
-calendar и manager-create (`frontend/src/App.vue`); type-check/build script.
-Commits `6fc49c8`, `7ab7f38`. Нет frontend unit/e2e tests и Frame UI.
+**Уже есть:** Vue SPA с login/logout, card detail/actions, manager list/
+calendar и manager-create; native frontend tests и production build входят в
+`make verify`. Полный role E2E и клиентский Frame UI остаются отдельной работой.
 
 **Критерий завершения workstream:** UI не раскрывает internal IDs, отображает
 только разрешённые действия, обрабатывает required errors и имеет automated
@@ -331,8 +340,9 @@ unit/e2e coverage по ролям и timezones.
 double-submit и case-number-only форма без поля/маршрута/DOM `case_id`.
 - **SRS:** REQ-FR-025, 028..033, UI-031..037, SEC-001..008.
 - **Зависимости:** BE-01, FI-01.
-- **Статус:** PARTIAL — форма и client-side bounds есть, но она требует
-  `case_id` и тестов нет.
+- **Статус:** PARTIAL — форма использует `case_number`, а native frontend tests
+  входят в gate. Полный browser regression по double-submit и ID leak ещё
+  не подтверждён как отдельный FE-01 gate.
 - **Definition of Done:** type-check/build/unit tests pass; browser regression
 confirms no internal ID exposure and only one create POST on rapid submit.
 
@@ -400,7 +410,10 @@ notification); retry/rate-limit/error classification.
   retry/rate/error).
 - **Зависимости:** BE-01, BL-02, BL-03, FI-01; TD-OQ-002/003 must be resolved
 before writer payloads.
-- **Статус:** DONE; реализация проверена на `f5398a2`. Реализован
+- **Статус:** CORRECTIVE REQUIRED; реализация исторически проверена на
+  `f5398a2`, но 15-минутный сценарий требует исправления и повторного gate:
+  `CardStatus.CONFIRMED=2`, тогда как создание и delivery-time проверка
+  публичного сообщения используют `status_code=1`. Реализован
   durable outbox для назначения L1/L2, внутренних заметок и публичного
   15-минутного предупреждения клиента; добавлены шаблон и административное
   отключение, а также delivery-time recheck/revocation при переносе, отмене и
@@ -416,8 +429,11 @@ before writer payloads.
   PostgreSQL matrix в gate — 11 passed; отдельная IE-01 isolated PostgreSQL
   matrix — 8 passed; временные Docker-ресурсы очищены. Исторические миграции
   сохранены неизменными.
-- **Definition of Done:** mocked client tests cover success, 4xx, retryable,
-429 and idempotent repeats; no external response body/secret/internal ID leaks.
+- **Definition of Done:** исторический mocked client gate покрывал success,
+  4xx, retryable, 429 и idempotent repeats; внешние данные и секреты не
+  раскрывались. Для восстановления `DONE` нужно исправить статусный контракт,
+  проверить создание, отмену и отправку предупреждения на реальном статусе
+  `CONFIRMED`, затем повторить профильный gate.
 
 ### IE-02 — Notification and reminder E2E matrix
 
@@ -449,9 +465,9 @@ secrets; controlled external stage smoke is a separate subsequent gate.
 
 **Связанные SRS:** NFR-001..029, SEC-001..008; Technical Design §14.
 
-**Уже есть:** Compose, `.env.example`, systemd unit; `PROJECT.md` и README
-фиксируют historical stage evidence for selected revisions. Однако текущий RPi
-state не проверялся в reconciliation и README migration head устарел.
+**Уже есть:** Compose, `.env.example`, systemd unit и архив отдельных
+stage-проверок в `Docs/RDM-Stage-History.md`. README содержит head исходников
+`20260924_0012`; состояние RPi и фактический head его БД не проверялись.
 
 **Критерий завершения workstream:** stage deployment uses a pinned, published
 Git revision, preflight/backup/migration/smoke/rollback evidence and no
@@ -559,13 +575,13 @@ next functional milestone and never substitutes for its tests.
 ## Текущий фокус
 
 - **CURRENT WORKSTREAM:** Integration/E2E.
-- **CURRENT MILESTONE:** IE-01 — Omnidesk write/outbox contract — DONE.
-- **NEXT MILESTONE:** IE-02 — Notification and reminder E2E matrix.
-- **LAST COMPLETED MILESTONE:** IE-01 — Omnidesk write/outbox contract
-  (implementation gate passed on `f5398a2`, PostgreSQL matrix 8 passed);
-  BL-04 — Auto-extension and background policy completion
-  (DONE на exact SHA `40ab192`; exact-SHA gate прошёл, commit pushed to `main`);
+- **CURRENT MILESTONE:** corrective BL-04 и IE-01; IE-02 остаётся PARTIAL.
+- **NEXT MILESTONE:** исправить очередь автопродления и статус публичного
+  предупреждения, повторить профильные gates; затем завершить IE-02.
+- **LAST HISTORICALLY GATED MILESTONE:** IE-01 — Omnidesk write/outbox contract
+  (gate прошёл на `f5398a2`, PostgreSQL matrix 8 passed; сейчас CORRECTIVE
+  REQUIRED); BL-04 — Auto-extension and background policy completion
+  (gate прошёл на `40ab192`, commit pushed to `main`; сейчас CORRECTIVE REQUIRED);
   BL-03 — Urgent, retroactive, execution and completion
-  (DONE на implementation candidate `34aba3362bbfd8bf8ef37a511e540e1f916f232b`;
-  финальный exact-SHA gate документации ещё не проводился, внешняя доставка Omnidesk
-  не заявляется, REQ-FR-154 не заявляется сверх счётчиков dashboard).
+  (implementation gate прошёл на `34aba3362bbfd8bf8ef37a511e540e1f916f232b`;
+  stage/deployment BL-03 не заявляются, REQ-FR-154 ограничен счётчиками dashboard).
