@@ -46,7 +46,7 @@ from app.manager_create import (
     ManagerCreateConflictError,
     run_manager_create_transaction,
 )
-from app.notifications import PostgresNotificationService
+from app.notifications import NotificationService, PostgresNotificationService
 from app.omnidesk_index.resolver import (
     PublicTicketResolutionError,
     resolve_ticket_by_case_number,
@@ -62,14 +62,25 @@ def get_card_repository(
 
 
 def get_notification_service(
-    connection: Annotated[object, Depends(get_db)],
-) -> PostgresNotificationService:
-    return PostgresNotificationService(connection)
+    repository: Annotated[CardRepository, Depends(get_card_repository)],
+) -> NotificationService | None:
+    """Build notifications from the same repository connection as card writes.
+
+    Keeping this dependency downstream of ``get_card_repository`` means tests
+    overriding the repository do not unexpectedly open a real database
+    connection.  Production always supplies ``PostgresCardRepository`` and
+    therefore retains the normal PostgreSQL notification service.
+    """
+    if not isinstance(repository, PostgresCardRepository):
+        return None
+    return PostgresNotificationService(repository.connection)
 
 
 def get_card_service(
     repository: Annotated[CardRepository, Depends(get_card_repository)],
-    notifications: Annotated[PostgresNotificationService, Depends(get_notification_service)],
+    notifications: Annotated[
+        NotificationService | None, Depends(get_notification_service)
+    ],
 ) -> CardService:
     return CardService(repository, notifications)
 
