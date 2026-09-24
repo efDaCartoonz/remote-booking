@@ -33,7 +33,7 @@ def test_quality_gate_uses_template_env_and_isolated_docker_project() -> None:
         script.count("PYTHONPATH=/app python scripts/migration_contract_check.py") == 4
     )
     assert "rdm-quality-gate-$$-$RANDOM" in script
-    assert script.count('grep -qx "20260923_0009 (head)"') == 2
+    assert script.count('grep -qx "20260924_0012 (head)"') == 2
 
 
 def test_docker_quality_path_does_not_require_host_python_or_npm() -> None:

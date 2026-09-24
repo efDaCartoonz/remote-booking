@@ -36,6 +36,16 @@ class OmnideskTicketClient(Protocol):
 
     def reopen_ticket(self, case_id: str) -> OmnideskTicket: ...
 
+    def assign_staff(self, case_id: str, staff_id: int) -> None: ...
+
+    def add_internal_note(
+        self, case_id: str, content: str, staff_id: int | None = None
+    ) -> None: ...
+
+    def send_public_message(
+        self, case_id: str, content: str, staff_id: int | None = None
+    ) -> None: ...
+
     def list_cases(
         self,
         *,
@@ -156,6 +166,43 @@ class HttpOmnideskTicketClient:
             raise OmnideskTicketReopenError("omnidesk_reopened_ticket_id_mismatch")
         return reopened
 
+    def assign_staff(self, case_id: str, staff_id: int) -> None:
+        self._request(
+            "PUT",
+            f"/api/cases/{quote(case_id, safe='')}.json",
+            json={"case": {"staff_id": staff_id}},
+        )
+
+    def add_internal_note(
+        self, case_id: str, content: str, staff_id: int | None = None
+    ) -> None:
+        message: dict[str, Any] = {
+            "content": content,
+            "note": True,
+        }
+        if staff_id is not None:
+            message["staff_id"] = staff_id
+        self._request(
+            "POST",
+            f"/api/cases/{quote(case_id, safe='')}/messages.json",
+            json={"message": message},
+        )
+
+    def send_public_message(
+        self, case_id: str, content: str, staff_id: int | None = None
+    ) -> None:
+        message: dict[str, Any] = {
+            "content": content,
+            "note": False,
+        }
+        if staff_id is not None:
+            message["staff_id"] = staff_id
+        self._request(
+            "POST",
+            f"/api/cases/{quote(case_id, safe='')}/messages.json",
+            json={"message": message},
+        )
+
     def list_cases(
         self,
         *,
@@ -243,6 +290,19 @@ class NotConfiguredOmnideskTicketClient:
         raise OmnideskUnavailableError("omnidesk_client_not_configured")
 
     def reopen_ticket(self, case_id: str) -> OmnideskTicket:
+        raise OmnideskUnavailableError("omnidesk_client_not_configured")
+
+    def assign_staff(self, case_id: str, staff_id: int) -> None:
+        raise OmnideskUnavailableError("omnidesk_client_not_configured")
+
+    def add_internal_note(
+        self, case_id: str, content: str, staff_id: int | None = None
+    ) -> None:
+        raise OmnideskUnavailableError("omnidesk_client_not_configured")
+
+    def send_public_message(
+        self, case_id: str, content: str, staff_id: int | None = None
+    ) -> None:
         raise OmnideskUnavailableError("omnidesk_client_not_configured")
 
     def list_cases(self, **kwargs: Any) -> OmnideskCaseList:

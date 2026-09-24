@@ -14,6 +14,7 @@ from app.notifications import (
     TelegramAdapter,
     TemporaryDeliveryError,
     deliver_pending_notifications,
+    _render_message,
 )
 from app.worker import celery_app
 
@@ -91,12 +92,14 @@ def make_intent(
     channel_code: int = 0,
     attempts: int = 1,
     recipient: str | None = "recipient-1",
+    event_type_code: int = 2,
 ) -> NotificationIntent:
     return NotificationIntent(
         id=intent_id,
         card_id=10,
         recipient_user_id=20,
         channel_code=channel_code,
+        event_type_code=event_type_code,
         attempts=attempts,
         locked_at=NOW,
         recipient=recipient,
@@ -108,6 +111,14 @@ def make_intent(
         planned_duration_minutes=60,
         recipient_timezone="UTC",
     )
+
+
+def test_missing_omnidesk_staff_mapping_message_is_actionable() -> None:
+    intent = make_intent(event_type_code=8)
+    message = _render_message(intent)
+
+    assert "Не настроена связь исполнителя RDM с сотрудником Omnidesk" in message
+    assert "RDM-000010" in message
 
 
 @pytest.mark.parametrize(

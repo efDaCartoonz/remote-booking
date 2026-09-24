@@ -61,14 +61,16 @@ def get_card_repository(
     return PostgresCardRepository(connection)
 
 
+def get_notification_service(
+    connection: Annotated[object, Depends(get_db)],
+) -> PostgresNotificationService:
+    return PostgresNotificationService(connection)
+
+
 def get_card_service(
     repository: Annotated[CardRepository, Depends(get_card_repository)],
+    notifications: Annotated[PostgresNotificationService, Depends(get_notification_service)],
 ) -> CardService:
-    notifications = (
-        PostgresNotificationService(repository.connection)
-        if isinstance(repository, PostgresCardRepository)
-        else None
-    )
     return CardService(repository, notifications)
 
 

@@ -547,10 +547,18 @@ class CardService:
             user_agent=user_agent,
         )
         if card.status_code == int(CardStatus.COMPLETED):
-            self._create_omnidesk_completion_note(
+            self._create_omnidesk_internal_note(
                 card=card,
                 source_event_id=event_id,
                 actor_user_id=actor_user_id,
+                note_type="completion",
+            )
+        else:
+            self._create_omnidesk_internal_note(
+                card=card,
+                source_event_id=event_id,
+                actor_user_id=actor_user_id,
+                note_type="create",
             )
         for urgent_collision in urgent_collisions:
             self._record_urgent_card_collision(
@@ -1166,10 +1174,11 @@ class CardService:
             user_agent=user_agent,
         )
         if target_status == CardStatus.COMPLETED:
-            self._create_omnidesk_completion_note(
+            self._create_omnidesk_internal_note(
                 card=updated,
                 source_event_id=event_id,
                 actor_user_id=actor_user_id,
+                note_type="completion",
             )
         if target_status in {CardStatus.CANCELLED, CardStatus.COMPLETED} and hasattr(
             self.repository, "close_reminder_schedules"
@@ -1177,22 +1186,55 @@ class CardService:
             self.repository.close_reminder_schedules(card_id=updated.id)
         return updated
 
-    def _create_omnidesk_completion_note(
+    def _create_omnidesk_outbox_intent(
+        self,
+        *,
+        card: CardRecord,
+        source_event_id: int,
+        action_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if not hasattr(self.repository, "create_omnidesk_outbox_intent"):
+            return
+        self.repository.create_omnidesk_outbox_intent(
+            card_id=card.id,
+            source_event_id=source_event_id,
+            omnidesk_ticket_number=card.omnidesk_ticket_number,
+            action_type=action_type,
+            payload=payload,
+        )
+
+    def _create_omnidesk_internal_note(
         self,
         *,
         card: CardRecord,
         source_event_id: int,
         actor_user_id: int | None,
+        note_type: str,
     ) -> None:
-        if not hasattr(self.repository, "create_omnidesk_internal_note_intent"):
-            return
-        payload = _safe_omnidesk_completion_payload(card, actor_user_id=actor_user_id)
-        self.repository.create_omnidesk_internal_note_intent(
-            card_id=card.id,
-            source_event_id=source_event_id,
-            omnidesk_ticket_number=card.omnidesk_ticket_number,
-            payload=payload,
-        )
+        if note_type == "completion":
+            payload = _safe_omnidesk_completion_payload(
+                card, actor_user_id=actor_user_id
+            )
+            self._create_omnidesk_outbox_intent(
+                card=card,
+                source_event_id=source_event_id,
+                action_type="internal_note_completion",
+                payload=payload,
+            )
+        else:
+            action_map = {
+                "create": "создана",
+                "reject": "отклонена",
+                "cancel": "отменена",
+            }
+            content = f"Карточка RDM {action_map.get(note_type, note_type)}"
+            self._create_omnidesk_outbox_intent(
+                card=card,
+                source_event_id=source_event_id,
+                action_type="internal_note",
+                payload={"content": content, "actor_user_id": actor_user_id},
+            )
 
     def _record_user_card_update(
         self,

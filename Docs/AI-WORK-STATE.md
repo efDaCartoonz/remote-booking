@@ -3,6 +3,23 @@
 Дата reconciliation-аудита: 16 сентября 2026.
 Git baseline: `origin/main` = `7ab7f38b16ce9b40204ad80b06e94e6f0d452666` (`fix: validate manager card creation form`).
 
+IE-01 — Omnidesk write/outbox contract: текущий implementation candidate
+реализует durable outbound intents для назначения L1/L2, внутренних заметок и
+15-минутного публичного предупреждения клиента по текущему каналу Omnidesk.
+Шаблон и административное отключение поддержаны; при переносе, отмене и
+повторном подтверждении выполняется проверка актуальности и отмена/замена
+ожидающей доставки. Отсутствующий `omnidesk_staff_id` не откатывает карточку:
+фиксируется постоянная `external-sync` ошибка и создаются notification intents
+для администратора и руководителя. Входящие Omnidesk webhooks/events и реальные
+внешние записи в рамках проверки не выполняются.
+
+IE-01 evidence so far: independent acceptance clean after scope correction;
+isolated PostgreSQL matrix 8 passed; compileall and `git diff --check` passed;
+temporary Docker resources cleaned. Forward migrations: `20260924_0010`,
+`20260924_0011`, `20260924_0012` (staff-mapping notification event type);
+historical migrations remain immutable. Final exact-SHA gate, commit and push
+are pending, so IE-01 is not yet DONE.
+
 Reconciliation 17 сентября 2026: локальный development baseline — merge
 `7771821`; он объединяет текущую локальную линию с FI-01 (`1643140`) и DB-01
 (`6de632d`). FI-01 и DB-01 завершены в этой локальной линии. Дальнейшие

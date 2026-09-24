@@ -390,13 +390,29 @@ mock contract plus controlled stage E2E.
 ### IE-01 — Omnidesk write/outbox contract
 
 - **Результат в Git:** durable intents/outbox and adapters for assignment,
-completion internal note, client-facing planned notifications and incoming
-events; retry/rate-limit/error classification.
-- **SRS:** REQ-FR-098, 118; INT-001..021; Technical Design §§9–10.
+completion internal note, client-facing planned notifications (15-min public
+notification); retry/rate-limit/error classification.
+- **SRS:** REQ-FR-098, 118; INT-001..021, INT-048..059;
+  Technical Design §§9–10.
+- **Scope Exclude:** Входящие webhooks/события Omnidesk полностью исключены из
+  продукта как некритичные. IE-01 ограничен исходящим Omnidesk write/durable
+  outbox contract (assignee sync, internal notes, 15-min public notification,
+  retry/rate/error).
 - **Зависимости:** BE-01, BL-02, BL-03, FI-01; TD-OQ-002/003 must be resolved
 before writer payloads.
-- **Статус:** PARTIAL — read/reopen and notification delivery exist; the full
-Omnidesk writer/event/outbox contract does not.
+- **Статус:** IMPLEMENTED — pending final exact-SHA gate and push. Реализован
+  durable outbox для назначения L1/L2, внутренних заметок и публичного
+  15-минутного предупреждения клиента; добавлены шаблон и административное
+  отключение, а также delivery-time recheck/revocation при переносе, отмене и
+  повторном подтверждении. Отсутствующий `omnidesk_staff_id` даёт постоянную
+  `external-sync` ошибку и intents для администратора и руководителя без
+  отката карточки.
+- **Миграции:** forward migrations `20260924_0010`, `20260924_0011`,
+  `20260924_0012`; исторические миграции сохранены неизменными.
+- **Доказательства текущего кандидата:** независимая приёмка чистая после
+  устранения замечаний по scope; isolated PostgreSQL matrix — 8 passed;
+  compileall и `git diff --check` — passed; временные Docker-ресурсы очищены.
+  Финальные exact-SHA gate, commit и push ещё не выполнены.
 - **Definition of Done:** mocked client tests cover success, 4xx, retryable,
 429 and idempotent repeats; no external response body/secret/internal ID leaks.
 

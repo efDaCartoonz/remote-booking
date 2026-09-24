@@ -90,9 +90,9 @@ def assert_head_invariants(connection: psycopg.Connection) -> None:
     ).fetchone()
     assert overdue_at == ("overdue_at",), overdue_at
     outbox_table = connection.execute(
-        "SELECT to_regclass('omnidesk_internal_note_outbox')"
+        "SELECT to_regclass('omnidesk_outbox')"
     ).fetchone()
-    assert outbox_table == ("omnidesk_internal_note_outbox",), outbox_table
+    assert outbox_table == ("omnidesk_outbox",), outbox_table
 
     reminder_index = connection.execute(
         """

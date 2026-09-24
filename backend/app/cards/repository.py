@@ -183,12 +183,13 @@ class CardRepository(Protocol):
 
     def has_active_result_code(self, result_code: int) -> bool: ...
 
-    def create_omnidesk_internal_note_intent(
+    def create_omnidesk_outbox_intent(
         self,
         *,
         card_id: int,
         source_event_id: int,
         omnidesk_ticket_number: str,
+        action_type: str,
         payload: dict[str, Any],
     ) -> int: ...
 
@@ -1365,41 +1366,164 @@ class PostgresCardRepository:
             return None
         return _card_from_row(row)
 
-    def create_omnidesk_internal_note_intent(
+    def create_omnidesk_outbox_intent(
         self,
         *,
         card_id: int,
         source_event_id: int,
         omnidesk_ticket_number: str,
+        action_type: str,
         payload: dict[str, Any],
     ) -> int:
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                INSERT INTO omnidesk_internal_note_outbox (
+                INSERT INTO omnidesk_outbox (
                     card_id,
                     source_event_id,
                     omnidesk_ticket_number,
+                    action_type,
                     payload
                 )
                 VALUES (
                     %(card_id)s,
                     %(source_event_id)s,
                     %(omnidesk_ticket_number)s,
+                    %(action_type)s,
                     %(payload)s
                 )
-                ON CONFLICT (source_event_id) DO NOTHING
+                ON CONFLICT (source_event_id, action_type) DO NOTHING
                 RETURNING id
                 """,
                 {
                     "card_id": card_id,
                     "source_event_id": source_event_id,
                     "omnidesk_ticket_number": omnidesk_ticket_number,
+                    "action_type": action_type,
                     "payload": Jsonb(payload),
                 },
             )
             row = cursor.fetchone()
         return row["id"] if row is not None else 0
+
+    def _evaluate_omnidesk_intents(
+        self,
+        *,
+        card_id: int,
+        event_id: int,
+        old_values: dict[str, Any] | None,
+        new_values: dict[str, Any] | None,
+    ) -> None:
+        if not new_values:
+            return
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT omnidesk_ticket_number FROM connection_cards WHERE id = %(id)s",
+                {"id": card_id},
+            )
+            row = cursor.fetchone()
+            if not row or not row["omnidesk_ticket_number"]:
+                return
+            ticket_number = row["omnidesk_ticket_number"]
+
+            old_values = old_values or {}
+
+            # L2 Assignment
+            old_l2 = old_values.get("l2_engineer_id")
+            new_l2 = new_values.get("l2_engineer_id")
+            if new_l2 is not None and old_l2 != new_l2:
+                self.create_omnidesk_outbox_intent(
+                    card_id=card_id,
+                    source_event_id=event_id,
+                    omnidesk_ticket_number=ticket_number,
+                    action_type="l2_assignment",
+                    payload={"user_id": new_l2, "target": "l2"},
+                )
+
+            # L1 Assignment
+            old_l1 = old_values.get("l1_owner_id")
+            new_l1 = new_values.get("l1_owner_id")
+            if new_l1 is not None and old_l1 != new_l1:
+                self.create_omnidesk_outbox_intent(
+                    card_id=card_id,
+                    source_event_id=event_id,
+                    omnidesk_ticket_number=ticket_number,
+                    action_type="l1_assignment",
+                    payload={"user_id": new_l1, "target": "l1"},
+                )
+
+            # Public Notification on CONFIRMED or RESCHEDULED WHILE CONFIRMED
+            old_status = old_values.get("status_code")
+            new_status = new_values.get("status_code")
+            is_newly_confirmed = new_status == 1 and old_status != 1
+            is_rescheduled_while_confirmed = (
+                new_status == 1
+                and old_status == 1
+                and new_values.get("planned_start_at") != old_values.get("planned_start_at")
+            )
+
+            # A queued warning belongs to one confirmation/schedule. Retire every
+            # undelivered warning before creating the replacement so a move or
+            # cancel/reconfirm cycle cannot send an obsolete message as well.
+            if (
+                old_status == 1 and new_status != 1
+            ) or is_rescheduled_while_confirmed:
+                cursor.execute(
+                    """
+                    UPDATE omnidesk_outbox
+                    SET status_code = 2,
+                        locked_at = NULL,
+                        error_message = 'superseded_public_notification'
+                    WHERE card_id = %(card_id)s
+                      AND action_type = 'public_notification'
+                      AND status_code = 0
+                    """,
+                    {"card_id": card_id},
+                )
+
+            if is_newly_confirmed or is_rescheduled_while_confirmed:
+                cursor.execute(
+                    "SELECT key, value FROM system_settings WHERE key IN ('omnidesk_public_notification_enabled', 'omnidesk_public_notification_template')"
+                )
+                settings = {row["key"]: row["value"] for row in cursor.fetchall()}
+                if settings.get("omnidesk_public_notification_enabled") is True:
+                    template = settings.get("omnidesk_public_notification_template")
+                    if not isinstance(template, str) or not template.strip():
+                        return
+                    cursor.execute(
+                        """
+                        INSERT INTO omnidesk_outbox (
+                            card_id,
+                            source_event_id,
+                            omnidesk_ticket_number,
+                            action_type,
+                            payload,
+                            next_attempt_at
+                        )
+                        VALUES (
+                            %(card_id)s,
+                            %(source_event_id)s,
+                            %(omnidesk_ticket_number)s,
+                            'public_notification',
+                            %(payload)s,
+                            %(next_attempt_at)s
+                        )
+                        ON CONFLICT (source_event_id, action_type) DO NOTHING
+                        """,
+                        {
+                            "card_id": card_id,
+                            "source_event_id": event_id,
+                            "omnidesk_ticket_number": ticket_number,
+                            "payload": __import__("psycopg").types.json.Jsonb(
+                                {
+                                    "content": template,
+                                    "planned_start_at": new_values.get("planned_start_at")
+                                }
+                            ),
+                            "next_attempt_at": __import__("datetime").datetime.fromisoformat(new_values["planned_start_at"]) - __import__("datetime").timedelta(minutes=15) if new_values.get("planned_start_at") else None,
+                        },
+                    )
 
     def add_card_event(
         self,
@@ -1445,7 +1569,14 @@ class PostgresCardRepository:
                     "comment": comment,
                 },
             )
-            return int(cursor.fetchone()["id"])
+            event_id = int(cursor.fetchone()["id"])
+            self._evaluate_omnidesk_intents(
+                card_id=card_id,
+                event_id=event_id,
+                old_values=old_values,
+                new_values=new_values,
+            )
+            return event_id
 
     def add_audit_log(
         self,

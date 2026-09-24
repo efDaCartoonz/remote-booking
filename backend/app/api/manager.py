@@ -131,6 +131,16 @@ class SessionExtensionIntervalResponse(BaseModel):
     interval_seconds: int
 
 
+class PublicNotificationSettingsUpdate(BaseModel):
+    enabled: bool
+    template: str = Field(min_length=1)
+
+
+class PublicNotificationSettingsResponse(BaseModel):
+    enabled: bool
+    template: str
+
+
 @router.get(
     "/settings/session-extension-interval",
     response_model=SessionExtensionIntervalResponse,
@@ -157,6 +167,35 @@ def update_session_extension_interval(
             actor_user_id=user.id,
         )
     return SessionExtensionIntervalResponse(interval_seconds=payload.interval_seconds)
+
+
+@router.get(
+    "/settings/public-notification",
+    response_model=PublicNotificationSettingsResponse,
+)
+def get_public_notification_settings(
+    _user: Annotated[UserAuthRecord, Depends(require_admin_role)],
+) -> PublicNotificationSettingsResponse:
+    with db_connection() as connection:
+        settings = AdministrativeRepository(connection).get_public_notification_settings()
+    return PublicNotificationSettingsResponse(**settings)
+
+
+@router.put(
+    "/settings/public-notification",
+    response_model=PublicNotificationSettingsResponse,
+)
+def update_public_notification_settings(
+    payload: PublicNotificationSettingsUpdate,
+    user: Annotated[UserAuthRecord, Depends(require_admin_role)],
+) -> PublicNotificationSettingsResponse:
+    with db_connection() as connection:
+        AdministrativeRepository(connection).set_public_notification_settings(
+            enabled=payload.enabled,
+            template=payload.template,
+            actor_user_id=user.id,
+        )
+    return PublicNotificationSettingsResponse(enabled=payload.enabled, template=payload.template)
 
 
 def _manager_ticket(client: OmnideskTicketClient, case_id: str, case_number: str):

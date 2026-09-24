@@ -26,6 +26,7 @@ NOTIFICATION_EVENT_CODES = {
     "l1_reminder": 5,
     "urgent_collision": 6,
     "card_ended_automatically": 7,
+    "omnidesk_staff_mapping_missing": 8,
 }
 NOTIFICATION_CHANNEL_CODES = {"telegram": 0, "bitrix24": 1}
 SAFE_NOTIFICATION_PAYLOAD_KEYS = frozenset({"card_id", "assignment"})
@@ -299,6 +300,7 @@ class NotificationIntent:
     card_id: int | None
     recipient_user_id: int | None
     channel_code: int
+    event_type_code: int
     attempts: int
     locked_at: datetime
     recipient: str | None
@@ -396,7 +398,7 @@ class PostgresNotificationRuntimeRepository:
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
-                RETURNING id, card_id, recipient_user_id, channel_code, attempts, locked_at
+                RETURNING id, card_id, recipient_user_id, channel_code, event_type_code, attempts, locked_at
                 """,
                 {"now": now, "pending": PENDING, "max_attempts": max_attempts},
             )
@@ -440,6 +442,7 @@ class PostgresNotificationRuntimeRepository:
             card_id=row["card_id"],
             recipient_user_id=row["recipient_user_id"],
             channel_code=row["channel_code"],
+            event_type_code=row["event_type_code"],
             attempts=row["attempts"],
             locked_at=row["locked_at"],
             recipient=recipient,
@@ -594,6 +597,11 @@ def _render_message(intent: NotificationIntent) -> str:
     ticket = intent.omnidesk_ticket_number or "не указан"
     card_number = intent.card_number or f"RDM-{intent.id}"
     url = f"{settings.notification_card_base_url.rstrip('/')}/cards/{intent.card_public_id}"
+    if intent.event_type_code == NOTIFICATION_EVENT_CODES["omnidesk_staff_mapping_missing"]:
+        return (
+            f"Не настроена связь исполнителя RDM с сотрудником Omnidesk. "
+            f"Проверьте назначение в карточке {card_number}; тикет {ticket}. {url}"
+        )
     client = (
         f"; клиент {intent.client_display_name}" if intent.client_display_name else ""
     )

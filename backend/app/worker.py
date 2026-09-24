@@ -10,6 +10,11 @@ from app.notifications import (
     deliver_pending_notifications,
 )
 from app.reminders import PostgresReminderRepository, ReminderService
+from app.integrations.omnidesk_outbox import (
+    PostgresOmnideskOutboxRepository,
+    deliver_pending_omnidesk_outbox,
+)
+from app.frame.omnidesk import get_omnidesk_ticket_client
 
 celery_app = Celery(
     "rdm",
@@ -20,6 +25,7 @@ celery_app = Celery(
 celery_app.conf.timezone = "Europe/Moscow"
 celery_app.conf.enable_utc = True
 celery_app.conf.task_routes = {
+    "app.worker.deliver_omnidesk_outbox": {"queue": "notifications"},
     "app.worker.deliver_notifications": {"queue": "notifications"},
     "app.worker.scan_reminders": {"queue": "notifications"},
     "app.worker.extend_sessions": {"queue": "scheduler"},
@@ -80,4 +86,20 @@ celery_app.conf.beat_schedule["extend-sessions"] = {
     "task": "app.worker.extend_sessions",
     "schedule": 60.0,  # Run every minute
     "options": {"queue": "scheduler"},
+}
+
+
+@celery_app.task(name="app.worker.deliver_omnidesk_outbox", queue="notifications")
+def deliver_omnidesk_outbox() -> int:
+    with db_connection() as connection:
+        return deliver_pending_omnidesk_outbox(
+            PostgresOmnideskOutboxRepository(connection),
+            get_omnidesk_ticket_client(),
+        )
+
+
+celery_app.conf.beat_schedule["deliver-omnidesk-outbox"] = {
+    "task": "app.worker.deliver_omnidesk_outbox",
+    "schedule": 10.0,
+    "options": {"queue": "notifications"},
 }

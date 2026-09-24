@@ -172,6 +172,47 @@ class AdministrativeRepository:
                 return int(row["value"])
             return 900
 
+    def get_public_notification_settings(self) -> dict:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT key, value FROM system_settings WHERE key IN ('omnidesk_public_notification_enabled', 'omnidesk_public_notification_template')"
+            )
+            settings = {r["key"]: r["value"] for r in cursor.fetchall()}
+            return {
+                "enabled": settings.get("omnidesk_public_notification_enabled", True),
+                "template": settings.get("omnidesk_public_notification_template") or ""
+            }
+
+    def set_public_notification_settings(self, *, enabled: bool, template: str, actor_user_id: int) -> None:
+        if not isinstance(template, str) or not template.strip():
+            raise ValueError("notification_template_required")
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT key, value FROM system_settings WHERE key IN ('omnidesk_public_notification_enabled', 'omnidesk_public_notification_template') FOR UPDATE"
+            )
+            old_settings = {r["key"]: r["value"] for r in cursor.fetchall()}
+            cursor.execute(
+                """
+                INSERT INTO system_settings (key, value, updated_by_id, updated_at)
+                VALUES
+                    ('omnidesk_public_notification_enabled', %s, %s, now()),
+                    ('omnidesk_public_notification_template', %s, %s, now())
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by_id = EXCLUDED.updated_by_id, updated_at = now()
+                """,
+                (
+                    __import__("psycopg").types.json.Jsonb(enabled), actor_user_id,
+                    __import__("psycopg").types.json.Jsonb(template), actor_user_id,
+                )
+            )
+        self._audit(
+            actor_user_id=actor_user_id,
+            action=AuditAction.UPDATE,
+            entity_type="system_setting",
+            entity_id=0,
+            old_values=old_settings,
+            new_values={"omnidesk_public_notification_enabled": enabled, "omnidesk_public_notification_template": template},
+        )
+
     def set_extension_interval(
         self, *, interval_seconds: int, actor_user_id: int
     ) -> None:

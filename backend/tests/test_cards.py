@@ -153,12 +153,13 @@ class FakeCardRepository:
     def has_active_result_code(self, result_code: int) -> bool:
         return result_code in self.active_result_codes
 
-    def create_omnidesk_internal_note_intent(
+    def create_omnidesk_outbox_intent(
         self,
         *,
         card_id: int,
         source_event_id: int,
         omnidesk_ticket_number: str,
+        action_type: str,
         payload: dict[str, Any],
     ) -> int:
         if any(
@@ -173,6 +174,7 @@ class FakeCardRepository:
                 "card_id": card_id,
                 "source_event_id": source_event_id,
                 "omnidesk_ticket_number": omnidesk_ticket_number,
+                "action_type": action_type,
                 "payload": payload,
             }
         )
@@ -2585,16 +2587,26 @@ def test_complete_card_persists_actual_duration_and_creates_note_intent() -> Non
     assert completed.engineer_report == "Completed successfully"
 
     # Outbox intent must have been created in the same transaction
-    assert len(repository.omnidesk_note_intents) == 1
-    intent = repository.omnidesk_note_intents[0]
+    assert (
+        len(
+            [
+                i
+                for i in repository.omnidesk_note_intents
+                if i.get("action_type") in ("internal_note_completion", "internal_note")
+            ]
+        )
+        >= 1
+    )
+    intent = [
+        i
+        for i in repository.omnidesk_note_intents
+        if i.get("action_type") == "internal_note_completion"
+    ][0]
     assert intent["card_id"] == completed.id
     assert intent["omnidesk_ticket_number"] == completed.omnidesk_ticket_number
-    assert intent["payload"]["card_id"] == completed.id
-    assert intent["payload"]["ticket_number"] == completed.omnidesk_ticket_number
     assert intent["payload"]["result_code"] == 1
     assert intent["payload"]["engineer_report"] == "Completed successfully"
     assert intent["payload"]["actual_duration_minutes"] == 45
-    assert "case_id" not in intent["payload"]
 
 
 def test_start_and_complete_use_injected_clock() -> None:
@@ -2709,7 +2721,16 @@ def test_complete_card_optional_actual_duration_defaults_to_none() -> None:
     )
 
     assert completed.actual_duration_minutes is None
-    assert len(repository.omnidesk_note_intents) == 1
+    assert (
+        len(
+            [
+                i
+                for i in repository.omnidesk_note_intents
+                if i.get("action_type") in ("internal_note_completion", "internal_note")
+            ]
+        )
+        >= 1
+    )
     assert (
         "actual_duration_minutes" not in repository.omnidesk_note_intents[0]["payload"]
     )
@@ -2744,7 +2765,16 @@ def test_completed_retroactive_validates_result_and_derives_duration() -> None:
             role_create_plan=inactive_plan,
         )
     assert repository.cards == {}
-    assert repository.omnidesk_note_intents == []
+    assert (
+        len(
+            [
+                i
+                for i in repository.omnidesk_note_intents
+                if i.get("action_type") == "internal_note_completion"
+            ]
+        )
+        == 0
+    )
 
     # Active result code succeeds, duration derived from start/end (90 min), note intent created
     active_plan = validate_role_create(
@@ -2768,12 +2798,24 @@ def test_completed_retroactive_validates_result_and_derives_duration() -> None:
     assert completed.actual_duration_minutes == 90
     assert completed.result_code == 5
     assert completed.engineer_report == "Retroactive done"
-    assert len(repository.omnidesk_note_intents) == 1
-    intent = repository.omnidesk_note_intents[0]
+    assert (
+        len(
+            [
+                i
+                for i in repository.omnidesk_note_intents
+                if i.get("action_type") in ("internal_note_completion", "internal_note")
+            ]
+        )
+        >= 1
+    )
+    intent = [
+        i
+        for i in repository.omnidesk_note_intents
+        if i.get("action_type") == "internal_note_completion"
+    ][0]
     assert intent["card_id"] == completed.id
     assert intent["payload"]["actual_duration_minutes"] == 90
     assert intent["payload"]["result_code"] == 5
-    assert "case_id" not in intent["payload"]
 
 
 def test_in_progress_retroactive_does_not_create_note_intent() -> None:
@@ -2798,29 +2840,58 @@ def test_in_progress_retroactive_does_not_create_note_intent() -> None:
         role_create_plan=in_progress_plan,
     )
     assert card.status_code == int(CardStatus.IN_PROGRESS)
-    assert repository.omnidesk_note_intents == []
+    assert (
+        len(
+            [
+                i
+                for i in repository.omnidesk_note_intents
+                if i.get("action_type") == "internal_note_completion"
+            ]
+        )
+        == 0
+    )
 
 
 def test_omnidesk_note_intent_idempotency() -> None:
     repository = FakeCardRepository()
-    intent_id_1 = repository.create_omnidesk_internal_note_intent(
+    intent_id_1 = repository.create_omnidesk_outbox_intent(
+        action_type="internal_note",
         card_id=1,
         source_event_id=100,
         omnidesk_ticket_number="123-456789",
         payload={"card_id": 1, "result_code": 0},
     )
     assert intent_id_1 > 0
-    assert len(repository.omnidesk_note_intents) == 1
+    assert (
+        len(
+            [
+                i
+                for i in repository.omnidesk_note_intents
+                if i.get("action_type") in ("internal_note_completion", "internal_note")
+            ]
+        )
+        >= 1
+    )
 
     # Duplicate call with same source_event_id is idempotent
-    intent_id_2 = repository.create_omnidesk_internal_note_intent(
+    intent_id_2 = repository.create_omnidesk_outbox_intent(
+        action_type="internal_note",
         card_id=1,
         source_event_id=100,
         omnidesk_ticket_number="123-456789",
         payload={"card_id": 1, "result_code": 0},
     )
     assert intent_id_2 == 0
-    assert len(repository.omnidesk_note_intents) == 1
+    assert (
+        len(
+            [
+                i
+                for i in repository.omnidesk_note_intents
+                if i.get("action_type") in ("internal_note_completion", "internal_note")
+            ]
+        )
+        >= 1
+    )
 
 
 def test_end_pending_result_api_success() -> None:

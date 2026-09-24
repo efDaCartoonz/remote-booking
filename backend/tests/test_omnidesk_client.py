@@ -156,3 +156,183 @@ def test_http_omnidesk_client_reports_reopen_error() -> None:
 
     with pytest.raises(OmnideskTicketReopenError):
         client.reopen_ticket("2000")
+
+
+def test_http_omnidesk_client_assigns_staff() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "PUT"
+        assert request.url.path == "/api/cases/2000.json"
+        assert json.loads(request.content) == {"case": {"staff_id": 42}}
+        expected_auth = base64.b64encode(b"staff@example.test:test-api-key").decode()
+        assert request.headers["authorization"] == f"Basic {expected_auth}"
+        return httpx.Response(200, json={"case": {"case_id": 2000, "staff_id": 42}})
+
+    client = make_client(httpx.MockTransport(handler))
+    client.assign_staff("2000", 42)
+
+    assert len(requests) == 1
+
+
+def test_http_omnidesk_client_adds_internal_note_with_staff_id() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "POST"
+        assert request.url.path == "/api/cases/2000/messages.json"
+        assert json.loads(request.content) == {
+            "message": {
+                "content": "Work completed successfully",
+                "note": True,
+                "staff_id": 42,
+            }
+        }
+        return httpx.Response(
+            201,
+            json={
+                "message": {
+                    "message_id": 501,
+                    "content": "Work completed successfully",
+                    "note": True,
+                    "staff_id": 42,
+                }
+            },
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    client.add_internal_note("2000", "Work completed successfully", staff_id=42)
+
+    assert len(requests) == 1
+
+
+def test_http_omnidesk_client_adds_internal_note_without_staff_id() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "POST"
+        assert request.url.path == "/api/cases/2000/messages.json"
+        assert json.loads(request.content) == {
+            "message": {
+                "content": "Automated internal note",
+                "note": True,
+            }
+        }
+        return httpx.Response(
+            201,
+            json={
+                "message": {
+                    "message_id": 502,
+                    "content": "Automated internal note",
+                    "note": True,
+                }
+            },
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    client.add_internal_note("2000", "Automated internal note", staff_id=None)
+
+    assert len(requests) == 1
+
+
+def test_http_omnidesk_client_sends_public_message_with_staff_id() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "POST"
+        assert request.url.path == "/api/cases/2000/messages.json"
+        assert json.loads(request.content) == {
+            "message": {
+                "content": "Your booking is scheduled",
+                "note": False,
+                "staff_id": 42,
+            }
+        }
+        return httpx.Response(
+            201,
+            json={
+                "message": {
+                    "message_id": 503,
+                    "content": "Your booking is scheduled",
+                    "note": False,
+                    "staff_id": 42,
+                }
+            },
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    client.send_public_message("2000", "Your booking is scheduled", staff_id=42)
+
+    assert len(requests) == 1
+
+
+def test_http_omnidesk_client_sends_public_message_without_staff_id() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "POST"
+        assert request.url.path == "/api/cases/2000/messages.json"
+        assert json.loads(request.content) == {
+            "message": {
+                "content": "Reminder: session in 15 minutes",
+                "note": False,
+            }
+        }
+        return httpx.Response(
+            201,
+            json={
+                "message": {
+                    "message_id": 504,
+                    "content": "Reminder: session in 15 minutes",
+                    "note": False,
+                }
+            },
+        )
+
+    client = make_client(httpx.MockTransport(handler))
+    client.send_public_message("2000", "Reminder: session in 15 minutes", staff_id=None)
+
+    assert len(requests) == 1
+
+
+def test_http_omnidesk_client_write_methods_handle_errors() -> None:
+    def handler_404(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(404, json={"error": "case not found"})
+
+    client_404 = make_client(httpx.MockTransport(handler_404))
+    with pytest.raises(OmnideskTicketNotFoundError):
+        client_404.assign_staff("2000", 42)
+    with pytest.raises(OmnideskTicketNotFoundError):
+        client_404.add_internal_note("2000", "note")
+    with pytest.raises(OmnideskTicketNotFoundError):
+        client_404.send_public_message("2000", "msg")
+
+    def handler_429(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": "rate limit reached"})
+
+    client_429 = make_client(httpx.MockTransport(handler_429))
+    with pytest.raises(OmnideskUnavailableError, match="omnidesk_rate_limited"):
+        client_429.assign_staff("2000", 42)
+    with pytest.raises(OmnideskUnavailableError, match="omnidesk_rate_limited"):
+        client_429.add_internal_note("2000", "note")
+    with pytest.raises(OmnideskUnavailableError, match="omnidesk_rate_limited"):
+        client_429.send_public_message("2000", "msg")
+
+    def handler_500(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, json={"error": "internal error"})
+
+    client_500 = make_client(httpx.MockTransport(handler_500))
+    with pytest.raises(OmnideskUnavailableError, match="omnidesk_unavailable"):
+        client_500.assign_staff("2000", 42)
+
+    def handler_400(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"error": "invalid parameter"})
+
+    client_400 = make_client(httpx.MockTransport(handler_400))
+    with pytest.raises(OmnideskInvalidResponseError, match="omnidesk_http_error"):
+        client_400.assign_staff("2000", 42)

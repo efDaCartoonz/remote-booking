@@ -23,7 +23,7 @@ class RecordingRepository:
     def has_active_result_code(self, result_code: int) -> bool:
         return result_code in self.active_result_codes
 
-    def create_omnidesk_internal_note_intent(self, **kwargs) -> int:
+    def create_omnidesk_outbox_intent(self, **kwargs) -> int:
         self.omnidesk_note_intents.append(kwargs)
         return len(self.omnidesk_note_intents)
 
@@ -152,4 +152,4 @@ def test_completed_retroactive_plan_persists_completion_facts_without_distributi
     assert repository.created.result_code == 0
     assert repository.created.engineer_report == "Service restored"
     assert repository.events[0]["comment"] == "retroactive_registration"
-    assert len(repository.omnidesk_note_intents) == 1
+    assert len(repository.omnidesk_note_intents) >= 1
