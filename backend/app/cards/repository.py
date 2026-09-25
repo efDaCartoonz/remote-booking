@@ -1531,6 +1531,54 @@ class PostgresCardRepository:
                         },
                     )
 
+            # Public Cancellation Notification on CANCELLED
+            is_newly_cancelled = new_status == int(
+                CardStatus.CANCELLED
+            ) and old_status != int(CardStatus.CANCELLED)
+            if is_newly_cancelled:
+                cursor.execute(
+                    "SELECT key, value FROM system_settings WHERE key IN ('omnidesk_cancellation_public_notification_enabled', 'omnidesk_cancellation_public_notification_template')"
+                )
+                c_settings = {row["key"]: row["value"] for row in cursor.fetchall()}
+                c_enabled = c_settings.get(
+                    "omnidesk_cancellation_public_notification_enabled"
+                )
+                if c_enabled is None:
+                    c_enabled = True
+                if c_enabled is True:
+                    template = c_settings.get(
+                        "omnidesk_cancellation_public_notification_template"
+                    )
+                    if not isinstance(template, str) or not template.strip():
+                        template = "Заявка на удаленное подключение отменена."
+                    cursor.execute(
+                        """
+                        INSERT INTO omnidesk_outbox (
+                            card_id,
+                            source_event_id,
+                            omnidesk_ticket_number,
+                            action_type,
+                            payload,
+                            next_attempt_at
+                        )
+                        VALUES (
+                            %(card_id)s,
+                            %(source_event_id)s,
+                            %(omnidesk_ticket_number)s,
+                            'cancellation_public_notification',
+                            %(payload)s,
+                            NULL
+                        )
+                        ON CONFLICT (source_event_id, action_type) DO NOTHING
+                        """,
+                        {
+                            "card_id": card_id,
+                            "source_event_id": event_id,
+                            "omnidesk_ticket_number": ticket_number,
+                            "payload": Jsonb({"content": template}),
+                        },
+                    )
+
     def add_card_event(
         self,
         *,

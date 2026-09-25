@@ -141,6 +141,16 @@ class PublicNotificationSettingsResponse(BaseModel):
     template: str
 
 
+class CancellationPublicNotificationSettingsUpdate(BaseModel):
+    enabled: bool
+    template: str = Field(min_length=1, pattern=r"\S")
+
+
+class CancellationPublicNotificationSettingsResponse(BaseModel):
+    enabled: bool
+    template: str
+
+
 @router.get(
     "/settings/session-extension-interval",
     response_model=SessionExtensionIntervalResponse,
@@ -198,6 +208,41 @@ def update_public_notification_settings(
             actor_user_id=user.id,
         )
     return PublicNotificationSettingsResponse(
+        enabled=payload.enabled, template=payload.template
+    )
+
+
+@router.get(
+    "/settings/cancellation-public-notification",
+    response_model=CancellationPublicNotificationSettingsResponse,
+)
+def get_cancellation_public_notification_settings(
+    _user: Annotated[UserAuthRecord, Depends(require_admin_role)],
+) -> CancellationPublicNotificationSettingsResponse:
+    with db_connection() as connection:
+        settings = AdministrativeRepository(
+            connection
+        ).get_cancellation_public_notification_settings()
+    return CancellationPublicNotificationSettingsResponse(**settings)
+
+
+@router.put(
+    "/settings/cancellation-public-notification",
+    response_model=CancellationPublicNotificationSettingsResponse,
+)
+def update_cancellation_public_notification_settings(
+    payload: CancellationPublicNotificationSettingsUpdate,
+    user: Annotated[UserAuthRecord, Depends(require_admin_role)],
+) -> CancellationPublicNotificationSettingsResponse:
+    with db_connection() as connection:
+        AdministrativeRepository(
+            connection
+        ).set_cancellation_public_notification_settings(
+            enabled=payload.enabled,
+            template=payload.template,
+            actor_user_id=user.id,
+        )
+    return CancellationPublicNotificationSettingsResponse(
         enabled=payload.enabled, template=payload.template
     )
 

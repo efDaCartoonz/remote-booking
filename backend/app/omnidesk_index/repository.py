@@ -53,10 +53,12 @@ class CaseIndexRepository:
             )
             rows = cursor.fetchall()
             for row in rows:
-                if row[0] == item.case_id and row[1] != number:
+                case_id = row["case_id"] if isinstance(row, dict) else row[0]
+                case_number = row["case_number"] if isinstance(row, dict) else row[1]
+                if case_id == item.case_id and case_number != number:
                     self._conflict(cursor, "case_id_number_changed", item)
                     return "conflicts"
-                if row[1] == number and row[0] != item.case_id:
+                if case_number == number and case_id != item.case_id:
                     self._conflict(cursor, "duplicate_case_number", item)
                     return "conflicts"
             cursor.execute(
@@ -100,11 +102,21 @@ class CaseIndexRepository:
                 (number,),
             )
             row = cursor.fetchone()
-        if row is None or row[1] or row[2] or row[3]:
+        if row is None:
             raise CaseIndexTicketNotFound
-        if row[4] is not None:
+        if isinstance(row, dict):
+            case_id = row["case_id"]
+            deleted = row["deleted"]
+            spam = row["spam"]
+            unavailable = row["unavailable"]
+            conflict_code = row["conflict_code"]
+        else:
+            case_id, deleted, spam, unavailable, conflict_code = row
+        if deleted or spam or unavailable:
+            raise CaseIndexTicketNotFound
+        if conflict_code is not None:
             raise CaseIndexTicketAmbiguous
-        return row[0]
+        return case_id
 
     def record_error(self, code: str) -> None:
         with self.connection.cursor() as cursor:

@@ -1180,6 +1180,13 @@ class CardService:
                 actor_user_id=actor_user_id,
                 note_type="completion",
             )
+        elif target_status == CardStatus.CANCELLED:
+            self._create_omnidesk_internal_note(
+                card=updated,
+                source_event_id=event_id,
+                actor_user_id=actor_user_id,
+                note_type="cancel",
+            )
         if target_status in {CardStatus.CANCELLED, CardStatus.COMPLETED} and hasattr(
             self.repository, "close_reminder_schedules"
         ):

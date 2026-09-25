@@ -441,8 +441,23 @@ before writer payloads.
 claim/retry, L2/L1/manager recipients, dedupe and disabled-runtime behavior.
 - **SRS:** REQ-FR-056..082, 098, 103..105; Technical Design §§9, 11.
 - **Зависимости:** BL-01..04, IE-01.
-- **Статус:** PARTIAL — unit/runtime tests exist but full business matrix and
-current controlled E2E evidence do not.
+- **Статус:** PARTIAL — на локальном кандидате 25 сентября добавлены
+  PostgreSQL сценарии L2/L1 timers, no-L2/no-L1, L2 overdue, urgent collision,
+  worker claim/retry/failure и клиентского уведомления об отмене.
+  Полный `make verify` прошёл на рабочем дереве с baseline HEAD `5d46f0d`:
+  backend 313 passed / 58 skipped, frontend 3 passed и build, Ruff, Compose,
+  миграционный цикл до `20260925_0013`, BL-04 PostgreSQL 11 passed,
+  IE-02 PostgreSQL 13 passed. Временные Docker-ресурсы удалены. Это
+  свидетельство только проверенных локальных сценариев: полная матрица IE-02
+  и controlled stage E2E ещё не закрыты; IE-01 и BL-04 сохраняют
+  `CORRECTIVE REQUIRED`.
+- **Документальный блокер:** решение зафиксировано в
+  `decisions/08-cancellation-client-notification.md`; Concept §12.3 и SRS
+  §12.2/§11.3 оставлены без изменений по указанию пользователя. Реализация
+  и локальный профильный gate соответствующего сценария подтверждены, но
+  нормативное расхождение препятствует статусу `DONE`. Также остаётся
+  доказать полный набор событий REQ-FR-056..082, 098, 103..105 на точном
+  кандидате.
 - **Definition of Done:** each required event is traceable to one durable intent
 per recipient/channel/event and failure never rolls back the business change.
 

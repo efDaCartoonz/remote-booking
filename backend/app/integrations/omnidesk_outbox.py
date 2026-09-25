@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
 import psycopg
+from psycopg.rows import dict_row
 
 
 from app.frame.omnidesk import (
@@ -206,7 +207,7 @@ class PostgresOmnideskOutboxRepository:
         return resolve_ticket_by_case_number(self.connection, client, ticket_number)
 
     def get_card_info(self, card_id: int) -> dict | None:
-        with self.connection.cursor() as cursor:
+        with self.connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(
                 """
                 SELECT c.status_code, c.planned_start_at,
@@ -214,7 +215,12 @@ class PostgresOmnideskOutboxRepository:
                            SELECT value #>> '{}' = 'true'
                            FROM system_settings
                            WHERE key = 'omnidesk_public_notification_enabled'
-                       ), true) AS public_notification_enabled
+                       ), true) AS public_notification_enabled,
+                       COALESCE((
+                           SELECT value #>> '{}' = 'true'
+                           FROM system_settings
+                           WHERE key = 'omnidesk_cancellation_public_notification_enabled'
+                       ), true) AS cancellation_public_notification_enabled
                 FROM connection_cards c WHERE c.id = %(id)s
                 """,
                 {"id": card_id},
@@ -324,6 +330,22 @@ def _process_intent(
         content = intent.payload.get("content")
         if not content:
             raise SuppressedIntent("public_notification_content_missing")
+        client.send_public_message(case_id, content, staff_id=None)
+
+    elif intent.action_type == "cancellation_public_notification":
+        card_info = repository.get_card_info(intent.card_id)
+        if not card_info or not card_info.get(
+            "cancellation_public_notification_enabled", True
+        ):
+            raise SuppressedIntent("cancellation_public_notification_disabled")
+        if card_info["status_code"] != 6:
+            raise SuppressedIntent(
+                "cancellation_public_notification_card_not_cancelled"
+            )
+
+        content = intent.payload.get("content")
+        if not content:
+            raise SuppressedIntent("cancellation_public_notification_content_missing")
         client.send_public_message(case_id, content, staff_id=None)
 
 

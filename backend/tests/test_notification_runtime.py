@@ -16,7 +16,7 @@ from app.notifications import (
     deliver_pending_notifications,
     _render_message,
 )
-from app.worker import celery_app
+from app.worker import celery_app, deliver_notifications
 
 NOW = datetime(2026, 9, 4, 10, tzinfo=UTC)
 
@@ -405,6 +405,16 @@ def test_missing_channel_configuration_is_permanent(notification_settings) -> No
 
 def test_worker_registers_notification_task_and_periodic_schedule() -> None:
     assert celery_app.tasks["app.worker.deliver_notifications"]
+    assert "deliver-notifications" not in celery_app.conf.beat_schedule
+
+
+def test_disabled_delivery_does_not_open_database(monkeypatch) -> None:
+    monkeypatch.setattr("app.worker.settings.notification_delivery_enabled", False)
+    monkeypatch.setattr(
+        "app.worker.db_connection", lambda: (_ for _ in ()).throw(AssertionError())
+    )
+
+    assert deliver_notifications() == 0
     assert "deliver-notifications" not in celery_app.conf.beat_schedule
 
 

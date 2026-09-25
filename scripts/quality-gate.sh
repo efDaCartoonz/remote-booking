@@ -9,7 +9,7 @@ readonly GATE_COMPOSE_FILES="-f docker-compose.yml -f docker-compose.quality-gat
 
 usage() {
     cat <<'EOF'
-Usage: ./scripts/quality-gate.sh {all|backend|frontend|compose|migrations|bl04}
+Usage: ./scripts/quality-gate.sh {all|backend|frontend|compose|migrations|bl04|ie02}
 
 Runs only checks that use source-controlled inputs in isolated Docker Compose
 containers. It removes its containers and volumes when it finishes. It never
@@ -77,8 +77,8 @@ run_migrations() {
              && PYTHONPATH=/app python scripts/migration_contract_check.py check-baseline \
              && alembic upgrade head \
              && PYTHONPATH=/app python scripts/migration_contract_check.py check-head \
-             && alembic current | grep -qx "20260924_0012 (head)" \
-             && alembic heads | grep -qx "20260924_0012 (head)"'
+             && alembic current | grep -qx "20260925_0013 (head)" \
+             && alembic heads | grep -qx "20260925_0013 (head)"'
     )
 }
 
@@ -96,6 +96,20 @@ run_bl04_matrix() {
     )
 }
 
+run_ie02_matrix() {
+    require_command docker
+    (
+        cd "$ROOT_DIR"
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
+            --env-file .env.example up --detach postgres
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
+            --env-file .env.example run --rm backend alembic upgrade head
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
+            --env-file .env.example run --rm -e RDM_PG_INTEGRATION=1 quality-backend sh -ec \
+            'pytest -v tests/test_ie02_*postgres.py tests/test_cancellation_public_notification_postgres.py'
+    )
+}
+
 # The project name is generated per run, so cleanup cannot affect the user's
 # Compose stack even when a check fails partway through.
 trap cleanup_gate_project EXIT
@@ -107,12 +121,14 @@ case "$MODE" in
         run_compose_config
         run_migrations
         run_bl04_matrix
+        run_ie02_matrix
         ;;
     backend) run_backend ;;
     frontend) run_frontend ;;
     compose) run_compose_config ;;
     migrations) run_migrations ;;
     bl04) run_bl04_matrix ;;
+    ie02) run_ie02_matrix ;;
     -h|--help) usage ;;
     *)
         usage >&2
