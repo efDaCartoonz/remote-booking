@@ -27,6 +27,7 @@ NOTIFICATION_EVENT_CODES = {
     "urgent_collision": 6,
     "card_ended_automatically": 7,
     "omnidesk_staff_mapping_missing": 8,
+    "card_cancelled": 9,
 }
 NOTIFICATION_CHANNEL_CODES = {"telegram": 0, "bitrix24": 1}
 SAFE_NOTIFICATION_PAYLOAD_KEYS = frozenset({"card_id", "assignment"})
@@ -605,6 +606,8 @@ def _render_message(intent: NotificationIntent) -> str:
             f"Не настроена связь исполнителя RDM с сотрудником Omnidesk. "
             f"Проверьте назначение в карточке {card_number}; тикет {ticket}. {url}"
         )
+    if intent.event_type_code == NOTIFICATION_EVENT_CODES["card_cancelled"]:
+        return f"Карточка {card_number} отменена; тикет {ticket}. {url}"
     client = (
         f"; клиент {intent.client_display_name}" if intent.client_display_name else ""
     )

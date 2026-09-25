@@ -444,16 +444,17 @@ claim/retry, L2/L1/manager recipients, dedupe and disabled-runtime behavior.
 - **Статус:** PARTIAL — на локальном кандидате 25 сентября добавлены
   PostgreSQL сценарии L2/L1 timers, no-L2/no-L1, L2 overdue, urgent collision,
   worker claim/retry/failure, автоматического завершения, настроек каналов,
-  двухканальной доставки и клиентского уведомления об отмене.
-  Полный `make verify` прошёл на рабочем дереве с baseline HEAD `6e5f652`:
-  backend 313 passed / 62 skipped, frontend 3 passed и build, Ruff, Compose,
-  миграционный цикл до `20260925_0013`, BL-04 PostgreSQL 11 passed,
-  IE-02 PostgreSQL 17 passed. Временные Docker-ресурсы удалены. Это
+  двухканальной доставки и уведомлений при отмене.
+  Полный `make verify` прошёл на рабочем дереве с baseline HEAD `7fae5e8`:
+  backend 316 passed / 65 skipped, frontend 3 passed и build, Ruff, Compose,
+  миграционный цикл до `20260925_0014`, BL-04 PostgreSQL 11 passed,
+  IE-02 PostgreSQL 20 passed. Временные Docker-ресурсы удалены. Это
   свидетельство только проверенных локальных сценариев: полная матрица IE-02
   и controlled stage E2E ещё не закрыты; IE-01 и BL-04 сохраняют
   `CORRECTIVE REQUIRED`.
 - **Документальный блокер:** решение зафиксировано в
-  `decisions/08-cancellation-client-notification.md`; Concept §12.3 и SRS
+  `decisions/08-cancellation-client-notification.md` и
+  `decisions/09-cancellation-manager-notification.md`; Concept §12.3 и SRS
   §12.2/§11.3 оставлены без изменений по указанию пользователя. Реализация
   и локальный профильный gate соответствующего сценария подтверждены, но
   нормативное расхождение препятствует статусу `DONE`. Также остаётся

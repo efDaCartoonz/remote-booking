@@ -1187,11 +1187,48 @@ class CardService:
                 actor_user_id=actor_user_id,
                 note_type="cancel",
             )
+            self._notify_card_cancellation(
+                card=updated,
+                source_event_id=event_id,
+            )
         if target_status in {CardStatus.CANCELLED, CardStatus.COMPLETED} and hasattr(
             self.repository, "close_reminder_schedules"
         ):
             self.repository.close_reminder_schedules(card_id=updated.id)
         return updated
+
+    def _notify_card_cancellation(
+        self,
+        *,
+        card: CardRecord,
+        source_event_id: int,
+    ) -> None:
+        if self.notifications is None:
+            return
+        recipients: dict[int, str] = {}
+        list_managers = getattr(self.repository, "list_active_manager_recipients", None)
+        if list_managers is not None:
+            recipients.update(
+                (manager.user_id, "manager_escalation") for manager in list_managers()
+            )
+        if card.l1_owner_id is not None:
+            recipients.setdefault(card.l1_owner_id, "l1")
+        if card.l2_engineer_id is not None:
+            recipients.setdefault(card.l2_engineer_id, "l2")
+
+        # Intent creation shares the card transaction. Delivery runs later in the
+        # worker, so an external channel failure cannot undo the cancellation.
+        for recipient_user_id, assignment in recipients.items():
+            for channel in ("telegram", "bitrix24"):
+                self.notifications.notify(
+                    event="card_cancelled",
+                    card_id=card.id,
+                    source_event_id=source_event_id,
+                    source_event_type=int(CardEventType.STATUS_CHANGED),
+                    recipient_user_id=recipient_user_id,
+                    channel=channel,
+                    payload={"card_id": card.id, "assignment": assignment},
+                )
 
     def _create_omnidesk_outbox_intent(
         self,

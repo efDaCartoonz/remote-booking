@@ -77,8 +77,8 @@ run_migrations() {
              && PYTHONPATH=/app python scripts/migration_contract_check.py check-baseline \
              && alembic upgrade head \
              && PYTHONPATH=/app python scripts/migration_contract_check.py check-head \
-             && alembic current | grep -qx "20260925_0013 (head)" \
-             && alembic heads | grep -qx "20260925_0013 (head)"'
+             && alembic current | grep -qx "20260925_0014 (head)" \
+             && alembic heads | grep -qx "20260925_0014 (head)"'
     )
 }
 
@@ -106,7 +106,7 @@ run_ie02_matrix() {
             --env-file .env.example run --rm backend alembic upgrade head
         RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
             --env-file .env.example run --rm -e RDM_PG_INTEGRATION=1 quality-backend sh -ec \
-            'pytest -v tests/test_ie02_*postgres.py tests/test_cancellation_public_notification_postgres.py'
+            'pytest -v tests/test_ie02_*postgres.py tests/test_cancellation_public_notification_postgres.py tests/test_cancellation_internal_notification_postgres.py'
     )
 }
 
