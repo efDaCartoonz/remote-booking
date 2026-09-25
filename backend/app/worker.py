@@ -28,7 +28,7 @@ celery_app.conf.task_routes = {
     "app.worker.deliver_omnidesk_outbox": {"queue": "notifications"},
     "app.worker.deliver_notifications": {"queue": "notifications"},
     "app.worker.scan_reminders": {"queue": "notifications"},
-    "app.worker.extend_sessions": {"queue": "scheduler"},
+    "app.worker.extend_sessions": {"queue": "notifications"},
 }
 
 
@@ -58,7 +58,7 @@ def scan_reminders() -> int:
         )
 
 
-@celery_app.task(name="app.worker.extend_sessions", queue="scheduler")
+@celery_app.task(name="app.worker.extend_sessions", queue="notifications")
 def extend_sessions() -> int:
     from app.cards.extension import process_due_in_progress_sessions
 
@@ -85,7 +85,7 @@ if settings.reminder_scanner_enabled:
 celery_app.conf.beat_schedule["extend-sessions"] = {
     "task": "app.worker.extend_sessions",
     "schedule": 60.0,  # Run every minute
-    "options": {"queue": "scheduler"},
+    "options": {"queue": "notifications"},
 }
 
 
