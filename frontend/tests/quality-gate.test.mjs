@@ -7,6 +7,6 @@ const packageUrl = new URL("../package.json", import.meta.url);
 test("frontend exposes a native test command for the quality gate", async () => {
   const packageJson = JSON.parse(await readFile(packageUrl, "utf8"));
 
-  assert.equal(packageJson.scripts.test, "node --test tests/*.test.mjs");
+  assert.equal(packageJson.scripts.test, "node --test tests/*.test.mjs && vitest run");
   assert.match(packageJson.scripts.build, /vue-tsc/);
 });

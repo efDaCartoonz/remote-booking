@@ -72,10 +72,12 @@ const managerLoading = ref(false);
 const create = ref({ caseNumber: "", start: "", duration: 60, description: "", assignment: "auto", l2UserId: "" });
 const ticketPreflight = ref<TicketPreflight | null>(null);
 const l2Options = ref<L2Option[]>([]);
+const preflightLoading = ref(false);
 const createLoading = ref(false);
 const createBusy = ref(false);
 const createError = ref("");
 const createNotice = ref("");
+const ticketRequest = ref(0);
 const l2Request = ref(0);
 const createNow = ref(new Date());
 let createTimer: ReturnType<typeof setInterval> | undefined;
@@ -278,7 +280,7 @@ function validateCreateWindow(startValue: string, durationValue: number, now: Da
 function validateBeforeCreateHttp(): CreateValidationSuccess | null {
   createNow.value = new Date();
   const result = validateCreateWindow(create.value.start, create.value.duration, createNow.value);
-  if (!result.ok) { createError.value = result.error; createLoading.value = false; return null; }
+  if (!result.ok) { createError.value = result.error; return null; }
   return result;
 }
 const createBounds = computed(() => createWindowBounds(createNow.value));
@@ -286,12 +288,19 @@ const createMin = computed(() => localDateTimeInput(createBounds.value.min));
 const createMax = computed(() => localDateTimeInput(createBounds.value.max));
 function createStartIso(start: Date): string { return start.toISOString(); }
 async function preflightTicket(): Promise<void> {
+  const request = ++ticketRequest.value;
   ticketPreflight.value = null; createNotice.value = "";
   if (!create.value.caseNumber) return;
-  createLoading.value = true; createError.value = "";
-  try { ticketPreflight.value = await api<TicketPreflight>(`/api/v1/manager/tickets/${encodeURIComponent(create.value.caseNumber)}/preflight`); }
-  catch (error) { createError.value = createErrorMessage(error); if ((error as ApiError).status === 401) handleUnauthorized(); }
-  finally { createLoading.value = false; }
+  const caseNumber = create.value.caseNumber;
+  preflightLoading.value = true; createError.value = "";
+  try {
+    const data = await api<TicketPreflight>(`/api/v1/manager/tickets/${encodeURIComponent(caseNumber)}/preflight`);
+    if (request === ticketRequest.value) ticketPreflight.value = data;
+  } catch (error) {
+    if (request === ticketRequest.value) { createError.value = createErrorMessage(error); if ((error as ApiError).status === 401) handleUnauthorized(); }
+  } finally {
+    if (request === ticketRequest.value) preflightLoading.value = false;
+  }
 }
 async function loadL2Options(): Promise<void> {
   const request = ++l2Request.value; l2Options.value = [];
@@ -303,18 +312,36 @@ async function loadL2Options(): Promise<void> {
   finally { if (request === l2Request.value) createLoading.value = false; }
 }
 async function submitCreate(): Promise<void> {
-  if (createBusy.value) return;
+  if (createBusy.value || preflightLoading.value || createLoading.value) return;
+  if (!ticketPreflight.value || !ticketPreflight.value.can_create || ticketPreflight.value.case_number !== create.value.caseNumber) {
+    createError.value = "Проверьте тикет перед созданием карточки.";
+    return;
+  }
+  if (create.value.assignment === "manual" && !create.value.l2UserId) {
+    createError.value = "Выберите инженера L2.";
+    return;
+  }
   const valid = validateBeforeCreateHttp();
   if (valid === null) return;
   createBusy.value = true; createError.value = "";
   try {
-    const payload: Record<string, unknown> = { case_number: create.value.caseNumber, planned_start_at: createStartIso(valid.start), planned_duration_minutes: valid.duration, description: create.value.description || null, assignment_method: "auto" };
+    const payload: Record<string, unknown> = { case_number: create.value.caseNumber, planned_start_at: createStartIso(valid.start), planned_duration_minutes: valid.duration, description: create.value.description || null, assignment_method: create.value.assignment === "manual" ? "manual" : "auto" };
     if (create.value.assignment === "manual") payload.l2_user_id = Number(create.value.l2UserId);
     const created = await api<Card>("/api/v1/manager/cards", { method: "POST", body: JSON.stringify(payload) });
     window.location.assign(`/cards/${created.id}`);
-  } catch (error) { createError.value = createErrorMessage(error); if ((error as ApiError).status === 401) handleUnauthorized(); else if ((error as ApiError).status === 409) await loadL2Options(); }
-  finally { createBusy.value = false; }
+  } catch (error) {
+    createError.value = createErrorMessage(error);
+    createBusy.value = false;
+    if ((error as ApiError).status === 401) handleUnauthorized();
+    else if ((error as ApiError).status === 409) await loadL2Options();
+  }
 }
+watch(() => create.value.caseNumber, () => {
+  ticketPreflight.value = null;
+  ticketRequest.value++;
+  preflightLoading.value = false;
+  createError.value = "";
+});
 watch(() => [create.value.start, create.value.duration], loadL2Options);
 
 async function loadManager(): Promise<void> {
@@ -595,13 +622,13 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <p class="hint">Допустимое начало: не раньше чем через 2 часа и не позднее 14 дней. Длительность: 30–720 минут. Часовой пояс: {{ browserTimeZone }}.</p>
         <form class="form create-form" @submit.prevent="submitCreate">
           <label>Номер тикета<input v-model.trim="create.caseNumber" required /></label>
-          <button type="button" class="secondary" :disabled="createLoading || !create.caseNumber" @click="preflightTicket">{{ createLoading ? "Проверяем…" : "Проверить тикет" }}</button>
-          <section v-if="ticketPreflight" class="panel"><strong>Тикет {{ ticketPreflight.case_number }}</strong><p class="muted">Статус: {{ ticketPreflight.status }} · Клиент: {{ ticketPreflight.client_display_name || "Не указан" }}</p><p v-if="!ticketPreflight.can_create" class="error">Для этого тикета нельзя создать новую активную карточку.</p></section>
+          <button type="button" class="secondary" :disabled="preflightLoading || !create.caseNumber" @click="preflightTicket">{{ preflightLoading ? "Проверяем…" : "Проверить тикет" }}</button>
+          <section v-if="ticketPreflight && ticketPreflight.case_number === create.caseNumber" class="panel"><strong>Тикет {{ ticketPreflight.case_number }}</strong><p class="muted">Статус: {{ ticketPreflight.status }} · Клиент: {{ ticketPreflight.client_display_name || "Не указан" }}</p><p v-if="!ticketPreflight.can_create" class="error">Для этого тикета нельзя создать новую активную карточку.</p></section>
           <div class="grid"><label>Начало<input v-model="create.start" type="datetime-local" step="60" :min="createMin" :max="createMax" required @focus="refreshCreateNow" /></label><label>Длительность, минут<input v-model.number="create.duration" type="number" min="30" max="720" required /></label></div>
           <label>Описание<textarea v-model="create.description" rows="4"></textarea></label>
           <fieldset><legend>Назначение L2</legend><label class="choice"><input v-model="create.assignment" type="radio" value="auto" /> Автоматически</label><label class="choice"><input v-model="create.assignment" type="radio" value="manual" /> Конкретный L2</label><select v-if="create.assignment === 'manual'" v-model="create.l2UserId" required><option value="" disabled>Выберите L2</option><option v-for="option in l2Options" :key="option.user_id" :value="String(option.user_id)" :disabled="!option.available">{{ option.display_name }}{{ option.available ? "" : ` — ${option.reason_code === "schedule_or_conflict" ? "занят или вне графика" : "недоступен"}` }}</option></select><p v-if="create.assignment === 'manual' && !l2Options.length" class="hint">Укажите время и длительность, чтобы загрузить список L2.</p></fieldset>
           <p v-if="createError" class="error" role="alert">{{ createError }}</p><p v-if="createNotice" class="hint">{{ createNotice }}</p>
-          <button :disabled="createBusy || createLoading || !ticketPreflight?.can_create">{{ createBusy ? "Создаём…" : "Создать карточку" }}</button>
+          <button type="submit" :disabled="createBusy || preflightLoading || createLoading || !ticketPreflight || ticketPreflight.case_number !== create.caseNumber || !ticketPreflight.can_create">{{ createBusy ? "Создаём…" : "Создать карточку" }}</button>
         </form>
       </template>
       <template v-else-if="managerPath && manager">

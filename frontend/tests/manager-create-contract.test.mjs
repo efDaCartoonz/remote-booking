@@ -11,7 +11,7 @@ test("manager create browser contract contains only the public ticket number", a
   assert.doesNotMatch(source, /case_id/);
   assert.match(
     source,
-    /\/api\/v1\/manager\/tickets\/\$\{encodeURIComponent\(create\.value\.caseNumber\)\}\/preflight/,
+    /\/api\/v1\/manager\/tickets\/\$\{encodeURIComponent\(caseNumber\)\}\/preflight/,
   );
   assert.match(source, /Номер тикета/);
 });
