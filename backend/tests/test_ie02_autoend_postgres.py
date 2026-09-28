@@ -30,7 +30,9 @@ def _database_url() -> str:
     )
 
 
-def test_autoend_at_12h_persists_exact_card_ended_automatically_intents() -> None:
+def test_autoend_at_12h_persists_exact_card_ended_automatically_intents(
+    role_notification_channels,
+) -> None:
     """Auto-end at 12h transitions status to COMPLETED_PENDING_RESULT and persists
 
     exact card_ended_automatically intents for assigned L2 and active managers
@@ -151,17 +153,23 @@ def test_autoend_at_12h_persists_exact_card_ended_automatically_intents() -> Non
             )
             persisted = [dict(row) for row in cursor.fetchall()]
 
-            # Expected intents:
-            # - Assigned L2: telegram (0), bitrix24 (1) -> 2 intents
-            # - Manager 1: telegram (0), bitrix24 (1) -> 2 intents
-            # - Manager 2: telegram (0) only -> 1 intent (bitrix24 suppressed by settings)
+            # All active managers receive their configured channels, including
+            # managers already present in a restored stage database.
+            manager_channels = role_notification_channels(connection, (RoleId.MANAGER,))
+            assert {
+                (manager1_id, 0),
+                (manager1_id, 1),
+                (manager2_id, 0),
+            } <= manager_channels
+            assert (manager2_id, 1) not in manager_channels
             expected_recipients_channels = {
                 (l2_id, 0, "l2"),
                 (l2_id, 1, "l2"),
-                (manager1_id, 0, "manager_escalation"),
-                (manager1_id, 1, "manager_escalation"),
-                (manager2_id, 0, "manager_escalation"),
             }
+            expected_recipients_channels.update(
+                (recipient_id, channel_code, "manager_escalation")
+                for recipient_id, channel_code in manager_channels
+            )
 
             actual_recipients_channels = {
                 (

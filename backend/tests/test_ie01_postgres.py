@@ -5,7 +5,7 @@ import psycopg
 import pytest
 from psycopg.rows import dict_row
 
-from app.cards.constants import ActorType, CardEventType, CardStatus
+from app.cards.constants import ActorType, CardEventType, CardStatus, RoleId
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService
 from app.cards.repository import PostgresCardRepository
@@ -241,7 +241,9 @@ def test_ie01_idempotent_l1_l2_assignments(connection: psycopg.Connection):
     assert len(actions) == 2
 
 
-def test_ie01_safe_staff_id_error(connection: psycopg.Connection):
+def test_ie01_safe_staff_id_error(
+    connection: psycopg.Connection, role_notification_channels
+):
     # Test that when a staff ID is missing, the error identifies the user without external data
     # and notifies admin + manager
     repo = PostgresOmnideskOutboxRepository(connection)
@@ -323,7 +325,7 @@ def test_ie01_safe_staff_id_error(connection: psycopg.Connection):
 
     with connection.cursor() as cursor:
         cursor.execute(
-            "SELECT recipient_user_id, event_type_code FROM notifications WHERE source_event_id = %s AND event_type_code = 8",
+            "SELECT recipient_user_id, channel_code, event_type_code FROM notifications WHERE source_event_id = %s AND event_type_code = 8",
             (event_id,),
         )
         notices = cursor.fetchall()
@@ -332,8 +334,16 @@ def test_ie01_safe_staff_id_error(connection: psycopg.Connection):
             (intent_id,),
         )
         failed_intent = cursor.fetchone()
-    assert {notice["recipient_user_id"] for notice in notices} == expected_recipient_ids
-    assert len(notices) == 2
+    expected_channels = role_notification_channels(
+        connection, (RoleId.ADMIN, RoleId.MANAGER)
+    )
+    assert expected_recipient_ids <= {
+        recipient_id for recipient_id, _ in expected_channels
+    }
+    assert {
+        (notice["recipient_user_id"], notice["channel_code"]) for notice in notices
+    } == expected_channels
+    assert len(notices) == len(expected_channels)
     assert failed_intent["status_code"] == 2
     assert f"user_id={user_id}" in failed_intent["error_message"]
 

@@ -30,6 +30,7 @@ def database_url() -> str:
 
 def test_no_eligible_l2_initial_distribution_assigns_l1_and_persists_notifications(
     database_url: str,
+    role_notification_channels,
 ) -> None:
     """Initial distribution with no eligible L2 sets card status to REJECTED,
 
@@ -187,13 +188,22 @@ def test_no_eligible_l2_initial_distribution_assigns_l1_and_persists_notificatio
                 (card.id,),
             )
             persisted = [dict(row) for row in cursor.fetchall()]
-            assert len(persisted) == 4
+            manager_channels = role_notification_channels(connection, (RoleId.MANAGER,))
+            assert {(manager_id, 0), (manager_id, 1)} <= manager_channels
+            assert len(persisted) == len(manager_channels) + 2
 
-            mgr_intents = [n for n in persisted if n["recipient_user_id"] == manager_id]
+            manager_ids = {recipient_id for recipient_id, _ in manager_channels}
+            mgr_intents = [
+                n for n in persisted if n["recipient_user_id"] in manager_ids
+            ]
             l1_intents = [n for n in persisted if n["recipient_user_id"] == l1_id]
 
-            assert len(mgr_intents) == 2
+            assert len(mgr_intents) == len(manager_channels)
             assert len(l1_intents) == 2
+            assert {
+                (intent["recipient_user_id"], intent["channel_code"])
+                for intent in mgr_intents
+            } == manager_channels
 
             for intent in mgr_intents:
                 assert intent["event_type_code"] == 2  # manager_escalation
@@ -222,7 +232,7 @@ def test_no_eligible_l2_initial_distribution_assigns_l1_and_persists_notificatio
 
             # Exact dedupe cardinality
             dedupe_keys = {n["dedupe_key"] for n in persisted}
-            assert len(dedupe_keys) == 4
+            assert len(dedupe_keys) == len(persisted)
 
         # Replay notification delivery attempt for captured event and verify deduplication
         replay_result = notifications.notify(
@@ -241,7 +251,7 @@ def test_no_eligible_l2_initial_distribution_assigns_l1_and_persists_notificatio
                 "SELECT count(*) FROM notifications WHERE card_id = %s",
                 (card.id,),
             )
-            assert cursor.fetchone()["count"] == 4
+            assert cursor.fetchone()["count"] == len(manager_channels) + 2
 
     finally:
         connection.rollback()

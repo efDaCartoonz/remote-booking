@@ -30,6 +30,7 @@ def database_url() -> str:
 
 def test_no_eligible_l2_and_no_available_l1_initial_distribution_leaves_card_rejected(
     database_url: str,
+    role_notification_channels,
 ) -> None:
     """Initial distribution with no eligible L2 and no available L1 sets card status to REJECTED,
 
@@ -154,10 +155,15 @@ def test_no_eligible_l2_and_no_available_l1_initial_distribution_leaves_card_rej
                 (card.id,),
             )
             persisted = [dict(row) for row in cursor.fetchall()]
-            assert len(persisted) == 4
+            manager_channels = role_notification_channels(connection, (RoleId.MANAGER,))
+            assert {(manager_id, 0), (manager_id, 1)} <= manager_channels
+            assert len(persisted) == 2 * len(manager_channels)
 
-            # Ensure all intents are for the manager and no L1 followup intents exist
-            assert all(n["recipient_user_id"] == manager_id for n in persisted)
+            # Both escalation events notify every active manager, including
+            # managers already present in a restored stage database.
+            assert {n["recipient_user_id"] for n in persisted} == {
+                recipient_id for recipient_id, _ in manager_channels
+            }
             assert all(
                 n["event_type_code"] == 2 for n in persisted
             )  # 2 = manager_escalation
@@ -176,8 +182,16 @@ def test_no_eligible_l2_and_no_available_l1_initial_distribution_leaves_card_rej
                 if n["source_event_id"] == mgr_l1_escalation_event["id"]
             ]
 
-            assert len(no_l2_intents) == 2
-            assert len(no_l1_intents) == 2
+            assert {
+                (intent["recipient_user_id"], intent["channel_code"])
+                for intent in no_l2_intents
+            } == manager_channels
+            assert {
+                (intent["recipient_user_id"], intent["channel_code"])
+                for intent in no_l1_intents
+            } == manager_channels
+            assert len(no_l2_intents) == len(manager_channels)
+            assert len(no_l1_intents) == len(manager_channels)
 
             for intent in no_l2_intents:
                 assert intent["source_event_type_code"] == int(
@@ -200,9 +214,9 @@ def test_no_eligible_l2_and_no_available_l1_initial_distribution_leaves_card_rej
             assert {n["channel_code"] for n in no_l2_intents} == {0, 1}
             assert {n["channel_code"] for n in no_l1_intents} == {0, 1}
 
-            # Exact dedupe key cardinality (all 4 notification intents have distinct dedupe_keys)
+            # Every manager/event/channel combination has a distinct dedupe key.
             dedupe_keys = {n["dedupe_key"] for n in persisted}
-            assert len(dedupe_keys) == 4
+            assert len(dedupe_keys) == len(persisted)
 
         # Replay notification delivery attempt for both captured escalation events and verify deduplication
         replay_no_l2 = notifications.notify(
@@ -232,7 +246,7 @@ def test_no_eligible_l2_and_no_available_l1_initial_distribution_leaves_card_rej
                 "SELECT count(*) FROM notifications WHERE card_id = %s",
                 (card.id,),
             )
-            assert cursor.fetchone()["count"] == 4
+            assert cursor.fetchone()["count"] == 2 * len(manager_channels)
 
     finally:
         connection.rollback()

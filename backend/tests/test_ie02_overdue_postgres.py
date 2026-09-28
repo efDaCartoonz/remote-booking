@@ -120,7 +120,9 @@ def pg_tx():
         connection.close()
 
 
-def test_assigned_card_overdue_without_l2_decision_postgres(pg_tx):
+def test_assigned_card_overdue_without_l2_decision_postgres(
+    pg_tx, role_notification_channels
+):
     connection = pg_tx["connection"]
     mgr_id = pg_tx["mgr_id"]
     l1_id = pg_tx["l1_id"]
@@ -262,9 +264,13 @@ def test_assigned_card_overdue_without_l2_decision_postgres(pg_tx):
             (card.id, NOTIFICATION_EVENT_CODES["manager_escalation"]),
         )
         mgr_intents = [dict(r) for r in cursor.fetchall()]
-        assert len(mgr_intents) == 2
-        assert {r["recipient_user_id"] for r in mgr_intents} == {mgr_id}
-        assert {r["channel_code"] for r in mgr_intents} == {0, 1}
+        manager_channels = role_notification_channels(connection, (RoleId.MANAGER,))
+        assert {(mgr_id, 0), (mgr_id, 1)} <= manager_channels
+        assert len(mgr_intents) == len(manager_channels)
+        assert {
+            (intent["recipient_user_id"], intent["channel_code"])
+            for intent in mgr_intents
+        } == manager_channels
         for intent in mgr_intents:
             assert intent["source_event_id"] == overdue_event_id
 
@@ -274,8 +280,8 @@ def test_assigned_card_overdue_without_l2_decision_postgres(pg_tx):
             (card.id,),
         )
         dedupe_keys = [r["dedupe_key"] for r in cursor.fetchall()]
-        assert len(dedupe_keys) == 4
-        assert len(set(dedupe_keys)) == 4
+        assert len(dedupe_keys) == 2 + len(manager_channels)
+        assert len(set(dedupe_keys)) == len(dedupe_keys)
         for key in dedupe_keys:
             assert key.startswith("notification:")
 
@@ -288,4 +294,4 @@ def test_assigned_card_overdue_without_l2_decision_postgres(pg_tx):
             "SELECT count(*) FROM notifications WHERE card_id=%s",
             (card.id,),
         )
-        assert cursor.fetchone()["count"] == 4
+        assert cursor.fetchone()["count"] == 2 + len(manager_channels)

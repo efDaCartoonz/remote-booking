@@ -34,6 +34,7 @@ def database_url() -> str:
 
 def test_postgres_l2_urgent_collision_persists_expected_notification_intents(
     database_url: str,
+    role_notification_channels,
 ) -> None:
     connection = psycopg.connect(database_url, row_factory=dict_row)
     try:
@@ -214,10 +215,6 @@ def test_postgres_l2_urgent_collision_persists_expected_notification_intents(
             )
             intents = [dict(row) for row in cursor.fetchall()]
 
-            # Exactly 6 notification intents expected:
-            # (L1, L2A, Manager) x (Telegram, Bitrix24)
-            assert len(intents) == 6
-
             for intent in intents:
                 assert intent["source_event_id"] == displaced_event_id
                 assert intent["source_event_type_code"] == int(
@@ -267,23 +264,22 @@ def test_postgres_l2_urgent_collision_persists_expected_notification_intents(
                     "l2",
                     f"notification:urgent_collision:{displaced_event_id}:{l2_a_id}:bitrix24",
                 ),
-                # Active Manager: manager_escalation event, assignment="manager_escalation"
-                (
-                    manager_id,
-                    NOTIFICATION_CHANNEL_CODES["telegram"],
-                    NOTIFICATION_EVENT_CODES["manager_escalation"],
-                    "manager_escalation",
-                    f"notification:manager_escalation:{displaced_event_id}:{manager_id}:telegram",
-                ),
-                (
-                    manager_id,
-                    NOTIFICATION_CHANNEL_CODES["bitrix24"],
-                    NOTIFICATION_EVENT_CODES["manager_escalation"],
-                    "manager_escalation",
-                    f"notification:manager_escalation:{displaced_event_id}:{manager_id}:bitrix24",
-                ),
             }
+            manager_channels = role_notification_channels(connection, (RoleId.MANAGER,))
+            assert {(manager_id, 0), (manager_id, 1)} <= manager_channels
+            for recipient_id, channel_code in manager_channels:
+                channel = "telegram" if channel_code == 0 else "bitrix24"
+                expected_tuples.add(
+                    (
+                        recipient_id,
+                        channel_code,
+                        NOTIFICATION_EVENT_CODES["manager_escalation"],
+                        "manager_escalation",
+                        f"notification:manager_escalation:{displaced_event_id}:{recipient_id}:{channel}",
+                    )
+                )
 
+            assert len(intents) == len(expected_tuples)
             assert intent_tuples == expected_tuples
 
         # Verify deduplication: re-calling notify with the same parameters returns False and does not insert duplicates
@@ -310,7 +306,7 @@ def test_postgres_l2_urgent_collision_persists_expected_notification_intents(
                     int(CardEventType.URGENT_COLLISION),
                 ),
             )
-            assert cursor.fetchone()["count"] == 6
+            assert cursor.fetchone()["count"] == len(expected_tuples)
     finally:
         connection.rollback()
         connection.close()
