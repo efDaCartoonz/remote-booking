@@ -325,7 +325,7 @@ async function submitCreate(): Promise<void> {
   if (valid === null) return;
   createBusy.value = true; createError.value = "";
   try {
-    const payload: Record<string, unknown> = { case_number: create.value.caseNumber, planned_start_at: createStartIso(valid.start), planned_duration_minutes: valid.duration, description: create.value.description || null, assignment_method: create.value.assignment === "manual" ? "manual" : "auto" };
+    const payload: Record<string, unknown> = { case_number: create.value.caseNumber, planned_start_at: createStartIso(valid.start), planned_duration_minutes: valid.duration, description: create.value.description || null, assignment_method: "auto" };
     if (create.value.assignment === "manual") payload.l2_user_id = Number(create.value.l2UserId);
     const created = await api<Card>("/api/v1/manager/cards", { method: "POST", body: JSON.stringify(payload) });
     window.location.assign(`/cards/${created.id}`);

@@ -369,6 +369,44 @@ describe("App manager create view", () => {
     expect(wrapper.text()).not.toContain("Тикет T-1001");
   });
 
+  it("sends a manual L2 choice using the backend assignment contract", async () => {
+    const fetchSpy = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/v1/auth/me")) return { ok: true, status: 200, json: async () => mockUser } as Response;
+      if (url.includes("/api/v1/manager/tickets/T-MANUAL/preflight")) {
+        return { ok: true, status: 200, json: async () => ({ case_number: "T-MANUAL", status: "open", client_display_name: null, can_create: true }) } as Response;
+      }
+      if (url.includes("/api/v1/manager/l2-options")) {
+        return { ok: true, status: 200, json: async () => ({ items: [{ user_id: 42, display_name: "L2 Test", available: true, reason_code: null }] }) } as Response;
+      }
+      if (url.includes("/api/v1/manager/cards") && init?.method === "POST") {
+        return { ok: false, status: 409, json: async () => ({ detail: "l2_assignment_conflict" }) } as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    globalThis.fetch = fetchSpy;
+
+    const wrapper = mount(App);
+    await flushPromises();
+    await wrapper.find("input[required]").setValue("T-MANUAL");
+    await wrapper.find(".create-form button.secondary").trigger("click");
+    await wrapper.find("input[type='datetime-local']").setValue(validFutureDate(4));
+    await flushPromises();
+    await wrapper.find("input[type='radio'][value='manual']").setValue();
+    await wrapper.find(".create-form select").setValue("42");
+    await wrapper.find(".create-form").trigger("submit");
+    await flushPromises();
+
+    const postCalls = fetchSpy.mock.calls.filter((call) => String(call[0]).includes("/api/v1/manager/cards") && call[1]?.method === "POST");
+    expect(postCalls).toHaveLength(1);
+    expect(JSON.parse(String(postCalls[0][1]?.body))).toMatchObject({
+      case_number: "T-MANUAL",
+      assignment_method: "auto",
+      l2_user_id: 42,
+    });
+    expect(wrapper.text()).toContain("Выбранный L2 стал недоступен.");
+  });
+
   it("prevents double submit on rapid clicks", async () => {
     let resolvePost: (res: Response) => void = () => {};
     const postPromise = new Promise<Response>((r) => { resolvePost = r; });
