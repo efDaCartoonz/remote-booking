@@ -1,0 +1,9 @@
+services:
+  worker:
+    environment:
+      REMINDER_SCANNER_ENABLED: "true"
+      REMINDER_SCAN_INTERVAL_SECONDS: "5"
+  beat:
+    environment:
+      REMINDER_SCANNER_ENABLED: "true"
+      REMINDER_SCAN_INTERVAL_SECONDS: "5"

@@ -57,9 +57,10 @@ Celery с Redis. Интерфейс построен на Vue 3 и Vite. Для 
 `make verify-backend`, `make verify-frontend`, `make verify-compose` или
 `make verify-migrations`.
 
-Профильные тесты IE-02 с временной PostgreSQL и stub-доставкой запускаются
-командой `./scripts/quality-gate.sh ie02`. Контур использует `.env.example`,
-не отправляет сообщения во внешние каналы и удаляет свои контейнеры и volumes.
+Профильные тесты IE-02 с временной PostgreSQL, проверкой Beat/Redis/worker и
+stub-доставкой запускаются командой `./scripts/quality-gate.sh ie02`. Контур
+использует `.env.example`, не отправляет сообщения во внешние каналы и удаляет
+свои контейнеры и volumes.
 
 ## Документация
 

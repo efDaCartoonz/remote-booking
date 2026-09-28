@@ -652,6 +652,12 @@ class FakeCardRepository:
                 overdue_flag=(False if clear_overdue_flag else card.overdue_flag),
                 unsuccessful_cycle_count=card.unsuccessful_cycle_count
                 + int(increment_unsuccessful_cycle_count),
+                criticality_code=(
+                    min(card.criticality_code + 1, 2)
+                    if increment_unsuccessful_cycle_count
+                    and card.unsuccessful_cycle_count >= 1
+                    else card.criticality_code
+                ),
                 updated_at=datetime.now(UTC),
             )
             self.cards[public_id] = updated

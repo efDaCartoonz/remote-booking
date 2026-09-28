@@ -114,6 +114,13 @@ run_ie02_matrix() {
         RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
             --env-file .env.example run --rm -e RDM_PG_INTEGRATION=1 quality-backend sh -ec \
             'pytest -v tests/test_ie02_*postgres.py tests/test_cancellation_public_notification_postgres.py tests/test_cancellation_internal_notification_postgres.py'
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES -f docker-compose.ie02-gate.yml --project-name "$GATE_PROJECT" \
+            --env-file .env.example up --build --detach redis worker beat
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES -f docker-compose.ie02-gate.yml --project-name "$GATE_PROJECT" \
+            --env-file .env.example run --rm -e RDM_IE02_BEAT_WORKER=1 quality-backend sh -ec \
+            'pytest -v tests/test_ie02_beat_worker_postgres.py'
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES -f docker-compose.ie02-gate.yml --project-name "$GATE_PROJECT" \
+            --env-file .env.example stop worker beat
     )
 }
 

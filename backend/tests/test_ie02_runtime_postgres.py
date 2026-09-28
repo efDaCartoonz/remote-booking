@@ -235,24 +235,19 @@ def test_ie02_postgres_notification_runtime_retries_due_intent_and_audits(
             connection.close()
         # Runtime repository methods commit their own transactions, so remove
         # only rows identified by this test's generated unique identifiers.
-        try:
-            with psycopg.connect(database_url) as cleanup, cleanup.cursor() as cursor:
+        with psycopg.connect(database_url) as cleanup, cleanup.cursor() as cursor:
+            cursor.execute(
+                "DELETE FROM audit_log WHERE entity_type = 'notification' "
+                "AND entity_id IN (SELECT id FROM notifications "
+                "WHERE dedupe_key = %s)",
+                (dedupe_key,),
+            )
+            if dedupe_key is not None:
                 cursor.execute(
-                    "DELETE FROM audit_log WHERE entity_type = 'notification' "
-                    "AND entity_id IN (SELECT id FROM notifications "
-                    "WHERE dedupe_key = %s)",
+                    "DELETE FROM notifications WHERE dedupe_key = %s",
                     (dedupe_key,),
                 )
-                if dedupe_key is not None:
-                    cursor.execute(
-                        "DELETE FROM notifications WHERE dedupe_key = %s",
-                        (dedupe_key,),
-                    )
-                cursor.execute(
-                    "DELETE FROM connection_cards WHERE number = %s", (card_number,)
-                )
-                cursor.execute("DELETE FROM users WHERE username = %s", (username,))
-        except psycopg.OperationalError:
-            # Preserve the original failure if the database itself became
-            # unavailable; cleanup is safe to retry manually by these IDs.
-            pass
+            cursor.execute(
+                "DELETE FROM connection_cards WHERE number = %s", (card_number,)
+            )
+            cursor.execute("DELETE FROM users WHERE username = %s", (username,))

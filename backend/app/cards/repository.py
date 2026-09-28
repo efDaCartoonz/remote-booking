@@ -1023,6 +1023,12 @@ class PostgresCardRepository:
                         WHEN %(increment_unsuccessful_cycle_count)s THEN 1
                         ELSE 0
                     END,
+                    criticality_code = CASE
+                        WHEN %(increment_unsuccessful_cycle_count)s
+                             AND unsuccessful_cycle_count >= 1
+                        THEN LEAST(criticality_code + 1, 2)
+                        ELSE criticality_code
+                    END,
                     updated_at = now()
                 WHERE id = %(card_id)s
                 RETURNING *

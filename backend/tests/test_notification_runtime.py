@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
@@ -119,6 +119,19 @@ def test_missing_omnidesk_staff_mapping_message_is_actionable() -> None:
 
     assert "Не настроена связь исполнителя RDM с сотрудником Omnidesk" in message
     assert "RDM-000010" in message
+
+
+def test_manager_rejection_message_includes_reason_current_status_and_action() -> None:
+    intent = replace(
+        make_intent(event_type_code=2),
+        card_status_code=4,
+        source_event_comment="all_l2_candidates_rejected: engineer unavailable",
+    )
+    message = _render_message(intent)
+
+    assert "все кандидаты L2 отказались (engineer unavailable)" in message
+    assert "текущий статус: Отклонено" in message
+    assert "действие: проверьте отказ и назначьте L2" in message
 
 
 @pytest.mark.parametrize(
@@ -430,7 +443,7 @@ def test_notification_tasks_route_to_notifications_queue() -> None:
 
 
 def test_message_is_minimal_and_contains_card_link() -> None:
-    repository = FakeRuntimeRepository([make_intent()])
+    repository = FakeRuntimeRepository([make_intent(event_type_code=5)])
     adapter = RecordingAdapter()
 
     deliver_pending_notifications(repository, {0: adapter}, now=NOW)

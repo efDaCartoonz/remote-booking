@@ -11,6 +11,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from app.core.config import settings
+from app.cards.constants import CARD_STATUS_LABELS, CardStatus
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +313,8 @@ class NotificationIntent:
     planned_start_at: datetime | None
     planned_duration_minutes: int | None
     recipient_timezone: str | None
+    card_status_code: int | None = None
+    source_event_comment: str | None = None
 
 
 class NotificationRuntimeRepository(Protocol):
@@ -418,11 +421,16 @@ class PostgresNotificationRuntimeRepository:
                     c.omnidesk_ticket_number,
                     clients.display_name AS client_display_name,
                     c.planned_start_at,
-                    c.planned_duration_minutes
+                    c.planned_duration_minutes,
+                    c.status_code AS card_status_code,
+                    source_event.comment AS source_event_comment
                 FROM notifications n
                 LEFT JOIN user_settings us ON us.user_id = n.recipient_user_id
                 LEFT JOIN connection_cards c ON c.id = n.card_id
                 LEFT JOIN clients ON clients.id = c.client_id
+                LEFT JOIN card_events source_event
+                  ON source_event.id = n.source_event_id
+                 AND source_event.card_id = n.card_id
                 WHERE n.id = %(intent_id)s
                 """,
                 {"intent_id": row["id"]},
@@ -458,6 +466,8 @@ class PostgresNotificationRuntimeRepository:
                 details["planned_duration_minutes"] if details else None
             ),
             recipient_timezone=details["timezone"] if details else None,
+            card_status_code=details["card_status_code"] if details else None,
+            source_event_comment=(details["source_event_comment"] if details else None),
         )
 
     def mark_sent(self, intent: NotificationIntent) -> None:
@@ -598,23 +608,57 @@ def _render_message(intent: NotificationIntent) -> str:
     ticket = intent.omnidesk_ticket_number or "не указан"
     card_number = intent.card_number or f"RDM-{intent.id}"
     url = f"{settings.notification_card_base_url.rstrip('/')}/cards/{intent.card_public_id}"
+    client = (
+        f"; клиент {intent.client_display_name}" if intent.client_display_name else ""
+    )
     if (
         intent.event_type_code
         == NOTIFICATION_EVENT_CODES["omnidesk_staff_mapping_missing"]
     ):
         return (
             f"Не настроена связь исполнителя RDM с сотрудником Omnidesk. "
-            f"Проверьте назначение в карточке {card_number}; тикет {ticket}. {url}"
+            f"Проверьте назначение в карточке {card_number}{client}; тикет {ticket}; "
+            f"{timestamp}; {duration} мин. {url}"
         )
     if intent.event_type_code == NOTIFICATION_EVENT_CODES["card_cancelled"]:
-        return f"Карточка {card_number} отменена; тикет {ticket}. {url}"
-    client = (
-        f"; клиент {intent.client_display_name}" if intent.client_display_name else ""
-    )
+        return (
+            f"Карточка {card_number} отменена{client}; тикет {ticket}; "
+            f"{timestamp}; {duration} мин. {url}"
+        )
+    if intent.event_type_code == NOTIFICATION_EVENT_CODES["manager_escalation"]:
+        reason, action = _manager_escalation_context(intent.source_event_comment)
+        try:
+            status = CARD_STATUS_LABELS[CardStatus(intent.card_status_code)]
+        except (ValueError, KeyError, TypeError):
+            status = "неизвестен"
+        return (
+            f"Карточка {card_number}{client}; тикет {ticket}; {timestamp}; "
+            f"{duration} мин; причина: {reason}; "
+            f"текущий статус: {status}; действие: {action}. {url}"
+        )
     return (
         f"Карточка {card_number}{client}; тикет {ticket}; {timestamp}; "
         f"{duration} мин. {url}"
     )
+
+
+def _manager_escalation_context(comment: str | None) -> tuple[str, str]:
+    """Use persisted event context without exposing arbitrary event text."""
+    if comment and comment.startswith("all_l2_candidates_rejected:"):
+        rejection = " ".join(comment.partition(":")[2].split())[:300]
+        reason = (
+            f"все кандидаты L2 отказались ({rejection})"
+            if rejection
+            else "все кандидаты L2 отказались"
+        )
+        return reason, "проверьте отказ и назначьте L2 или согласуйте новое время"
+    if comment == "no_available_l2_candidates":
+        return "нет доступного L2", "назначьте L2 или согласуйте новое время"
+    if comment == "no_available_l1_candidates":
+        return "нет доступного L1", "назначьте ответственного L1"
+    if comment and comment.startswith("urgent_collision"):
+        return "срочная коллизия", "проверьте пересечение и распределите карточки"
+    return "требуется проверка карточки", "откройте карточку и определите следующий шаг"
 
 
 def _status_name(status: int) -> str:
