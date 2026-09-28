@@ -1419,7 +1419,7 @@ class PostgresCardRepository:
 
         with self.connection.cursor() as cursor:
             cursor.execute(
-                "SELECT omnidesk_ticket_number FROM connection_cards WHERE id = %(id)s",
+                "SELECT omnidesk_ticket_number, planned_start_at FROM connection_cards WHERE id = %(id)s",
                 {"id": card_id},
             )
             row = cursor.fetchone()
@@ -1456,10 +1456,13 @@ class PostgresCardRepository:
             # Public Notification on CONFIRMED or RESCHEDULED WHILE CONFIRMED
             old_status = old_values.get("status_code")
             new_status = new_values.get("status_code")
-            is_newly_confirmed = new_status == 1 and old_status != 1
+            confirmed_status = int(CardStatus.CONFIRMED)
+            is_newly_confirmed = (
+                new_status == confirmed_status and old_status != confirmed_status
+            )
             is_rescheduled_while_confirmed = (
-                new_status == 1
-                and old_status == 1
+                new_status == confirmed_status
+                and old_status == confirmed_status
                 and new_values.get("planned_start_at")
                 != old_values.get("planned_start_at")
             )
@@ -1467,7 +1470,9 @@ class PostgresCardRepository:
             # A queued warning belongs to one confirmation/schedule. Retire every
             # undelivered warning before creating the replacement so a move or
             # cancel/reconfirm cycle cannot send an obsolete message as well.
-            if (old_status == 1 and new_status != 1) or is_rescheduled_while_confirmed:
+            if (
+                old_status == confirmed_status and new_status != confirmed_status
+            ) or is_rescheduled_while_confirmed:
                 cursor.execute(
                     """
                     UPDATE omnidesk_outbox
@@ -1489,6 +1494,16 @@ class PostgresCardRepository:
                 if settings.get("omnidesk_public_notification_enabled") is True:
                     template = settings.get("omnidesk_public_notification_template")
                     if not isinstance(template, str) or not template.strip():
+                        return
+                    planned_start_at = (
+                        new_values.get("planned_start_at") or row["planned_start_at"]
+                    )
+                    if isinstance(planned_start_at, str):
+                        planned_start_at = datetime.fromisoformat(planned_start_at)
+                    if (
+                        not isinstance(planned_start_at, datetime)
+                        or not planned_start_at.tzinfo
+                    ):
                         return
                     cursor.execute(
                         """
@@ -1517,17 +1532,10 @@ class PostgresCardRepository:
                             "payload": __import__("psycopg").types.json.Jsonb(
                                 {
                                     "content": template,
-                                    "planned_start_at": new_values.get(
-                                        "planned_start_at"
-                                    ),
+                                    "planned_start_at": planned_start_at.isoformat(),
                                 }
                             ),
-                            "next_attempt_at": __import__(
-                                "datetime"
-                            ).datetime.fromisoformat(new_values["planned_start_at"])
-                            - __import__("datetime").timedelta(minutes=15)
-                            if new_values.get("planned_start_at")
-                            else None,
+                            "next_attempt_at": planned_start_at - timedelta(minutes=15),
                         },
                     )
 

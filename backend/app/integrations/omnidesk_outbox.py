@@ -17,7 +17,7 @@ from app.omnidesk_index.resolver import (
     PublicTicketResolutionError,
     resolve_ticket_by_case_number,
 )
-from app.cards.constants import RoleId
+from app.cards.constants import CardStatus, RoleId
 from app.notifications import PostgresNotificationService
 
 logger = logging.getLogger(__name__)
@@ -307,7 +307,7 @@ def _process_intent(
         card_info = repository.get_card_info(intent.card_id)
         if not card_info or not card_info.get("public_notification_enabled", True):
             raise SuppressedIntent("public_notification_disabled")
-        if not card_info or card_info["status_code"] != 1:
+        if card_info["status_code"] != int(CardStatus.CONFIRMED):
             raise SuppressedIntent("public_notification_card_not_confirmed")
 
         # Verify schedule identity to revoke stale intents on reschedule

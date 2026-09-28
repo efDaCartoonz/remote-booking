@@ -5,7 +5,7 @@ import psycopg
 import pytest
 from psycopg.rows import dict_row
 
-from app.cards.constants import ActorType, CardEventType
+from app.cards.constants import ActorType, CardEventType, CardStatus
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService
 from app.cards.repository import PostgresCardRepository
@@ -124,8 +124,8 @@ def test_ie01_omnidesk_outbox_integration(connection: psycopg.Connection):
     # 4. Assign L1 / L2 and confirm in database
     with connection.cursor() as cursor:
         cursor.execute(
-            "UPDATE connection_cards SET status_code = 1, l1_owner_id = %s, l2_engineer_id = %s WHERE id = %s",
-            (staff_user_id, staff_user_id, card.id),
+            "UPDATE connection_cards SET status_code = %s, l1_owner_id = %s, l2_engineer_id = %s WHERE id = %s",
+            (int(CardStatus.CONFIRMED), staff_user_id, staff_user_id, card.id),
         )
 
     # Trigger L2 assign outbox
@@ -158,7 +158,7 @@ def test_ie01_omnidesk_outbox_integration(connection: psycopg.Connection):
         actor_type=ActorType.SYSTEM,
         old_values={"status_code": 0},
         new_values={
-            "status_code": 1,
+            "status_code": int(CardStatus.CONFIRMED),
             "planned_start_at": card.planned_start_at.isoformat(),
         },
         comment="Confirm test",
@@ -353,8 +353,8 @@ def test_ie01_disabling_public_notification_after_queue_suppresses_delivery(
         )
         actor_id = cursor.fetchone()["id"]
         cursor.execute(
-            "INSERT INTO connection_cards (omnidesk_ticket_number, status_code, criticality_code, urgency_code, planned_start_at, planned_duration_minutes, assignment_method_code, out_of_hours_flag, retroactive_flag, created_source_code) VALUES (%s, 1, 0, 0, now(), 60, 0, false, false, 0) RETURNING id",
-            (ticket,),
+            "INSERT INTO connection_cards (omnidesk_ticket_number, status_code, criticality_code, urgency_code, planned_start_at, planned_duration_minutes, assignment_method_code, out_of_hours_flag, retroactive_flag, created_source_code) VALUES (%s, %s, 0, 0, now(), 60, 0, false, false, 0) RETURNING id",
+            (ticket, int(CardStatus.CONFIRMED)),
         )
         card_id = cursor.fetchone()["id"]
     event_id = card_repo.add_card_event(
@@ -363,7 +363,7 @@ def test_ie01_disabling_public_notification_after_queue_suppresses_delivery(
         actor_user_id=actor_id,
         actor_type=ActorType.SYSTEM,
         old_values={"status_code": 0},
-        new_values={"status_code": 1},
+        new_values={"status_code": int(CardStatus.CONFIRMED)},
         comment="queue public warning",
     )
     with connection.cursor() as cursor:
@@ -459,23 +459,42 @@ def test_ie01_public_notification_revocation_and_timing(
         cursor.execute(
             """
             INSERT INTO connection_cards (omnidesk_ticket_number, status_code, criticality_code, urgency_code, planned_start_at, planned_duration_minutes, assignment_method_code, out_of_hours_flag, retroactive_flag, created_source_code)
-            VALUES (%s, 1, 0, 0, now(), 60, 0, false, false, 0)
+            VALUES (%s, %s, 0, 0, now(), 60, 0, false, false, 0)
             RETURNING id
             """,
-            (ticket,),
+            (ticket, int(CardStatus.CONFIRMED)),
         )
         card_id = cursor.fetchone()["id"]
 
     planned_start_at = datetime.now(UTC) + timedelta(hours=2)
+    assigned_event_id = card_repo.add_card_event(
+        card_id=card_id,
+        event_type=CardEventType.STATUS_CHANGED,
+        actor_user_id=staff_id,
+        actor_type=ActorType.SYSTEM,
+        old_values={"status_code": int(CardStatus.CREATED)},
+        new_values={
+            "status_code": int(CardStatus.ASSIGNED),
+            "planned_start_at": planned_start_at.isoformat(),
+        },
+        comment="assigned, not confirmed",
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT count(*) AS total FROM omnidesk_outbox WHERE source_event_id = %s AND action_type = 'public_notification'",
+            (assigned_event_id,),
+        )
+        assert cursor.fetchone()["total"] == 0
+
     # Trigger confirm
     event_id = card_repo.add_card_event(
         card_id=card_id,
         event_type=CardEventType.STATUS_CHANGED,
         actor_user_id=staff_id,
         actor_type=ActorType.SYSTEM,
-        old_values={"status_code": 0},
+        old_values={"status_code": int(CardStatus.ASSIGNED)},
         new_values={
-            "status_code": 1,
+            "status_code": int(CardStatus.CONFIRMED),
             "planned_start_at": planned_start_at.isoformat(),
         },
         comment="test public notification timing",
@@ -496,12 +515,12 @@ def test_ie01_public_notification_revocation_and_timing(
     diff = abs((row["next_attempt_at"] - expected_time).total_seconds())
     assert diff < 60
 
-    # Check revocation (when card status changes to not 1)
+    # Check revocation when the card leaves CONFIRMED.
     with connection.cursor() as cursor:
         cursor.execute(
-            "UPDATE connection_cards SET status_code = 4 WHERE id = %s",
-            (card_id,),
-        )  # REJECTED = 4
+            "UPDATE connection_cards SET status_code = %s WHERE id = %s",
+            (int(CardStatus.CANCELLED), card_id),
+        )
 
     client = FakeOmnideskClient()
     # Mock datetime so it fetches the intent
@@ -518,8 +537,44 @@ def test_ie01_public_notification_revocation_and_timing(
         )
         deliver_pending_omnidesk_outbox(repo, client)
 
-    # Notification shouldn't be sent because the card is no longer CONFIRMED (1)
+    # Notification shouldn't be sent because the card is no longer confirmed.
     assert len(client.public_messages) == 0
+
+
+def test_ie01_confirmation_without_event_time_uses_card_schedule(
+    connection: psycopg.Connection,
+):
+    card_repo = PostgresCardRepository(connection)
+    planned_start_at = datetime.now(UTC) + timedelta(hours=2)
+    ticket = next_ticket()
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "INSERT INTO system_settings (key, value) VALUES ('omnidesk_public_notification_enabled', 'true'), ('omnidesk_public_notification_template', '\"Scheduled warning\"') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+        )
+        cursor.execute(
+            "INSERT INTO connection_cards (omnidesk_ticket_number, status_code, criticality_code, urgency_code, planned_start_at, planned_duration_minutes, assignment_method_code, out_of_hours_flag, retroactive_flag, created_source_code) VALUES (%s, %s, 0, 0, %s, 60, 0, false, false, 0) RETURNING id",
+            (ticket, int(CardStatus.CONFIRMED), planned_start_at),
+        )
+        card_id = cursor.fetchone()["id"]
+
+    event_id = card_repo.add_card_event(
+        card_id=card_id,
+        event_type=CardEventType.STATUS_CHANGED,
+        actor_user_id=None,
+        actor_type=ActorType.SYSTEM,
+        old_values={"status_code": int(CardStatus.ASSIGNED)},
+        new_values={"status_code": int(CardStatus.CONFIRMED)},
+        comment="confirm without event schedule",
+    )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT next_attempt_at, payload FROM omnidesk_outbox WHERE source_event_id = %s AND action_type = 'public_notification'",
+            (event_id,),
+        )
+        intent = cursor.fetchone()
+    assert intent is not None
+    assert intent["next_attempt_at"] == planned_start_at - timedelta(minutes=15)
+    assert intent["payload"]["planned_start_at"] == planned_start_at.isoformat()
 
 
 def test_ie01_reschedule_and_cancellation_revocation(connection: psycopg.Connection):
@@ -544,10 +599,10 @@ def test_ie01_reschedule_and_cancellation_revocation(connection: psycopg.Connect
         cursor.execute(
             """
             INSERT INTO connection_cards (omnidesk_ticket_number, status_code, criticality_code, urgency_code, planned_start_at, planned_duration_minutes, assignment_method_code, out_of_hours_flag, retroactive_flag, created_source_code)
-            VALUES (%s, 1, 0, 0, now(), 60, 0, false, false, 0)
+            VALUES (%s, %s, 0, 0, now(), 60, 0, false, false, 0)
             RETURNING id
             """,
-            (ticket,),
+            (ticket, int(CardStatus.CONFIRMED)),
         )
         card_id = cursor.fetchone()["id"]
 
@@ -561,7 +616,10 @@ def test_ie01_reschedule_and_cancellation_revocation(connection: psycopg.Connect
         actor_user_id=staff_id,
         actor_type=ActorType.SYSTEM,
         old_values={"status_code": 0},
-        new_values={"status_code": 1, "planned_start_at": t1.isoformat()},
+        new_values={
+            "status_code": int(CardStatus.CONFIRMED),
+            "planned_start_at": t1.isoformat(),
+        },
         comment="confirm",
     )
 
@@ -571,8 +629,14 @@ def test_ie01_reschedule_and_cancellation_revocation(connection: psycopg.Connect
         event_type=CardEventType.STATUS_CHANGED,
         actor_user_id=staff_id,
         actor_type=ActorType.SYSTEM,
-        old_values={"status_code": 1, "planned_start_at": t1.isoformat()},
-        new_values={"status_code": 1, "planned_start_at": t2.isoformat()},
+        old_values={
+            "status_code": int(CardStatus.CONFIRMED),
+            "planned_start_at": t1.isoformat(),
+        },
+        new_values={
+            "status_code": int(CardStatus.CONFIRMED),
+            "planned_start_at": t2.isoformat(),
+        },
         comment="reschedule",
     )
 
@@ -580,8 +644,8 @@ def test_ie01_reschedule_and_cancellation_revocation(connection: psycopg.Connect
     # that CardService persists before writing its event.
     with connection.cursor() as cursor:
         cursor.execute(
-            "UPDATE connection_cards SET status_code = 1, planned_start_at = %s WHERE id = %s",
-            (t2, card_id),
+            "UPDATE connection_cards SET status_code = %s, planned_start_at = %s WHERE id = %s",
+            (int(CardStatus.CONFIRMED), t2, card_id),
         )
 
     with connection.cursor() as cursor:
@@ -626,6 +690,9 @@ def test_ie01_cancel_reconfirm_replaces_pending_public_notification(
             "INSERT INTO system_settings (key, value) VALUES ('omnidesk_public_notification_enabled', 'true'), ('omnidesk_public_notification_template', '\"Персональный текст.\"') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
         )
         cursor.execute(
+            "INSERT INTO system_settings (key, value) VALUES ('omnidesk_cancellation_public_notification_enabled', 'false') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value"
+        )
+        cursor.execute(
             "INSERT INTO users (username, password_hash, full_name) VALUES ('staff_reconfirm', 'x', 'Staff Reconfirm') RETURNING id"
         )
         staff_id = cursor.fetchone()["id"]
@@ -643,7 +710,10 @@ def test_ie01_cancel_reconfirm_replaces_pending_public_notification(
         actor_user_id=staff_id,
         actor_type=ActorType.SYSTEM,
         old_values={"status_code": 0},
-        new_values={"status_code": 1, "planned_start_at": first_start.isoformat()},
+        new_values={
+            "status_code": int(CardStatus.CONFIRMED),
+            "planned_start_at": first_start.isoformat(),
+        },
         comment="first confirmation",
     )
     card_repo.add_card_event(
@@ -651,17 +721,29 @@ def test_ie01_cancel_reconfirm_replaces_pending_public_notification(
         event_type=CardEventType.STATUS_CHANGED,
         actor_user_id=staff_id,
         actor_type=ActorType.SYSTEM,
-        old_values={"status_code": 1},
-        new_values={"status_code": 4},
+        old_values={"status_code": int(CardStatus.CONFIRMED)},
+        new_values={"status_code": int(CardStatus.CANCELLED)},
         comment="cancel",
     )
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "SELECT status_code, error_message FROM omnidesk_outbox WHERE card_id = %s AND action_type = 'public_notification' ORDER BY id",
+            (card_id,),
+        )
+        cancelled_intents = cursor.fetchall()
+    assert len(cancelled_intents) == 1
+    assert cancelled_intents[0]["status_code"] == 2
+    assert cancelled_intents[0]["error_message"] == "superseded_public_notification"
     card_repo.add_card_event(
         card_id=card_id,
         event_type=CardEventType.STATUS_CHANGED,
         actor_user_id=staff_id,
         actor_type=ActorType.SYSTEM,
-        old_values={"status_code": 4},
-        new_values={"status_code": 1, "planned_start_at": second_start.isoformat()},
+        old_values={"status_code": int(CardStatus.CANCELLED)},
+        new_values={
+            "status_code": int(CardStatus.CONFIRMED),
+            "planned_start_at": second_start.isoformat(),
+        },
         comment="reconfirm",
     )
 
@@ -674,3 +756,23 @@ def test_ie01_cancel_reconfirm_replaces_pending_public_notification(
     assert [row["status_code"] for row in rows] == [2, 0]
     assert rows[1]["payload"]["content"] == "Персональный текст."
     assert rows[1]["payload"]["planned_start_at"] == second_start.isoformat()
+
+    with connection.cursor() as cursor:
+        cursor.execute(
+            "UPDATE connection_cards SET status_code = %s, planned_start_at = %s WHERE id = %s",
+            (int(CardStatus.CONFIRMED), second_start, card_id),
+        )
+        cursor.execute(
+            "UPDATE omnidesk_outbox SET next_attempt_at = now() - interval '1 minute' WHERE card_id = %s AND action_type = 'public_notification' AND status_code = 0",
+            (card_id,),
+        )
+    repo = PostgresOmnideskOutboxRepository(connection)
+    client = FakeOmnideskClient()
+    with patch(
+        "app.integrations.omnidesk_outbox.resolve_ticket_by_case_number"
+    ) as mock_resolve:
+        mock_resolve.return_value = OmnideskTicket(
+            case_id="c_reconfirm", number=ticket, user_id="u1", status="open"
+        )
+        deliver_pending_omnidesk_outbox(repo, client)
+    assert [message[1] for message in client.public_messages] == ["Персональный текст."]
