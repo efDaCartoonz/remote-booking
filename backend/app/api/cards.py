@@ -156,27 +156,36 @@ def create_l2_retroactive_card(
 @router.get("/{card_id}", response_model=CardResponse)
 def get_card(
     card_id: UUID,
-    _: Annotated[UserAuthRecord, Depends(get_current_user)],
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> CardResponse:
     try:
-        return card_response(service.get_card(card_id))
+        return card_response(
+            service.get_card_for_user(card_id, actor_role_ids=role_ids(user.roles))
+        )
     except CardNotFoundError as exc:
         raise _not_found() from exc
+    except CardActionPolicyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.get("/{card_id}/history", response_model=list[CardHistoryResponse])
 def get_card_history(
     card_id: UUID,
-    _: Annotated[UserAuthRecord, Depends(get_current_user)],
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
     service: Annotated[CardService, Depends(get_card_service)],
 ) -> list[CardHistoryResponse]:
     try:
         return [
-            card_history_response(event) for event in service.list_card_history(card_id)
+            card_history_response(event)
+            for event in service.list_card_history_for_user(
+                card_id, actor_role_ids=role_ids(user.roles)
+            )
         ]
     except CardNotFoundError as exc:
         raise _not_found() from exc
+    except CardActionPolicyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
 @router.post("/{card_id}/assign", response_model=CardResponse)

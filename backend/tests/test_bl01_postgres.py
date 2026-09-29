@@ -216,7 +216,7 @@ def test_manager_reassignment_persists_cycle_attempt_and_reminder_lifecycle(
             )
             assert cursor.fetchone()["count"] == 1
             cursor.execute(
-                "SELECT count(*) FROM card_events WHERE card_id=%s AND comment='manager_manual_assignment'",
+                "SELECT count(*) FROM card_events WHERE card_id=%s AND comment='coverage reassignment'",
                 (card.id,),
             )
             assert cursor.fetchone()["count"] == 1

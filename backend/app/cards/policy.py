@@ -38,6 +38,13 @@ def role_ids(roles: Collection[object]) -> frozenset[int]:
     return frozenset(int(getattr(role, "id")) for role in roles)
 
 
+def authorize_card_read(*, actor_role_ids: Collection[int]) -> None:
+    if not frozenset(actor_role_ids).intersection(
+        {int(RoleId.L1), int(RoleId.L2), int(RoleId.MANAGER)}
+    ):
+        _forbidden()
+
+
 def authorize_create(
     *,
     actor_role_ids: Collection[int],
@@ -71,12 +78,21 @@ def authorize_card_action(
     actor_user_id: int,
     actor_role_ids: Collection[int],
     comment: str | None = None,
+    target_l2_engineer_id: int | None = None,
 ) -> None:
     roles = frozenset(actor_role_ids)
     status = CardStatus(card.status_code)
 
     if action == CardAction.ASSIGN:
-        _require_manager(roles)
+        if int(RoleId.MANAGER) not in roles:
+            if int(RoleId.L2) not in roles:
+                _forbidden()
+            if target_l2_engineer_id != actor_user_id:
+                _forbidden("only_self_assignment_allowed")
+            if not (comment or "").strip():
+                raise CardActionPolicyError(
+                    status_code=422, detail="assignment_reason_required"
+                )
         _require_status(
             status,
             CardStatus.CREATED,
@@ -121,9 +137,7 @@ def authorize_card_action(
         return
 
     if action == CardAction.CANCEL:
-        _require_manager_l1_or_assigned_l2(
-            roles=roles, card=card, actor_user_id=actor_user_id
-        )
+        authorize_card_read(actor_role_ids=roles)
         if int(RoleId.MANAGER) in roles:
             _require_status(
                 status,
@@ -136,20 +150,18 @@ def authorize_card_action(
             _require_status(
                 status, CardStatus.ASSIGNED, CardStatus.CONFIRMED, CardStatus.REJECTED
             )
-        if int(RoleId.MANAGER) not in roles and not (comment or "").strip():
+        if not (comment or "").strip():
             raise CardActionPolicyError(
                 status_code=422, detail="cancellation_reason_required"
             )
         return
 
     if action == CardAction.RESCHEDULE:
-        _require_manager_l1_owner_or_assigned_l2(
-            roles=roles, card=card, actor_user_id=actor_user_id
-        )
+        authorize_card_read(actor_role_ids=roles)
         _require_status(
             status, CardStatus.ASSIGNED, CardStatus.CONFIRMED, CardStatus.REJECTED
         )
-        if int(RoleId.MANAGER) not in roles and not (comment or "").strip():
+        if not (comment or "").strip():
             raise CardActionPolicyError(
                 status_code=422, detail="reschedule_reason_required"
             )
@@ -163,11 +175,6 @@ def authorize_card_action(
     raise ValueError(f"unsupported_card_action:{action}")
 
 
-def _require_manager(roles: Collection[int]) -> None:
-    if int(RoleId.MANAGER) not in roles:
-        _forbidden()
-
-
 def _require_manager_or_assigned_l2(
     *, roles: Collection[int], card: PolicyCard, actor_user_id: int
 ) -> None:
@@ -177,57 +184,6 @@ def _require_manager_or_assigned_l2(
         _forbidden()
     if card.l2_engineer_id != actor_user_id:
         _forbidden("assigned_l2_required")
-
-
-def _require_manager_or_assigned_l1(
-    *, roles: Collection[int], card: PolicyCard, actor_user_id: int
-) -> None:
-    if int(RoleId.MANAGER) in roles:
-        return
-    _require_assigned_l1(roles=roles, card=card, actor_user_id=actor_user_id)
-
-
-def _require_manager_or_owner(
-    *, roles: Collection[int], card: PolicyCard, actor_user_id: int
-) -> None:
-    if int(RoleId.MANAGER) in roles:
-        return
-    owns_l1 = int(RoleId.L1) in roles and card.l1_owner_id == actor_user_id
-    owns_l2 = int(RoleId.L2) in roles and card.l2_engineer_id == actor_user_id
-    if not owns_l1 and not owns_l2:
-        _forbidden("card_owner_required")
-
-
-def _require_manager_l1_or_assigned_l2(
-    *, roles: Collection[int], card: PolicyCard, actor_user_id: int
-) -> None:
-    if int(RoleId.MANAGER) in roles or int(RoleId.L1) in roles:
-        return
-    if int(RoleId.L2) in roles and card.l2_engineer_id == actor_user_id:
-        return
-    _forbidden("assigned_l2_required")
-
-
-def _require_manager_l1_owner_or_assigned_l2(
-    *, roles: Collection[int], card: PolicyCard, actor_user_id: int
-) -> None:
-    """Authorize time changes by a manager, card owner, or assigned L2.
-
-    Unlike cancellation, a reschedule is a change to the card's agreed
-    schedule.  An arbitrary L1 must not be able to change another L1's card;
-    the SRS grants this operation to the owning L1 only.
-    """
-    if int(RoleId.MANAGER) in roles:
-        return
-    owns_l1 = int(RoleId.L1) in roles and card.l1_owner_id == actor_user_id
-    owns_l2 = int(RoleId.L2) in roles and card.l2_engineer_id == actor_user_id
-    if owns_l1 or owns_l2:
-        return
-    if int(RoleId.L1) in roles:
-        _forbidden("assigned_l1_required")
-    if int(RoleId.L2) in roles:
-        _forbidden("assigned_l2_required")
-    _forbidden()
 
 
 def _require_assigned_l1(

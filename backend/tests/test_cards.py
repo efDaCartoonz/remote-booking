@@ -1227,7 +1227,7 @@ def test_reschedule_selected_l2_rejection_has_no_lifecycle_side_effects() -> Non
     assert repository.cards[card.public_id] == card
 
 
-def test_only_manager_can_select_l2_during_reschedule() -> None:
+def test_l2_cannot_select_another_l2_during_reschedule() -> None:
     repository = FakeCardRepository()
     seed_l2_candidate(repository, 20)
     service = make_service(repository)
@@ -1236,9 +1236,7 @@ def test_only_manager_can_select_l2_during_reschedule() -> None:
     )
     before = (list(repository.events), list(repository.audit), list(repository.cycles))
 
-    with pytest.raises(
-        CardActionPolicyError, match="manager_required_for_manual_assignment"
-    ):
+    with pytest.raises(CardActionPolicyError, match="only_self_assignment_allowed"):
         service.reschedule_card(
             card.public_id,
             actor_user_id=20,
@@ -1249,7 +1247,7 @@ def test_only_manager_can_select_l2_during_reschedule() -> None:
             reason="client_requested",
             ip_address=None,
             user_agent=None,
-            selected_l2_engineer_id=20,
+            selected_l2_engineer_id=30,
             now=RESCHEDULE_NOW,
         )
 
@@ -1257,29 +1255,31 @@ def test_only_manager_can_select_l2_during_reschedule() -> None:
     assert repository.cards[card.public_id] == card
 
 
-def test_reschedule_policy_failure_has_no_side_effects() -> None:
+def test_foreign_l2_can_reschedule_with_recorded_reason() -> None:
     repository = FakeCardRepository()
     seed_l2_candidate(repository, 20)
     service = make_service(repository)
     card = service.create_card(
         create_payload(), actor_user_id=10, ip_address=None, user_agent=None
     )
-    before = (list(repository.events), list(repository.audit), list(repository.cycles))
+    updated = service.reschedule_card(
+        card.public_id,
+        actor_user_id=30,
+        actor_role_ids={int(RoleId.L2)},
+        planned_start_at=DEFAULT_PLANNED_START_AT + timedelta(hours=2),
+        planned_duration_minutes=90,
+        description=None,
+        reason="client_requested",
+        ip_address=None,
+        user_agent=None,
+        now=RESCHEDULE_NOW,
+    )
 
-    with pytest.raises(CardActionPolicyError, match="assigned_l2_required"):
-        service.reschedule_card(
-            card.public_id,
-            actor_user_id=30,
-            actor_role_ids={int(RoleId.L2)},
-            planned_start_at=DEFAULT_PLANNED_START_AT + timedelta(hours=2),
-            planned_duration_minutes=90,
-            description=None,
-            reason="client_requested",
-            ip_address=None,
-            user_agent=None,
-        )
-
-    assert (repository.events, repository.audit, repository.cycles) == before
+    assert updated.planned_duration_minutes == 90
+    assert any(
+        event["actor_user_id"] == 30 and event["comment"] == "client_requested"
+        for event in repository.events
+    )
 
 
 @pytest.mark.parametrize(
@@ -1353,29 +1353,29 @@ def test_service_reschedule_allows_owning_l1_on_rejected_card() -> None:
     assert updated.l2_engineer_id == 20
 
 
-def test_service_reschedule_rejects_non_owning_l1_before_mutation() -> None:
+def test_service_reschedule_allows_foreign_l1_with_reason() -> None:
     repository = FakeCardRepository()
     service = make_service(repository)
     card = service.create_card(
         create_payload(), actor_user_id=10, ip_address=None, user_agent=None
     )
     repository.cards[card.public_id] = replace(card, l1_owner_id=11)
-    before = repository.cards[card.public_id]
+    new_start = DEFAULT_PLANNED_START_AT + timedelta(hours=2)
+    updated = service.reschedule_card(
+        card.public_id,
+        actor_user_id=99,
+        actor_role_ids={int(RoleId.L1)},
+        planned_start_at=new_start,
+        planned_duration_minutes=60,
+        description=None,
+        reason="client_requested",
+        ip_address=None,
+        user_agent=None,
+        now=RESCHEDULE_NOW,
+    )
 
-    with pytest.raises(CardActionPolicyError, match="assigned_l1_required"):
-        service.reschedule_card(
-            card.public_id,
-            actor_user_id=99,
-            actor_role_ids={int(RoleId.L1)},
-            planned_start_at=DEFAULT_PLANNED_START_AT + timedelta(hours=2),
-            planned_duration_minutes=60,
-            description=None,
-            reason="client_requested",
-            ip_address=None,
-            user_agent=None,
-        )
-
-    assert repository.cards[card.public_id] == before
+    assert updated.planned_start_at == new_start
+    assert any(event["actor_user_id"] == 99 for event in repository.events)
 
 
 def test_known_reschedule_exclusion_is_mapped_to_safe_conflict(monkeypatch) -> None:
@@ -1873,6 +1873,108 @@ def test_cards_api_returns_not_found_for_missing_card_history() -> None:
     assert response.json()["detail"] == "card_not_found"
 
 
+@pytest.mark.parametrize("suffix", ["", "/history"])
+@pytest.mark.parametrize(
+    ("user_id", "roles"),
+    [
+        (30, ()),
+        (30, (RoleId.ADMIN,)),
+    ],
+)
+def test_cards_api_forbids_reader_without_business_role_without_leaking_data(
+    suffix: str, user_id: int, roles: tuple[RoleId, ...]
+) -> None:
+    repository = FakeCardRepository()
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    repository.cards[card.public_id] = replace(card, l1_owner_id=10)
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=user_id,
+        username="outsider",
+        password_hash="unused",
+        full_name="Посторонний сотрудник",
+        email=None,
+        roles=tuple(RoleRecord(id=int(role), name=role.name) for role in roles),
+    )
+
+    response = TestClient(app, base_url="https://testserver").get(
+        f"/api/v1/cards/{card.public_id}{suffix}"
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {"detail": "action_forbidden"}
+    assert card.omnidesk_ticket_number not in response.text
+    assert card.description not in response.text
+    assert "case_id" not in response.text
+
+
+@pytest.mark.parametrize("suffix", ["", "/history"])
+def test_cards_api_requires_login_for_card_and_history(suffix: str) -> None:
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: FakeCardRepository()
+    app.dependency_overrides[get_auth_store] = lambda: object()
+
+    response = TestClient(app, base_url="https://testserver").get(
+        f"/api/v1/cards/{uuid4()}{suffix}"
+    )
+
+    assert response.status_code == 401
+    assert "case_id" not in response.text
+
+
+@pytest.mark.parametrize("suffix", ["", "/history"])
+@pytest.mark.parametrize(
+    ("user_id", "roles"),
+    [
+        (40, (RoleId.MANAGER,)),
+        (10, (RoleId.L1,)),
+        (20, (RoleId.L2,)),
+        (30, (RoleId.L1,)),
+        (30, (RoleId.L2,)),
+        (30, (RoleId.L1, RoleId.L2, RoleId.ADMIN)),
+    ],
+)
+def test_cards_api_allows_authorized_card_and_history_reads(
+    suffix: str, user_id: int, roles: tuple[RoleId, ...]
+) -> None:
+    repository = FakeCardRepository()
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    repository.cards[card.public_id] = replace(card, l1_owner_id=10)
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=user_id,
+        username="authorized",
+        password_hash="unused",
+        full_name="Участник",
+        email=None,
+        roles=tuple(RoleRecord(id=int(role), name=role.name) for role in roles),
+    )
+
+    response = TestClient(app, base_url="https://testserver").get(
+        f"/api/v1/cards/{card.public_id}{suffix}"
+    )
+
+    assert response.status_code == 200
+    assert "case_id" not in response.text
+    if suffix:
+        assert response.json()[0]["event_label"] == "Карточка создана"
+    else:
+        assert response.json()["id"] == str(card.public_id)
+        assert response.json()["omnidesk_ticket_number"] == "123-456789"
+
+
 def test_cards_api_forbids_unauthorized_action_before_card_mutation() -> None:
     repository = FakeCardRepository()
     app = create_app()
@@ -1970,6 +2072,79 @@ def test_cards_api_manager_can_cancel_in_progress_card() -> None:
     assert response.status_code == 200
     assert response.json()["status"] == "cancelled"
     assert repository.audit[-1]["actor_user_id"] == 10
+
+
+def test_cards_api_l1_can_cancel_foreign_card_with_recorded_reason() -> None:
+    repository = FakeCardRepository()
+    card = CardService(repository).create_card(
+        create_payload(l2_engineer_id=20),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=30,
+        username="other-l1",
+        password_hash="unused",
+        full_name="Другой L1",
+        email=None,
+        roles=(RoleRecord(id=int(RoleId.L1), name="L1"),),
+    )
+
+    response = TestClient(app).post(
+        f"/api/v1/cards/{card.public_id}/cancel",
+        json={"comment": "client_confirmed_cancellation"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+    assert repository.events[-1]["comment"] == "client_confirmed_cancellation"
+    assert repository.events[-1]["actor_user_id"] == 30
+
+
+def test_cards_api_l2_can_take_foreign_card_only_for_self_with_comment() -> None:
+    repository = FakeCardRepository()
+    seed_l2_candidate(repository, 20)
+    seed_l2_candidate(repository, 30)
+    card = CardService(repository).create_card(
+        create_payload(), actor_user_id=10, ip_address=None, user_agent=None
+    )
+    assert card.l2_engineer_id == 20
+    app = create_app()
+    app.dependency_overrides[get_card_repository] = lambda: repository
+    app.dependency_overrides[get_current_user] = lambda: UserAuthRecord(
+        id=30,
+        username="other-l2",
+        password_hash="unused",
+        full_name="Другой L2",
+        email=None,
+        roles=(RoleRecord(id=int(RoleId.L2), name="L2"),),
+    )
+    client = TestClient(app)
+    path = f"/api/v1/cards/{card.public_id}/assign"
+    before = (repository.cards[card.public_id], list(repository.events))
+
+    no_comment = client.post(path, json={"l2_engineer_id": 30})
+    other_person = client.post(
+        path, json={"l2_engineer_id": 20, "comment": "agreed_takeover"}
+    )
+
+    assert no_comment.status_code == 422
+    assert no_comment.json()["detail"] == "assignment_reason_required"
+    assert other_person.status_code == 403
+    assert other_person.json()["detail"] == "only_self_assignment_allowed"
+    assert (repository.cards[card.public_id], repository.events) == before
+
+    accepted = client.post(
+        path, json={"l2_engineer_id": 30, "comment": "agreed_takeover"}
+    )
+
+    assert accepted.status_code == 200
+    assert accepted.json()["l2_engineer_id"] == 30
+    assert repository.events[-1]["comment"] == "agreed_takeover"
+    assert repository.events[-1]["actor_user_id"] == 30
 
 
 @pytest.mark.parametrize(
@@ -2111,7 +2286,7 @@ def test_cards_api_reschedule_selected_l2_uses_manual_assignment_contract() -> N
     assert response.status_code == 200
     assert response.json()["status"] == "assigned"
     assert response.json()["l2_engineer_id"] == 30
-    assert repository.events[-1]["comment"] == "manager_manual_assignment"
+    assert repository.events[-1]["comment"] == "client_requested"
     assert repository.distribution_last_user_id == 20
 
 
@@ -2153,7 +2328,7 @@ def test_cards_api_rejects_non_manager_selected_l2_without_mutation() -> None:
     )
 
     assert response.status_code == 403
-    assert response.json()["detail"] == "manager_required_for_manual_assignment"
+    assert response.json()["detail"] == "only_self_assignment_allowed"
     assert repository.cards[card.public_id] == before
     assert repository.events == events_before
     assert repository.audit == audit_before

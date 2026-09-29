@@ -165,6 +165,7 @@ class L2DistributionService:
         *,
         l2_engineer_id: int,
         actor_user_id: int,
+        comment: str | None = None,
         ip_address: str | None,
         user_agent: str | None,
     ) -> CardRecord:
@@ -292,7 +293,9 @@ class L2DistributionService:
             actor_type=ActorType.INTERNAL_USER,
             old_values=_card_distribution_snapshot(old_card),
             new_values=_card_distribution_snapshot(card),
-            comment="manager_manual_assignment",
+            comment=comment.strip()
+            if comment and comment.strip()
+            else "manager_manual_assignment",
         )
         self.repository.add_audit_log(
             actor_user_id=actor_user_id,

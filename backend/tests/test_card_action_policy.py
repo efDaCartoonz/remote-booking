@@ -9,6 +9,7 @@ from app.cards.policy import (
     CardAction,
     CardActionPolicyError,
     authorize_card_action,
+    authorize_card_read,
     authorize_create,
 )
 
@@ -30,6 +31,7 @@ ADMIN = frozenset({int(RoleId.ADMIN)})
     ("action", "roles", "actor_user_id", "status"),
     (
         (CardAction.ASSIGN, MANAGER, 10, CardStatus.CREATED),
+        (CardAction.ASSIGN, L2, 22, CardStatus.ASSIGNED),
         (CardAction.CONFIRM, MANAGER, 10, CardStatus.ASSIGNED),
         (CardAction.REJECT, MANAGER, 10, CardStatus.ASSIGNED),
         (CardAction.START, MANAGER, 10, CardStatus.CONFIRMED),
@@ -58,9 +60,8 @@ def test_action_policy_allows_only_role_owner_and_state_combinations(
         card=PolicyCard(status_code=int(status)),
         actor_user_id=actor_user_id,
         actor_role_ids=roles,
-        comment="client_requested"
-        if action in {CardAction.CANCEL, CardAction.RESCHEDULE}
-        else None,
+        comment="client_requested",
+        target_l2_engineer_id=actor_user_id if action == CardAction.ASSIGN else None,
     )
 
 
@@ -84,7 +85,6 @@ def test_action_policy_allows_only_role_owner_and_state_combinations(
             CardStatus.CONFIRMED,
             "action_not_allowed_for_status",
         ),
-        (CardAction.CANCEL, L2, 33, CardStatus.REJECTED, "assigned_l2_required"),
         (
             CardAction.CANCEL,
             L2,
@@ -106,7 +106,7 @@ def test_action_policy_allows_only_role_owner_and_state_combinations(
             CardStatus.CREATED,
             "action_not_allowed_for_status",
         ),
-        (CardAction.CANCEL, ADMIN, 10, CardStatus.REJECTED, "assigned_l2_required"),
+        (CardAction.CANCEL, ADMIN, 10, CardStatus.REJECTED, "action_forbidden"),
     ),
 )
 def test_action_policy_rejects_role_owner_and_state_violations(
@@ -169,6 +169,31 @@ def test_owner_cancellation_requires_recorded_basis() -> None:
     assert error.value.detail == "cancellation_reason_required"
 
 
+@pytest.mark.parametrize("roles", (L1, L2, MANAGER))
+def test_business_roles_can_cancel_foreign_card_with_reason(
+    roles: frozenset[int],
+) -> None:
+    authorize_card_action(
+        action=CardAction.CANCEL,
+        card=PolicyCard(status_code=int(CardStatus.ASSIGNED)),
+        actor_user_id=99,
+        actor_role_ids=roles,
+        comment="client_confirmed_cancellation",
+    )
+
+
+@pytest.mark.parametrize("roles", (L1, L2, MANAGER))
+def test_business_roles_can_read_foreign_card(roles: frozenset[int]) -> None:
+    authorize_card_read(actor_role_ids=roles)
+
+
+def test_admin_only_cannot_read_card() -> None:
+    with pytest.raises(CardActionPolicyError) as error:
+        authorize_card_read(actor_role_ids=ADMIN)
+    assert error.value.status_code == 403
+    assert error.value.detail == "action_forbidden"
+
+
 @pytest.mark.parametrize("status", tuple(CardStatus))
 def test_reschedule_manager_matrix_is_limited_to_srs_time_change_states(
     status: CardStatus,
@@ -185,6 +210,7 @@ def test_reschedule_manager_matrix_is_limited_to_srs_time_change_states(
             card=card,
             actor_user_id=10,
             actor_role_ids=MANAGER,
+            comment="client_requested",
         )
         return
 
@@ -194,6 +220,7 @@ def test_reschedule_manager_matrix_is_limited_to_srs_time_change_states(
             card=card,
             actor_user_id=10,
             actor_role_ids=MANAGER,
+            comment="client_requested",
         )
 
     assert error.value.status_code == 409
@@ -223,13 +250,9 @@ def test_reschedule_allows_owning_l1_with_reason() -> None:
 
 @pytest.mark.parametrize(
     ("roles", "actor_user_id", "detail"),
-    (
-        (L1, 99, "assigned_l1_required"),
-        (L2, 99, "assigned_l2_required"),
-        (ADMIN, 10, "action_forbidden"),
-    ),
+    ((ADMIN, 10, "action_forbidden"),),
 )
-def test_reschedule_rejects_non_owner_or_unassigned_actor(
+def test_reschedule_rejects_admin_only_actor(
     roles: frozenset[int], actor_user_id: int, detail: str
 ) -> None:
     with pytest.raises(CardActionPolicyError) as error:
@@ -245,9 +268,56 @@ def test_reschedule_rejects_non_owner_or_unassigned_actor(
     assert error.value.detail == detail
 
 
-@pytest.mark.parametrize("roles", (L1, L2))
+@pytest.mark.parametrize("roles", (L1, L2, MANAGER))
+def test_business_roles_can_reschedule_foreign_card_with_reason(
+    roles: frozenset[int],
+) -> None:
+    authorize_card_action(
+        action=CardAction.RESCHEDULE,
+        card=PolicyCard(status_code=int(CardStatus.CONFIRMED)),
+        actor_user_id=99,
+        actor_role_ids=roles,
+        comment="client_agreed_new_time",
+    )
+
+
+def test_l2_can_only_assign_self_with_comment() -> None:
+    card = PolicyCard(status_code=int(CardStatus.ASSIGNED))
+    authorize_card_action(
+        action=CardAction.ASSIGN,
+        card=card,
+        actor_user_id=33,
+        actor_role_ids=L2,
+        target_l2_engineer_id=33,
+        comment="agreed_with_current_engineer",
+    )
+    with pytest.raises(CardActionPolicyError) as other:
+        authorize_card_action(
+            action=CardAction.ASSIGN,
+            card=card,
+            actor_user_id=33,
+            actor_role_ids=L2,
+            target_l2_engineer_id=22,
+            comment="agreed_with_current_engineer",
+        )
+    assert other.value.status_code == 403
+    assert other.value.detail == "only_self_assignment_allowed"
+    with pytest.raises(CardActionPolicyError) as missing_comment:
+        authorize_card_action(
+            action=CardAction.ASSIGN,
+            card=card,
+            actor_user_id=33,
+            actor_role_ids=L2,
+            target_l2_engineer_id=33,
+            comment="   ",
+        )
+    assert missing_comment.value.status_code == 422
+    assert missing_comment.value.detail == "assignment_reason_required"
+
+
+@pytest.mark.parametrize("roles", (L1, L2, MANAGER))
 @pytest.mark.parametrize("comment", (None, "   "))
-def test_reschedule_requires_reason_for_non_manager_actor(
+def test_reschedule_requires_reason_for_every_business_role(
     roles: frozenset[int], comment: str | None
 ) -> None:
     actor_user_id = 11 if roles == L1 else 22

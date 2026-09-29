@@ -26,7 +26,12 @@ from app.cards.constants import (
     RoleId,
 )
 from app.cards.create_policy import RoleCreatePlan, validate_reschedule_window
-from app.cards.policy import CardAction, CardActionPolicyError, authorize_card_action
+from app.cards.policy import (
+    CardAction,
+    CardActionPolicyError,
+    authorize_card_action,
+    authorize_card_read,
+)
 from app.cards.repository import (
     CardHistoryRecord,
     CardRecord,
@@ -240,6 +245,15 @@ class CardService:
             actor_role_ids=actor_role_ids,
             comment=reason,
         )
+        if selected_l2_engineer_id is not None:
+            authorize_card_action(
+                action=CardAction.ASSIGN,
+                card=card,
+                actor_user_id=actor_user_id,
+                actor_role_ids=actor_role_ids,
+                comment=reason,
+                target_l2_engineer_id=selected_l2_engineer_id,
+            )
         if (
             card.planned_start_at == planned_start_at
             and card.planned_duration_minutes == planned_duration_minutes
@@ -262,10 +276,6 @@ class CardService:
 
         out_of_hours_flag = False
         if selected_l2_engineer_id is not None:
-            if int(RoleId.MANAGER) not in actor_role_ids:
-                raise CardActionPolicyError(
-                    status_code=403, detail="manager_required_for_manual_assignment"
-                )
             planned_end_at = planned_start_at + timedelta(
                 minutes=planned_duration_minutes
             )
@@ -323,6 +333,7 @@ class CardService:
                     updated,
                     l2_engineer_id=selected_l2_engineer_id,
                     actor_user_id=actor_user_id,
+                    comment=reason,
                     ip_address=ip_address,
                     user_agent=user_agent,
                 )
@@ -817,11 +828,23 @@ class CardService:
             raise CardNotFoundError
         return card
 
+    def get_card_for_user(
+        self, public_id: UUID, *, actor_role_ids: Collection[int]
+    ) -> CardRecord:
+        authorize_card_read(actor_role_ids=actor_role_ids)
+        return self.get_card(public_id)
+
     def list_card_history(self, public_id: UUID) -> list[CardHistoryRecord]:
         history = self.repository.list_card_history(public_id)
         if history is None:
             raise CardNotFoundError
         return history
+
+    def list_card_history_for_user(
+        self, public_id: UUID, *, actor_role_ids: Collection[int]
+    ) -> list[CardHistoryRecord]:
+        authorize_card_read(actor_role_ids=actor_role_ids)
+        return self.list_card_history(public_id)
 
     def assign_card(
         self,
@@ -844,12 +867,14 @@ class CardService:
                 actor_user_id=actor_user_id,
                 actor_role_ids=actor_role_ids,
                 comment=comment,
+                target_l2_engineer_id=l2_engineer_id,
             )
         try:
             return self.l2_distribution_service.run_manual_assignment(
                 card,
                 l2_engineer_id=l2_engineer_id,
                 actor_user_id=actor_user_id,
+                comment=comment,
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
