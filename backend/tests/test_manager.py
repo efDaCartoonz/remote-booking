@@ -1,4 +1,5 @@
 from contextlib import contextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -271,6 +272,8 @@ def test_manager_response_is_safe_projection() -> None:
         "urgent",
         "overdue",
         "out_of_hours",
+        "first_unsuccessful_cycle",
+        "repeated_unsuccessful_cycle",
     }
     assert "secret-contact" not in str(payload)
     assert "secret-description" not in str(payload)
@@ -323,3 +326,29 @@ def test_repository_uses_checked_code_filters_and_deterministic_sorting() -> Non
     assert "c.planned_start_at < %(period_to)s" in query
     assert "ORDER BY c.planned_start_at ASC, c.id ASC" in query
     assert params["status"] == int(CardStatus.ASSIGNED)
+
+
+def test_manager_list_marks_first_and_repeated_unsuccessful_cycles() -> None:
+    repo = ManagerRepository()
+    repo.cards = [
+        replace(
+            make_card(CardStatus.REJECTED, "RDM-FIRST"), unsuccessful_cycle_count=1
+        ),
+        replace(
+            make_card(CardStatus.REJECTED, "RDM-REPEATED"), unsuccessful_cycle_count=2
+        ),
+        replace(
+            make_card(CardStatus.ASSIGNED, "RDM-RESCHEDULED"),
+            unsuccessful_cycle_count=2,
+        ),
+    ]
+    client, _ = client_for(MANAGER, repo)
+    response = client.get("/api/v1/manager/cards")
+    assert response.status_code == 200
+    items = {item["number"]: item for item in response.json()["items"]}
+    assert items["RDM-FIRST"]["first_unsuccessful_cycle"] is True
+    assert items["RDM-FIRST"]["repeated_unsuccessful_cycle"] is False
+    assert items["RDM-REPEATED"]["first_unsuccessful_cycle"] is False
+    assert items["RDM-REPEATED"]["repeated_unsuccessful_cycle"] is True
+    assert items["RDM-RESCHEDULED"]["first_unsuccessful_cycle"] is False
+    assert items["RDM-RESCHEDULED"]["repeated_unsuccessful_cycle"] is False

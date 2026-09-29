@@ -31,8 +31,11 @@ type Card = {
   updated_at: string;
 };
 type HistoryEntry = { event_label: string; actor_label: string; created_at: string };
+type NotificationEntry = { event: string; channel: string; status: string; created_at: string; sent_at: string | null };
+type MineResponse = { items: Card[]; limit: number };
+type ResultOption = { code: number; name: string };
 type ApiError = Error & { status: number; detail?: unknown };
-type ManagerCard = { public_id: string; number: string; omnidesk_ticket_number: string; status: string; status_label: string; planned_start_at: string; planned_end_at: string; planned_duration_minutes: number; l1_owner_name: string | null; l2_engineer_name: string | null; urgent: boolean; overdue: boolean; out_of_hours: boolean };
+type ManagerCard = { public_id: string; number: string; omnidesk_ticket_number: string; status: string; status_label: string; planned_start_at: string; planned_end_at: string; planned_duration_minutes: number; l1_owner_name: string | null; l2_engineer_name: string | null; urgent: boolean; overdue: boolean; out_of_hours: boolean; first_unsuccessful_cycle: boolean; repeated_unsuccessful_cycle: boolean };
 type ManagerData = { summary: { assigned: number; confirmed: number; rejected: number; overdue: number; urgent: number; urgent_collision: number }; items: ManagerCard[]; limit: number };
 type TicketPreflight = { case_number: string; status: string; client_display_name: string | null; can_create: boolean };
 type L2Option = { user_id: number; display_name: string; available: boolean; reason_code: string | null };
@@ -44,6 +47,22 @@ const RETURN_TO_KEY = "rdm.return_to";
 const user = ref<User | null>(null);
 const card = ref<Card | null>(null);
 const history = ref<HistoryEntry[]>([]);
+const notifications = ref<NotificationEntry[]>([]);
+const notificationError = ref("");
+const mine = ref<Card[]>([]);
+const mineError = ref("");
+const mineRole = ref<"l1" | "l2">("l1");
+const roleCreate = ref({ caseNumber: "", start: "", duration: 60, description: "", scenario: "normal", urgentReason: "", resultCode: "", report: "" });
+const roleCreateBusy = ref(false);
+const roleCreateError = ref("");
+const results = ref<ResultOption[]>([]);
+const completion = ref({ resultCode: "", report: "", duration: "" });
+const cancellationReason = ref("");
+const rescheduleReason = ref("");
+const assignL2Id = ref("");
+const assignmentReason = ref("");
+const assignmentOptions = ref<L2Option[]>([]);
+const reminderInterval = ref(10);
 const busy = ref(true);
 const errorStatus = ref<number | null>(null);
 const historyError = ref("");
@@ -58,6 +77,7 @@ const rescheduleStart = ref("");
 const rescheduleDuration = ref(60);
 const rescheduleDescription = ref("");
 const cardId = computed(() => location.pathname.match(/^\/cards\/([^/]+)\/?$/)?.[1]);
+const workplacePath = location.pathname === "/work" || location.pathname === "/";
 const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Moscow";
 const managerPath = location.pathname === "/manager";
 const managerNewPath = location.pathname === "/manager/cards/new";
@@ -69,6 +89,7 @@ const managerError = ref("");
 const managerView = ref<"list" | "calendar">("list");
 const calendarMode = ref<"day" | "week">("week");
 const managerLoading = ref(false);
+const attentionItems = computed(() => manager.value?.items.filter((item) => item.first_unsuccessful_cycle || item.repeated_unsuccessful_cycle || item.overdue || item.urgent) ?? []);
 const create = ref({ caseNumber: "", start: "", duration: 60, description: "", assignment: "auto", l2UserId: "" });
 const ticketPreflight = ref<TicketPreflight | null>(null);
 const l2Options = ref<L2Option[]>([]);
@@ -96,13 +117,14 @@ function managerPeriod(from: string, to: string): ManagerPeriod | string {
 
 const hasL1Role = computed(() => hasRole(1));
 const hasL2Role = computed(() => hasRole(2));
-const canDecideAsL2 = computed(
+const isAssignedL2 = computed(() => !!user.value && hasL2Role.value && card.value?.l2_engineer_id === user.value.id);
+const canDecide = computed(
   () =>
     !!user.value &&
     !!card.value &&
-    hasL2Role.value &&
+    (isAssignedL2.value || hasRole(3)) &&
     card.value.status === "assigned" &&
-    card.value.l2_engineer_id === user.value.id,
+    card.value.l2_engineer_id !== null,
 );
 const canFollowUpAsL1 = computed(
   () =>
@@ -113,6 +135,26 @@ const canFollowUpAsL1 = computed(
     card.value.l1_owner_id === user.value.id,
 );
 const showCard = computed(() => !!user.value && !!card.value && !errorStatus.value);
+const canExecute = computed(() => !!card.value && (isAssignedL2.value || hasRole(3)) && ["assigned", "confirmed", "in_progress"].includes(card.value.status));
+const canEndPendingResult = computed(() => !!card.value && (isAssignedL2.value || hasRole(3)) && card.value.status === "in_progress");
+const canComplete = computed(
+  () =>
+    !!card.value &&
+    (card.value.status === "completed_pending_result"
+      ? isAssignedL2.value
+      : (isAssignedL2.value || hasRole(3)) && card.value.status === "in_progress")
+);
+const canCancel = computed(() => !!card.value && (hasRole(3) ? ["assigned", "confirmed", "rejected", "in_progress"].includes(card.value.status) : (hasL1Role.value || hasL2Role.value) && ["assigned", "confirmed", "rejected"].includes(card.value.status)));
+const canReschedule = computed(() => !!card.value && ["assigned", "confirmed", "rejected"].includes(card.value.status) && (hasRole(3) || hasL1Role.value || hasL2Role.value));
+const canAssign = computed(() => !!card.value && hasRole(3) && ["created", "assigned", "confirmed", "rejected"].includes(card.value.status));
+const canSelfAssign = computed(
+  () =>
+    !!card.value &&
+    !hasRole(3) &&
+    hasL2Role.value &&
+    card.value.l2_engineer_id !== user.value?.id &&
+    ["created", "assigned", "confirmed", "rejected"].includes(card.value.status)
+);
 
 function hasRole(roleId: number): boolean {
   return user.value?.roles.some((role) => role.id === roleId) ?? false;
@@ -164,19 +206,38 @@ const knownErrors: Record<string, string> = {
   l2_engineer_required: "У карточки нет назначенного инженера L2.",
   rejection_reason_required: "Укажите причину отказа.",
   status_transition_not_allowed: "Действие недоступно для текущего статуса карточки.",
+  action_not_allowed_for_status: "Действие недоступно для текущего статуса карточки.",
+  cancellation_reason_required: "Укажите причину отмены.",
+  reschedule_reason_required: "Укажите причину переноса.",
+  assignment_reason_required: "Укажите причину назначения.",
+  only_self_assignment_allowed: "Инженеру L2 разрешено назначать карточку только на себя.",
+  only_assigned_l2_may_submit_missing_result: "Отправить результат может только назначенный инженер L2.",
+  urgent_reason_required: "Укажите причину срочности.",
+  retroactive_result_required: "Укажите результат подключения.",
+  retroactive_engineer_report_required: "Укажите отчёт о выполненных работах.",
+  urgent_planned_start_must_not_be_in_past: "Плановое начало срочного подключения не может быть в прошлом.",
+  retroactive_planned_start_must_be_in_past: "Плановое начало ретроспективного подключения должно быть в прошлом.",
+  planned_start_too_soon: "Начало должно быть не раньше минимального срока — за 2 часа.",
+  planned_start_too_far: "Начало не может быть дальше горизонта 14 дней.",
+  active_card_exists_for_ticket: "Для этого тикета уже есть активная карточка.",
+  l2_assignment_conflict: "Выбранный L2 стал недоступен. Обновите варианты и выберите другого.",
+  card_owner_required: "Действие доступно только владельцу карточки.",
+  l1_followup_not_informed: "Сначала отметьте, что клиент проинформирован.",
+  action_forbidden: "Недостаточно прав для этого действия.",
 };
 
 function readableError(error: unknown): string {
   const status = (error as ApiError).status;
   const detail = errorDetail(error);
   const detailValue = detail && typeof detail === "object" && "detail" in detail ? (detail as { detail?: unknown }).detail : detail;
+  const errorKey = typeof detailValue === "string" ? detailValue : "";
+  const mapped = knownErrors[errorKey];
+  if (mapped) return mapped;
   if (status === 403) return "Недостаточно прав для этого действия.";
   if (status === 404) return "Карточка не найдена.";
   if (status === 401) return "Сессия завершилась. Войдите снова.";
-  if (status === 409) {
-    return typeof detailValue === "string" ? knownErrors[detailValue] ?? "Карточка уже изменилась. Обновите её и повторите действие." : "Карточка уже изменилась. Обновите её и повторите действие.";
-  }
-  if (status === 422) return validationMessage(detailValue);
+  if (status === 409) return "Карточка уже изменилась. Обновите её и повторите действие.";
+  if (status === 422) return Array.isArray(detailValue) ? validationMessage(detailValue) : "Проверьте введённые данные.";
   return "Не удалось выполнить действие. Попробуйте ещё раз.";
 }
 
@@ -208,6 +269,67 @@ async function loadHistory(): Promise<void> {
   }
 }
 
+async function loadNotifications(): Promise<void> {
+  if (!cardId.value) return;
+  notifications.value = [];
+  notificationError.value = "";
+  try {
+    const data = await api<{ items: NotificationEntry[] }>(`/api/v1/cards/${encodeURIComponent(cardId.value)}/notifications`);
+    notifications.value = data.items;
+  } catch (error) {
+    if ((error as ApiError).status === 401) {
+      handleUnauthorized();
+    } else if ((error as ApiError).status === 403) {
+      notificationError.value = "Доступ к уведомлениям ограничен (403).";
+    } else {
+      notificationError.value = "Состояние уведомлений пока недоступно.";
+    }
+  }
+}
+
+async function loadMine(): Promise<void> {
+  mineError.value = "";
+  mine.value = [];
+  try {
+    const data = await api<MineResponse>(`/api/v1/cards/mine?role=${mineRole.value}`);
+    mine.value = data.items;
+  } catch (error) {
+    if ((error as ApiError).status === 401) handleUnauthorized();
+    else mineError.value = readableError(error);
+  }
+}
+
+async function loadResults(): Promise<void> {
+  try {
+    const data = await api<{ items: ResultOption[] }>("/api/v1/cards/results");
+    results.value = data.items;
+  } catch (error) {
+    if ((error as ApiError).status === 401) handleUnauthorized();
+  }
+}
+
+async function loadAssignmentOptions(): Promise<void> {
+  if (!card.value || !canAssign.value) return;
+  assignmentOptions.value = [];
+  try {
+    const query = new URLSearchParams({ planned_start_at: card.value.planned_start_at, planned_duration_minutes: String(card.value.planned_duration_minutes) });
+    const data = await api<{ items: L2Option[] }>(`/api/v1/manager/l2-options?${query}`);
+    assignmentOptions.value = data.items;
+  } catch (error) {
+    actionError.value = readableError(error);
+  }
+}
+
+async function loadReminderInterval(): Promise<void> {
+  if (!cardId.value || !canFollowUpAsL1.value || !card.value?.client_informed) return;
+  try {
+    const data = await api<{ interval_minutes: number }>(`/api/v1/cards/${encodeURIComponent(cardId.value)}/l1/reminder-interval`);
+    reminderInterval.value = data.interval_minutes;
+  } catch (error) {
+    if ((error as ApiError).status === 401) handleUnauthorized();
+  }
+}
+
 async function load(): Promise<void> {
   busy.value = true;
   errorStatus.value = null;
@@ -215,11 +337,20 @@ async function load(): Promise<void> {
   rememberCardRoute();
   try {
     user.value = await api<User>("/api/v1/auth/me");
-    if (managerPath) {
-      await loadManager();
+    if (workplacePath) {
+      mineRole.value = hasL1Role.value ? "l1" : "l2";
+      if (hasL1Role.value || hasL2Role.value) await loadMine();
+      if (hasL2Role.value) await loadResults();
+    } else if (managerPath) {
+      if (hasRole(3)) await loadManager();
+      else managerError.value = "Доступ к панели руководителя запрещён (403).";
     } else if (cardId.value) {
       applyCard(await api<Card>(`/api/v1/cards/${encodeURIComponent(cardId.value)}`));
       await loadHistory();
+      await loadNotifications();
+      if (canFollowUpAsL1.value) await loadReminderInterval();
+      if (canAssign.value) await loadAssignmentOptions();
+      if (canComplete.value) await loadResults();
     }
   } catch (error) {
     const status = (error as ApiError).status ?? 500;
@@ -430,6 +561,7 @@ async function logout(): Promise<void> {
 }
 
 async function runAction(name: string, path: string, init?: RequestInit): Promise<void> {
+  if (actionBusy.value) return;
   actionBusy.value = name;
   actionError.value = "";
   try {
@@ -437,7 +569,12 @@ async function runAction(name: string, path: string, init?: RequestInit): Promis
     await load();
   } catch (error) {
     if ((error as ApiError).status === 401) handleUnauthorized();
-    else actionError.value = readableError(error);
+    else {
+      actionError.value = readableError(error);
+      if ((error as ApiError).status === 409) {
+        try { applyCard(await api<Card>(`/api/v1/cards/${encodeURIComponent(cardId.value ?? "")}`)); } catch { /* Keep the conflict visible. */ }
+      }
+    }
   } finally {
     actionBusy.value = "";
   }
@@ -456,10 +593,90 @@ function markClientInformed(): Promise<void> {
 }
 
 function rescheduleCard(): Promise<void> {
+  if (!rescheduleReason.value.trim()) {
+    actionError.value = "Укажите причину переноса.";
+    return Promise.resolve();
+  }
   return runAction("reschedule", `/api/v1/cards/${encodeURIComponent(cardId.value ?? "")}/l1/reschedule`, {
     method: "POST",
-    body: JSON.stringify({ planned_start_at: new Date(rescheduleStart.value).toISOString(), planned_duration_minutes: rescheduleDuration.value, description: rescheduleDescription.value || null }),
+    body: JSON.stringify({ planned_start_at: new Date(rescheduleStart.value).toISOString(), planned_duration_minutes: rescheduleDuration.value, description: rescheduleDescription.value || null, reason: rescheduleReason.value || null }),
   });
+}
+
+function startCard(): Promise<void> {
+  return runAction("start", `/api/v1/cards/${encodeURIComponent(cardId.value ?? "")}/start`, { method: "POST", body: "{}" });
+}
+
+function endPendingResult(): Promise<void> {
+  return runAction("end_pending_result", `/api/v1/cards/${encodeURIComponent(cardId.value ?? "")}/end-pending-result`, {
+    method: "POST",
+    body: JSON.stringify({}),
+  });
+}
+
+function completeCard(): Promise<void> {
+  if (!results.value.some((result) => result.code === Number(completion.value.resultCode))) {
+    actionError.value = "Выберите действующий результат подключения.";
+    return Promise.resolve();
+  }
+  return runAction("complete", `/api/v1/cards/${encodeURIComponent(cardId.value ?? "")}/complete`, { method: "POST", body: JSON.stringify({ result_code: Number(completion.value.resultCode), engineer_report: completion.value.report, actual_duration_minutes: completion.value.duration ? Number(completion.value.duration) : null }) });
+}
+
+function cancelCard(): Promise<void> {
+  if (!cancellationReason.value.trim()) {
+    actionError.value = "Укажите причину отмены.";
+    return Promise.resolve();
+  }
+  return runAction("cancel", `/api/v1/cards/${encodeURIComponent(cardId.value ?? "")}/cancel`, { method: "POST", body: JSON.stringify({ comment: cancellationReason.value || null }) });
+}
+
+function assignCard(): Promise<void> {
+  if (!assignmentOptions.value.some((option) => option.available && option.user_id === Number(assignL2Id.value))) {
+    actionError.value = "Выберите доступного инженера L2.";
+    return Promise.resolve();
+  }
+  return runAction("assign", `/api/v1/cards/${encodeURIComponent(cardId.value ?? "")}/assign`, { method: "POST", body: JSON.stringify({ l2_engineer_id: Number(assignL2Id.value), comment: assignmentReason.value || null }) });
+}
+
+function selfAssignCard(): Promise<void> {
+  if (!user.value || !assignmentReason.value.trim()) {
+    actionError.value = "Укажите причину назначения.";
+    return Promise.resolve();
+  }
+  return runAction("assign", `/api/v1/cards/${encodeURIComponent(cardId.value ?? "")}/assign`, { method: "POST", body: JSON.stringify({ l2_engineer_id: user.value.id, comment: assignmentReason.value }) });
+}
+
+async function setReminderInterval(): Promise<void> {
+  if (!cardId.value || actionBusy.value) return;
+  actionBusy.value = "reminder";
+  actionError.value = "";
+  try {
+    const data = await api<{ interval_minutes: number }>(`/api/v1/cards/${encodeURIComponent(cardId.value)}/l1/reminder-interval`, { method: "POST", body: JSON.stringify({ interval_minutes: reminderInterval.value }) });
+    reminderInterval.value = data.interval_minutes;
+  } catch (error) {
+    if ((error as ApiError).status === 401) handleUnauthorized();
+    else actionError.value = readableError(error);
+  } finally { actionBusy.value = ""; }
+}
+
+async function submitRoleCreate(): Promise<void> {
+  if (!user.value || roleCreateBusy.value) return;
+  roleCreateBusy.value = true;
+  roleCreateError.value = "";
+  const scenario = mineRole.value === "l1" ? "l1" : roleCreate.value.scenario === "urgent" ? "l2/urgent" : roleCreate.value.scenario === "retroactive" ? "l2/retroactive" : "l2";
+  const payload: Record<string, unknown> = { case_number: roleCreate.value.caseNumber, planned_start_at: new Date(roleCreate.value.start).toISOString(), planned_duration_minutes: roleCreate.value.duration, description: roleCreate.value.description || null };
+  if (scenario === "l2/urgent") payload.urgent_reason = roleCreate.value.urgentReason;
+  if (scenario === "l2/retroactive") {
+    if (roleCreate.value.resultCode) payload.result_code = Number(roleCreate.value.resultCode);
+    if (roleCreate.value.report) payload.engineer_report = roleCreate.value.report;
+  }
+  try {
+    const created = await api<Card>(`/api/v1/cards/${scenario}`, { method: "POST", body: JSON.stringify(payload) });
+    window.location.assign(`/cards/${created.id}`);
+  } catch (error) {
+    if ((error as ApiError).status === 401) handleUnauthorized();
+    else roleCreateError.value = readableError(error);
+  } finally { roleCreateBusy.value = false; }
 }
 
 function formatDateTime(value: string, timeZone = browserTimeZone): string {
@@ -520,6 +737,27 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <button @click="load">Повторить</button>
       </template>
 
+      <template v-else-if="workplacePath">
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Мои карточки</h1></div><div class="top-actions"><a v-if="hasRole(3)" class="button-link" href="/manager">Панель руководителя</a><button class="secondary" @click="logout">Выйти</button></div></header>
+        <div v-if="hasL1Role && hasL2Role" class="manager-toggle" role="group" aria-label="Рабочая роль"><button type="button" :class="{ selected: mineRole === 'l1' }" @click="mineRole = 'l1'; loadMine()">L1</button><button type="button" :class="{ selected: mineRole === 'l2' }" @click="mineRole = 'l2'; loadMine()">L2</button></div>
+        <p v-if="mineError" class="error" role="alert">{{ mineError }}</p>
+        <p v-else-if="!mine.length" class="hint">Назначенных карточек пока нет.</p>
+        <div v-else class="work-list"><a v-for="item in mine" :key="item.id" class="panel work-row" :href="`/cards/${item.id}`"><strong>{{ item.number }}</strong><span>{{ item.status_label }}<template v-if="item.overdue_flag"> · Просрочено</template></span><span>{{ formatDateTime(item.planned_start_at) }}</span></a></div>
+        <section v-if="hasL1Role || hasL2Role" class="panel"><h2>Создать карточку {{ mineRole.toUpperCase() }}</h2>
+          <form class="form role-create-form" @submit.prevent="submitRoleCreate">
+            <label>Номер тикета<input v-model.trim="roleCreate.caseNumber" pattern="[0-9]{3}-[0-9]{6}" required /></label>
+            <label>Начало<input v-model="roleCreate.start" type="datetime-local" required /></label>
+            <label>Длительность, минут<input v-model.number="roleCreate.duration" type="number" min="30" max="720" required /></label>
+            <label>Описание<textarea v-model="roleCreate.description" rows="3"></textarea></label>
+            <template v-if="mineRole === 'l2'"><label>Сценарий<select v-model="roleCreate.scenario"><option value="normal">Обычное для себя</option><option value="urgent">Срочное для себя</option><option value="retroactive">Ретроспективное для себя</option></select></label>
+              <label v-if="roleCreate.scenario === 'urgent'">Причина срочности<input v-model="roleCreate.urgentReason" required /></label>
+              <template v-if="roleCreate.scenario === 'retroactive'"><label>Результат<select v-model="roleCreate.resultCode"><option value="">Не указан</option><option v-for="option in results" :key="option.code" :value="String(option.code)">{{ option.name }}</option></select></label><label>Отчёт<textarea v-model="roleCreate.report" rows="3"></textarea></label></template>
+            </template>
+            <p v-if="roleCreateError" class="error" role="alert">{{ roleCreateError }}</p><button :disabled="roleCreateBusy">{{ roleCreateBusy ? "Создаём…" : "Создать карточку" }}</button>
+          </form>
+        </section>
+      </template>
+
       <template v-else-if="showCard && card">
         <header class="top">
           <div>
@@ -527,6 +765,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
             <h1>{{ card.number }}</h1>
           </div>
           <button class="secondary" @click="logout">Выйти</button>
+          <a v-if="hasL1Role || hasL2Role" class="button-link" href="/work">Мои карточки</a>
           <a v-if="hasRole(3)" class="button-link" href="/manager">Панель руководителя</a>
         </header>
 
@@ -576,13 +815,13 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
           <p v-if="card.engineer_report" class="preserve">{{ card.engineer_report }}</p>
         </section>
 
-        <section v-if="canDecideAsL2" class="panel actions">
-          <h2>Решение L2</h2>
+        <section v-if="canDecide" class="panel actions">
+          <h2>{{ hasRole(3) && !isAssignedL2 ? "Решение руководителя" : "Решение L2" }}</h2>
           <div class="action-row">
             <button :disabled="!!actionBusy" @click="confirmCard">{{ actionBusy === "confirm" ? "Сохраняем…" : "Подтвердить назначение" }}</button>
             <form class="inline-form" @submit.prevent="rejectCard">
               <input v-model="rejectionReason" placeholder="Причина отказа" required />
-              <button class="danger" :disabled="!!actionBusy">{{ actionBusy === "reject" ? "Сохраняем…" : "Отклонить" }}</button>
+              <button class="danger" :disabled="!!actionBusy">{{ actionBusy === "reject" ? "Сохраняем…" : (hasRole(3) && !isAssignedL2 ? "Отклонить за инженера" : "Отклонить") }}</button>
             </form>
           </div>
         </section>
@@ -592,15 +831,28 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
           <h2>Сопровождение L1</h2>
           <button v-if="!card.client_informed" :disabled="!!actionBusy" @click="markClientInformed">{{ actionBusy === "informed" ? "Сохраняем…" : "Клиент проинформирован" }}</button>
           <p v-else class="success">Клиент отмечен как проинформированный.</p>
-          <form class="form reschedule-form" @submit.prevent="rescheduleCard">
-            <h3>Перенос времени и описание</h3>
-            <label>Новое начало<input v-model="rescheduleStart" type="datetime-local" required /></label>
-            <label>Длительность, минут<input v-model.number="rescheduleDuration" type="number" min="30" max="720" required /></label>
-            <label>Описание<textarea v-model="rescheduleDescription" rows="4"></textarea></label>
-            <button :disabled="!!actionBusy">{{ actionBusy === "reschedule" ? "Сохраняем…" : "Сохранить изменения" }}</button>
-          </form>
+          <form v-if="card.client_informed" class="inline-form" @submit.prevent="setReminderInterval"><label>Интервал напоминаний<select v-model.number="reminderInterval"><option :value="10">10 минут</option><option :value="30">30 минут</option></select></label><button :disabled="!!actionBusy">Сохранить интервал</button></form>
         </section>
         <p v-else-if="hasL1Role && card.status === 'rejected'" class="hint">Сопровождение доступно только назначенному специалисту L1.</p>
+
+        <section v-if="canReschedule" class="panel actions"><h2>Перенос времени</h2><form class="form reschedule-form" @submit.prevent="rescheduleCard"><label>Новое начало<input v-model="rescheduleStart" type="datetime-local" required /></label><label>Длительность, минут<input v-model.number="rescheduleDuration" type="number" min="30" max="720" required /></label><label>Описание<textarea v-model="rescheduleDescription" rows="4"></textarea></label><label>Причина переноса<input v-model="rescheduleReason" required /></label><button :disabled="!!actionBusy">{{ actionBusy === "reschedule" ? "Сохраняем…" : "Сохранить изменения" }}</button></form></section>
+
+        <section v-if="canExecute || canComplete || canEndPendingResult" class="panel actions">
+          <h2>Выполнение</h2>
+          <button v-if="canExecute && card.status !== 'in_progress'" :disabled="!!actionBusy" @click="startCard">Начать выполнение</button>
+          <button v-if="canEndPendingResult" class="secondary" :disabled="!!actionBusy" @click="endPendingResult">{{ actionBusy === "end_pending_result" ? "Сохраняем…" : "Окончить" }}</button>
+          <form v-if="canComplete" class="form" @submit.prevent="completeCard">
+            <label>Результат<select v-model="completion.resultCode" required><option value="" disabled>Выберите результат</option><option v-for="option in results" :key="option.code" :value="String(option.code)">{{ option.name }}</option></select></label>
+            <label>Перечень работ<textarea v-model="completion.report" required rows="4"></textarea></label>
+            <label>Фактическая длительность, минут<input v-model="completion.duration" type="number" min="1" /></label>
+            <button :disabled="!!actionBusy || !results.length">Завершить</button>
+          </form>
+        </section>
+
+        <section v-if="canAssign" class="panel actions"><h2>Назначить L2</h2><form class="form" @submit.prevent="assignCard"><label>Инженер<select v-model="assignL2Id" required><option value="" disabled>Выберите инженера</option><option v-for="option in assignmentOptions" :key="option.user_id" :value="String(option.user_id)" :disabled="!option.available">{{ option.display_name }}{{ option.available ? '' : ' — недоступен' }}</option></select></label><label>Комментарий<input v-model="assignmentReason" /></label><button :disabled="!!actionBusy || !assignmentOptions.length">Назначить</button></form></section>
+        <section v-if="canSelfAssign" class="panel actions"><h2>Назначить себя L2</h2><form class="form" @submit.prevent="selfAssignCard"><label>Причина назначения<input v-model="assignmentReason" required /></label><button :disabled="!!actionBusy">Назначить себя</button></form></section>
+
+        <section v-if="canCancel" class="panel actions"><h2>Отмена</h2><form class="form" @submit.prevent="cancelCard"><label>Причина отмены<input v-model="cancellationReason" required /></label><button class="danger" :disabled="!!actionBusy">Отменить карточку</button></form></section>
 
         <section class="panel history">
           <div class="section-heading"><h2>История</h2><span v-if="history.length" class="muted">{{ history.length }}</span></div>
@@ -614,9 +866,14 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
           </ol>
         </section>
 
+        <section class="panel"><h2>Уведомления</h2><p v-if="notificationError" class="muted">{{ notificationError }}</p><p v-else-if="!notifications.length" class="muted">Уведомлений пока нет.</p><ol v-else class="notification-list"><li v-for="(entry, index) in notifications" :key="`${entry.created_at}-${index}`">{{ entry.event }} · {{ entry.channel }} · {{ entry.status }} · {{ formatDateTime(entry.created_at) }}</li></ol></section>
+
         <footer class="footer muted">Вы вошли как {{ user.full_name || user.username }}.</footer>
       </template>
 
+      <template v-else-if="managerNewPath && !hasRole(3)">
+        <h1>Доступ запрещён</h1><p class="error" role="alert">Создание карточек руководителем недоступно для вашей роли (403).</p>
+      </template>
       <template v-else-if="managerNewPath">
         <header class="top"><div><p class="eyebrow">RDM</p><h1>Новая карточка</h1><p class="muted">Создание доступно только руководителю.</p></div><a class="button-link" href="/manager">← Вернуться к панели</a></header>
         <p class="hint">Допустимое начало: не раньше чем через 2 часа и не позднее 14 дней. Длительность: 30–720 минут. Часовой пояс: {{ browserTimeZone }}.</p>
@@ -631,9 +888,13 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
           <button type="submit" :disabled="createBusy || preflightLoading || createLoading || !ticketPreflight || ticketPreflight.case_number !== create.caseNumber || !ticketPreflight.can_create">{{ createBusy ? "Создаём…" : "Создать карточку" }}</button>
         </form>
       </template>
+      <template v-else-if="managerPath && !manager">
+        <h1>Панель руководителя</h1><p v-if="managerError" class="error" role="alert">{{ managerError }}</p><button v-if="hasRole(3)" @click="loadManager">Повторить</button>
+      </template>
       <template v-else-if="managerPath && manager">
         <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ browserTimeZone }}</p></div><div class="top-actions"><a class="button-link" href="/manager/cards/new">+ Создать карточку</a><button class="secondary" @click="logout">Выйти</button></div></header>
         <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div><div class="panel"><strong>{{ manager.summary.urgent }}</strong><span>Срочно</span></div><div class="panel"><strong>{{ manager.summary.urgent_collision }}</strong><span>Коллизии</span></div></div>
+        <section v-if="attentionItems.length" class="panel"><h2>Требуют внимания</h2><div class="work-list"><a v-for="item in attentionItems" :key="item.public_id" class="work-row" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ item.repeated_unsuccessful_cycle ? 'Повторный неуспешный цикл' : item.first_unsuccessful_cycle ? 'Первый неуспешный цикл' : item.status_label }}{{ item.overdue ? ' · Просрочено' : '' }}{{ item.urgent ? ' · Срочно' : '' }}</span></a></div></section>
         <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>Дата с<input v-model="managerFrom" type="date" /></label><label>Дата по<input v-model="managerTo" type="date" /></label><button>Применить</button></form>
         <p v-if="managerError" class="error" role="alert">{{ managerError }} <button class="secondary" @click="loadManager">Повторить</button></p>
         <p v-if="managerLoading" class="hint" role="status">Загрузка календаря…</p>

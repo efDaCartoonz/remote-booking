@@ -69,6 +69,8 @@ class ManagerCard(BaseModel):
     urgent: bool
     overdue: bool
     out_of_hours: bool
+    first_unsuccessful_cycle: bool = False
+    repeated_unsuccessful_cycle: bool = False
 
 
 class ManagerCardsResponse(BaseModel):
@@ -447,6 +449,14 @@ def list_manager_cards(
                 urgent=card.urgency_code > 0,
                 overdue=card.overdue_flag,
                 out_of_hours=card.out_of_hours_flag,
+                first_unsuccessful_cycle=(
+                    card.status_code == CardStatus.REJECTED
+                    and card.unsuccessful_cycle_count == 1
+                ),
+                repeated_unsuccessful_cycle=(
+                    card.status_code == CardStatus.REJECTED
+                    and card.unsuccessful_cycle_count >= 2
+                ),
             )
             for card in rows
         ],

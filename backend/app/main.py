@@ -8,6 +8,7 @@ from app.api.cards import router as cards_router
 from app.api.frame import router as frame_router
 from app.api.health import router as health_router
 from app.api.manager import router as manager_router
+from app.api.results import router as results_router
 from app.core.config import settings
 
 
@@ -44,6 +45,7 @@ def create_app() -> FastAPI:
 
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(results_router)
     app.include_router(cards_router)
     app.include_router(frame_router)
     app.include_router(manager_router)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -208,3 +208,30 @@ def card_history_response(event: CardHistoryRecord) -> CardHistoryResponse:
         actor_label=event.actor_name or ACTOR_TYPE_LABELS[actor_type],
         created_at=event.created_at,
     )
+
+
+class CardMineListResponse(BaseModel):
+    items: list[CardResponse]
+    limit: int
+
+
+class CardNotificationStateResponse(BaseModel):
+    event: str
+    channel: str
+    status: str
+    scheduled_at: datetime | None = None
+    sent_at: datetime | None = None
+    created_at: datetime
+
+
+class CardNotificationListResponse(BaseModel):
+    items: list[CardNotificationStateResponse]
+
+
+class CardReminderIntervalRequest(BaseModel):
+    interval_minutes: Literal[10, 30]
+
+
+class CardReminderIntervalResponse(BaseModel):
+    interval_minutes: int
+    can_change: bool

@@ -80,6 +80,65 @@ class CardService:
         self.notifications = notifications
         self.clock = clock or (lambda: datetime.now(UTC))
 
+    def l1_reminder_interval(
+        self,
+        public_id: UUID,
+        *,
+        actor_user_id: int,
+        actor_role_ids: Collection[int],
+        interval_minutes: int | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> int:
+        authorize_card_read(actor_role_ids=actor_role_ids)
+        card = (
+            self.repository.get_card_by_public_id_for_update(public_id)
+            if interval_minutes is not None
+            else self.repository.get_card_by_public_id(public_id)
+        )
+        if card is None:
+            raise CardNotFoundError
+        if int(RoleId.L1) not in actor_role_ids or card.l1_owner_id != actor_user_id:
+            raise CardActionPolicyError(status_code=403, detail="assigned_l1_required")
+        if (
+            CardStatus(card.status_code) != CardStatus.REJECTED
+            or not card.client_informed
+        ):
+            raise CardActionPolicyError(
+                status_code=409, detail="l1_followup_not_informed"
+            )
+        current = self.repository.get_l1_reminder_interval(card.id)
+        if interval_minutes is None:
+            return current if current is not None else 10
+        if interval_minutes == current:
+            return current
+        self.repository.update_l1_reminder_interval(
+            card_id=card.id,
+            owner_id=actor_user_id,
+            interval_minutes=interval_minutes,
+            now=self.clock(),
+        )
+        self.repository.add_card_event(
+            card_id=card.id,
+            event_type=CardEventType.DETAILS_UPDATED,
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            old_values={"l1_reminder_interval_minutes": current},
+            new_values={"l1_reminder_interval_minutes": interval_minutes},
+            comment="l1_reminder_interval_changed",
+        )
+        self.repository.add_audit_log(
+            actor_user_id=actor_user_id,
+            actor_type=ActorType.INTERNAL_USER,
+            action=AuditAction.UPDATE,
+            entity_id=card.id,
+            old_values={"l1_reminder_interval_minutes": current},
+            new_values={"l1_reminder_interval_minutes": interval_minutes},
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
+        return interval_minutes
+
     def mark_client_informed(
         self,
         public_id: UUID,
@@ -139,8 +198,9 @@ class CardService:
                 card_id=updated.id,
                 kind="l1_reminder",
                 owner_id=actor_user_id,
-                anchor_at=datetime.now(UTC),
+                anchor_at=self.clock(),
                 informed=True,
+                interval_minutes=10,
             )
         return updated
 

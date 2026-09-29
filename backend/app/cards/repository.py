@@ -265,6 +265,33 @@ class CardRepository(Protocol):
         entity_type: str = "connection_card",
     ) -> None: ...
 
+    def list_mine_cards(
+        self,
+        *,
+        user_id: int,
+        role: str,
+        limit: int,
+    ) -> list[CardRecord]: ...
+
+    def list_card_notifications(
+        self,
+        *,
+        card_id: int,
+        recipient_user_id: int | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]: ...
+
+    def get_l1_reminder_interval(self, card_id: int) -> int | None: ...
+
+    def update_l1_reminder_interval(
+        self,
+        *,
+        card_id: int,
+        owner_id: int,
+        interval_minutes: int,
+        now: datetime,
+    ) -> None: ...
+
 
 class PostgresCardRepository:
     def __init__(self, connection: psycopg.Connection) -> None:
@@ -288,9 +315,14 @@ class PostgresCardRepository:
         cycle_id: int | None = None,
         attempt_id: int | None = None,
         informed: bool = False,
+        interval_minutes: int | None = None,
     ) -> None:
         interval = (
-            settings.reminder_l1_informed_interval_seconds
+            (
+                interval_minutes * 60
+                if interval_minutes is not None
+                else settings.reminder_l1_informed_interval_seconds
+            )
             if informed
             else (
                 settings.reminder_l1_interval_seconds
@@ -1815,6 +1847,169 @@ class PostgresCardRepository:
             TimeInterval(start_at=row["planned_start_at"], end_at=row["end_at"])
             for row in rows
         )
+
+    def list_mine_cards(
+        self,
+        *,
+        user_id: int,
+        role: str,
+        limit: int,
+    ) -> list[CardRecord]:
+        bounded_limit = min(max(limit, 1), 200)
+        if role == "l1":
+            query = """
+                SELECT c.*,
+                       l1.full_name AS l1_owner_name,
+                       l2.full_name AS l2_engineer_name
+                FROM connection_cards c
+                LEFT JOIN users l1 ON l1.id = c.l1_owner_id
+                LEFT JOIN users l2 ON l2.id = c.l2_engineer_id
+                WHERE c.l1_owner_id = %(user_id)s
+                  AND (c.status_code = %(status_rejected)s OR c.overdue_flag IS TRUE)
+                ORDER BY c.planned_start_at DESC, c.id DESC
+                LIMIT %(limit)s
+            """
+            params = {
+                "user_id": user_id,
+                "status_rejected": int(CardStatus.REJECTED),
+                "limit": bounded_limit,
+            }
+        elif role == "l2":
+            query = """
+                SELECT c.*,
+                       l1.full_name AS l1_owner_name,
+                       l2.full_name AS l2_engineer_name
+                FROM connection_cards c
+                LEFT JOIN users l1 ON l1.id = c.l1_owner_id
+                LEFT JOIN users l2 ON l2.id = c.l2_engineer_id
+                WHERE c.l2_engineer_id = %(user_id)s
+                  AND c.status_code IN (%(assigned)s, %(confirmed)s, %(in_progress)s, %(pending_result)s)
+                ORDER BY c.planned_start_at DESC, c.id DESC
+                LIMIT %(limit)s
+            """
+            params = {
+                "user_id": user_id,
+                "assigned": int(CardStatus.ASSIGNED),
+                "confirmed": int(CardStatus.CONFIRMED),
+                "in_progress": int(CardStatus.IN_PROGRESS),
+                "pending_result": int(CardStatus.COMPLETED_PENDING_RESULT),
+                "limit": bounded_limit,
+            }
+        else:
+            return []
+
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+        return [_card_from_row(row) for row in rows]
+
+    def list_card_notifications(
+        self,
+        *,
+        card_id: int,
+        recipient_user_id: int | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        bounded_limit = min(max(limit, 1), 100)
+        params: dict[str, Any] = {"card_id": card_id, "limit": bounded_limit}
+        where_clause = "card_id = %(card_id)s"
+        if recipient_user_id is not None:
+            where_clause += " AND recipient_user_id = %(recipient_user_id)s"
+            params["recipient_user_id"] = recipient_user_id
+
+        query = f"""
+            SELECT id, event_type_code, channel_code, status_code, scheduled_at, sent_at, created_at
+            FROM notifications
+            WHERE {where_clause}
+            ORDER BY created_at ASC, id ASC
+            LIMIT %(limit)s
+        """
+        with self.connection.cursor() as cursor:
+            cursor.execute(query, params)
+            return cursor.fetchall()
+
+    def get_l1_reminder_interval(self, card_id: int) -> int | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT interval_seconds
+                FROM reminder_schedules
+                WHERE card_id = %(card_id)s
+                  AND kind = 'l1_reminder'
+                  AND closed_at IS NULL
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                {"card_id": card_id},
+            )
+            row = cursor.fetchone()
+        if row and row.get("interval_seconds"):
+            return int(row["interval_seconds"]) // 60
+        return None
+
+    def update_l1_reminder_interval(
+        self,
+        *,
+        card_id: int,
+        owner_id: int,
+        interval_minutes: int,
+        now: datetime,
+    ) -> None:
+        interval_seconds = interval_minutes * 60
+        threshold = settings.reminder_l1_escalation_after_count
+        snapshot = {
+            "interval_seconds": interval_seconds,
+            "escalation_after_count": threshold,
+            "manager_repeat_seconds": settings.reminder_l1_manager_repeat_seconds,
+            "kind": "l1_reminder",
+            "anchor_at": now.isoformat(),
+            "owner_id": owner_id,
+            "l1_mode": "post_informed",
+            "interval_minutes": interval_minutes,
+        }
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE reminder_schedules
+                SET closed_at = %(now)s
+                WHERE card_id = %(card_id)s
+                  AND kind = 'l1_reminder'
+                  AND closed_at IS NULL
+                """,
+                {"card_id": card_id, "now": now},
+            )
+            cursor.execute(
+                """
+                INSERT INTO reminder_schedules (
+                    card_id,
+                    kind,
+                    owner_id,
+                    anchor_at,
+                    interval_seconds,
+                    escalation_after_count,
+                    next_due_at,
+                    settings_snapshot
+                ) VALUES (
+                    %(card_id)s,
+                    'l1_reminder',
+                    %(owner_id)s,
+                    %(now)s,
+                    %(interval)s,
+                    %(threshold)s,
+                    %(next_due)s,
+                    %(snapshot)s
+                )
+                """,
+                {
+                    "card_id": card_id,
+                    "owner_id": owner_id,
+                    "now": now,
+                    "interval": interval_seconds,
+                    "threshold": threshold,
+                    "next_due": now + timedelta(seconds=interval_seconds),
+                    "snapshot": Jsonb(snapshot),
+                },
+            )
 
     def _get_card(self, public_id: UUID, *, lock: bool) -> CardRecord | None:
         suffix = " FOR UPDATE OF c" if lock else ""

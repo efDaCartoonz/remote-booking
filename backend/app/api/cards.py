@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from ipaddress import ip_address
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from psycopg.errors import ExclusionViolation
 
 from app.auth.dependencies import get_current_user
@@ -15,6 +15,7 @@ from app.cards.policy import (
     authorize_create,
     role_ids,
 )
+from app.cards.constants import RoleId
 from app.cards.create_policy import CreateScenario, validate_role_create
 from app.cards.repository import (
     CardRecord,
@@ -28,6 +29,11 @@ from app.cards.schemas import (
     CardCompleteRequest,
     CardCreateRequest,
     CardHistoryResponse,
+    CardMineListResponse,
+    CardNotificationListResponse,
+    CardNotificationStateResponse,
+    CardReminderIntervalRequest,
+    CardReminderIntervalResponse,
     CardRejectRequest,
     CardResponse,
     CardStatusChangeRequest,
@@ -46,7 +52,16 @@ from app.manager_create import (
     ManagerCreateConflictError,
     run_manager_create_transaction,
 )
-from app.notifications import NotificationService, PostgresNotificationService
+from app.notifications import (
+    NOTIFICATION_CHANNEL_CODES,
+    NOTIFICATION_EVENT_CODES,
+    CANCELLED,
+    FAILED,
+    PENDING,
+    SENT,
+    NotificationService,
+    PostgresNotificationService,
+)
 from app.omnidesk_index.resolver import (
     PublicTicketResolutionError,
     resolve_ticket_by_case_number,
@@ -153,6 +168,22 @@ def create_l2_retroactive_card(
     )
 
 
+@router.get("/mine", response_model=CardMineListResponse)
+def list_mine_cards(
+    role: Literal["l1", "l2"],
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    repository: Annotated[CardRepository, Depends(get_card_repository)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 100,
+) -> CardMineListResponse:
+    required_role = RoleId.L1 if role == "l1" else RoleId.L2
+    if int(required_role) not in role_ids(user.roles):
+        raise HTTPException(status_code=403, detail="action_forbidden")
+    cards = repository.list_mine_cards(user_id=user.id, role=role, limit=limit)
+    return CardMineListResponse(
+        items=[card_response(card) for card in cards], limit=limit
+    )
+
+
 @router.get("/{card_id}", response_model=CardResponse)
 def get_card(
     card_id: UUID,
@@ -186,6 +217,106 @@ def get_card_history(
         raise _not_found() from exc
     except CardActionPolicyError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
+@router.get("/{card_id}/notifications", response_model=CardNotificationListResponse)
+def list_card_notifications(
+    card_id: UUID,
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    service: Annotated[CardService, Depends(get_card_service)],
+) -> CardNotificationListResponse:
+    try:
+        card = service.get_card_for_user(card_id, actor_role_ids=role_ids(user.roles))
+    except CardNotFoundError as exc:
+        raise _not_found() from exc
+    except CardActionPolicyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    roles = role_ids(user.roles)
+    is_manager = int(RoleId.MANAGER) in roles
+    if not is_manager and not (
+        int(RoleId.L1) in roles
+        and card.l1_owner_id == user.id
+        or int(RoleId.L2) in roles
+        and card.l2_engineer_id == user.id
+    ):
+        raise HTTPException(status_code=403, detail="card_owner_required")
+    rows = service.repository.list_card_notifications(
+        card_id=card.id,
+        recipient_user_id=None if is_manager else user.id,
+        limit=100,
+    )
+    events = {code: name for name, code in NOTIFICATION_EVENT_CODES.items()}
+    channels = {code: name for name, code in NOTIFICATION_CHANNEL_CODES.items()}
+    states = {
+        PENDING: "pending",
+        SENT: "sent",
+        FAILED: "failed",
+        CANCELLED: "cancelled",
+    }
+    return CardNotificationListResponse(
+        items=[
+            CardNotificationStateResponse(
+                event=events.get(row["event_type_code"], "other"),
+                channel=channels.get(row["channel_code"], "other"),
+                status=states.get(row["status_code"], "other"),
+                scheduled_at=row["scheduled_at"],
+                sent_at=row["sent_at"],
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
+    )
+
+
+def _l1_interval_response(
+    card_id: UUID,
+    user: UserAuthRecord,
+    service: CardService,
+    interval_minutes: int | None = None,
+    request: Request | None = None,
+) -> CardReminderIntervalResponse:
+    try:
+        value = service.l1_reminder_interval(
+            card_id,
+            actor_user_id=user.id,
+            actor_role_ids=role_ids(user.roles),
+            interval_minutes=interval_minutes,
+            ip_address=_client_ip(request) if request is not None else None,
+            user_agent=request.headers.get("user-agent")
+            if request is not None
+            else None,
+        )
+    except CardNotFoundError as exc:
+        raise _not_found() from exc
+    except CardActionPolicyError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    return CardReminderIntervalResponse(interval_minutes=value, can_change=True)
+
+
+@router.get(
+    "/{card_id}/l1/reminder-interval", response_model=CardReminderIntervalResponse
+)
+def get_l1_reminder_interval(
+    card_id: UUID,
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    service: Annotated[CardService, Depends(get_card_service)],
+) -> CardReminderIntervalResponse:
+    return _l1_interval_response(card_id, user, service)
+
+
+@router.post(
+    "/{card_id}/l1/reminder-interval", response_model=CardReminderIntervalResponse
+)
+def update_l1_reminder_interval(
+    card_id: UUID,
+    payload: CardReminderIntervalRequest,
+    request: Request,
+    user: Annotated[UserAuthRecord, Depends(get_current_user)],
+    service: Annotated[CardService, Depends(get_card_service)],
+) -> CardReminderIntervalResponse:
+    return _l1_interval_response(
+        card_id, user, service, payload.interval_minutes, request
+    )
 
 
 @router.post("/{card_id}/assign", response_model=CardResponse)
