@@ -290,7 +290,7 @@ onMounted(load);
   <div class="schedule-editor" data-test="schedule-editor">
     <div class="section-heading">
       <h3>Графики работы</h3>
-      <div class="manager-toggle">
+      <div class="action-row">
         <button type="button" class="secondary" data-test="sched-prev" @click="shiftMonth(-1)">←</button>
         <strong data-test="sched-month" style="align-self: center; min-width: 140px; text-align: center;">
           {{ MONTH_NAMES[month - 1] }} {{ year }}
@@ -369,7 +369,7 @@ onMounted(load);
           </select>
         </label>
       </div>
-      <div class="manager-toggle">
+      <div class="action-row">
         <button type="button" data-test="cell-apply" @click="applyCell">Задать время</button>
         <button type="button" class="secondary" data-test="cell-off" @click="clearCell">Выходной</button>
         <button type="button" class="secondary" @click="selected = null">Закрыть</button>
@@ -429,7 +429,7 @@ onMounted(load);
         <input v-model="genSkipHolidays" type="checkbox" data-test="gen-skip-holidays" />
         <span>Не ставить смены на праздничные и выходные дни из производственного календаря</span>
       </label>
-      <div class="manager-toggle">
+      <div class="action-row">
         <button type="button" data-test="gen-apply" @click="applyGenerator">Применить к периоду</button>
         <button type="button" class="secondary" data-test="gen-copy" :disabled="busy" @click="copyFromPreviousMonth">
           Скопировать прошлый месяц
@@ -439,7 +439,7 @@ onMounted(load);
       </div>
     </div>
 
-    <div class="manager-toggle" style="margin-top: 16px;">
+    <div class="action-row">
       <button type="button" data-test="sched-save" :disabled="busy || dirtyUserIds.length === 0" @click="saveAll">
         Сохранить изменения ({{ dirtyUserIds.length }})
       </button>

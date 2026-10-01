@@ -608,18 +608,18 @@ onUnmounted(() => {
   padding: 7px 14px;
   font-size: 13px;
   font-weight: 600;
-  color: #b91c1c;
-  background: #fee2e2;
-  border: 1px solid #fecaca;
-  border-radius: 8px;
+  color: var(--rdm-danger);
+  background: #ffffff;
+  border: 1px solid var(--rdm-danger);
+  border-radius: 0;
   cursor: pointer;
   white-space: nowrap;
   transition: all 0.15s ease;
 }
 
 .frame-btn-cancel-link:hover:not(:disabled) {
-  background: #fca5a5;
-  color: #991b1b;
+  background: var(--rdm-tag-red-bg);
+  color: var(--rdm-danger-hover);
 }
 
 .frame-btn-cancel-link:disabled {

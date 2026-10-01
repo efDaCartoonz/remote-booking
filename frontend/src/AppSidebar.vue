@@ -27,8 +27,8 @@ function isActive(href: string): boolean {
   <nav class="sidebar" aria-label="Разделы" data-test="sidebar">
     <div class="sidebar-brand">
       <p class="eyebrow">RDM</p>
-      <strong class="sidebar-user">{{ fullName }}</strong>
     </div>
+    <strong class="sidebar-user">{{ fullName }}</strong>
     <ul class="sidebar-list">
       <li v-for="item in items" :key="item.href">
         <a :href="item.href" :class="{ active: isActive(item.href) }" :aria-current="isActive(item.href) ? 'page' : undefined">

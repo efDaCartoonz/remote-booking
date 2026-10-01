@@ -404,9 +404,9 @@ onMounted(() => {
 .table-wrap {
   overflow-x: auto;
   margin-top: 16px;
-  border: 1px solid #e2e8f0;
-  border-radius: 12px;
-  background: #fff;
+  border: 1px solid var(--rdm-border);
+  border-radius: 0;
+  background: var(--rdm-layer);
 }
 
 .report-table {
@@ -419,21 +419,19 @@ onMounted(() => {
 .report-table th,
 .report-table td {
   padding: 12px 16px;
-  border-bottom: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--rdm-border);
   vertical-align: middle;
 }
 
 .report-table th {
-  background: #f8fafc;
-  color: #475569;
+  background: var(--rdm-border);
+  color: var(--rdm-text);
   font-weight: 600;
-  font-size: 13px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: 14px;
 }
 
 .report-table tbody tr:hover {
-  background: #f8fbff;
+  background: var(--rdm-layer-hover);
 }
 
 .pagination-controls {

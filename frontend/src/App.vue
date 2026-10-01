@@ -429,9 +429,9 @@ async function load(): Promise<void> {
   busy.value = true;
   errorStatus.value = null;
   actionError.value = "";
-  rememberCardRoute();
   try {
     user.value = await api<User>("/api/v1/auth/me");
+    forgetReturnRoute();
     editTimezone.value = user.value.timezone || "Asia/Yekaterinburg";
     if (hasL1Role.value || hasL2Role.value || hasRole(3)) await loadPlanning();
     if (workplacePath) {
@@ -701,7 +701,6 @@ function calendarItems(day: Date): ManagerCard[] {
 async function login(): Promise<void> {
   loginBusy.value = true;
   loginError.value = "";
-  rememberCardRoute();
   try {
     await api("/api/v1/auth/login", {
       method: "POST",
@@ -722,9 +721,12 @@ async function logout(): Promise<void> {
   try {
     await api("/api/v1/auth/logout", { method: "POST" });
   } finally {
+    // An explicit sign-out must not bring the next login back to the page just left.
+    forgetReturnRoute();
     user.value = null;
     card.value = null;
     history.value = [];
+    if (location.pathname !== "/") window.location.assign("/");
   }
 }
 

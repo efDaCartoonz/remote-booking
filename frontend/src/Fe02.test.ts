@@ -2,6 +2,7 @@ import { flushPromises, mount } from "@vue/test-utils";
 import { slotInput } from "./testSlot";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App.vue";
+import AppSidebar from "./AppSidebar.vue";
 
 const originalFetch = globalThis.fetch;
 const user = (id: number, role: number, additionalRoles: number[] = []) => ({
@@ -147,6 +148,45 @@ describe("FE-02 role workspaces", () => {
     expect(wrapper.text()).toContain("RDM-L2-QUEUE");
     expect(wrapper.text()).toContain("Создать карточку L2");
     expect(wrapper.find(".role-create-form select:not([data-test^='role-slot'])").exists()).toBe(true);
+  });
+
+  it("forgets the remembered card route when the user signs out explicitly", async () => {
+    window.history.pushState({}, "", "/");
+    sessionStorage.setItem("rdm.return_to", "/cards/00000000-0000-0000-0000-000000000039");
+    const calls: [string, RequestInit | undefined][] = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = String(input);
+      calls.push([path, init]);
+      if (path.endsWith("/auth/me")) return ok(user(22, 2));
+      if (path.includes("/cards/mine")) return ok({ items: [], limit: 100 });
+      if (path.endsWith("/results")) return ok({ items: [] });
+      if (path.endsWith("/auth/logout")) return { ok: true, status: 204, json: async () => ({}) } as Response;
+      return fail(404, "missing");
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    wrapper.findComponent(AppSidebar).vm.$emit("logout");
+    await flushPromises();
+
+    expect(calls.some(([path, init]) => path.endsWith("/auth/logout") && init?.method === "POST")).toBe(true);
+    expect(sessionStorage.getItem("rdm.return_to")).toBeNull();
+    expect(wrapper.text()).toContain("Войдите");
+  });
+
+  it("drops a stale remembered card route once the session is valid", async () => {
+    window.history.pushState({}, "", "/work");
+    sessionStorage.setItem("rdm.return_to", "/cards/00000000-0000-0000-0000-000000000039");
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/auth/me")) return ok(user(22, 2));
+      if (path.includes("/cards/mine")) return ok({ items: [], limit: 100 });
+      if (path.endsWith("/results")) return ok({ items: [] });
+      return fail(404, "missing");
+    });
+    mount(App);
+    await flushPromises();
+    expect(sessionStorage.getItem("rdm.return_to")).toBeNull();
   });
 
   it("submits L2 urgent and retroactive create payloads with expected fields", async () => {

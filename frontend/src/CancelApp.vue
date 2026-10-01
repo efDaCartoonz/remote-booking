@@ -333,7 +333,7 @@ onMounted(() => {
 .cancel-shell {
   min-height: 100vh;
   padding: 32px 16px;
-  background: #eef3f8;
+  background: var(--rdm-bg);
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -345,9 +345,9 @@ onMounted(() => {
   max-width: 640px;
   margin: 0 auto;
   padding: 32px;
-  border-radius: 20px;
+  border: 1px solid var(--rdm-border);
+  border-radius: 0;
   background: #ffffff;
-  box-shadow: 0 12px 36px rgba(23, 32, 51, 0.12);
   box-sizing: border-box;
 }
 
@@ -362,15 +362,15 @@ onMounted(() => {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #3867d6;
+  color: var(--rdm-text-secondary);
   margin-bottom: 6px;
 }
 
 .cancel-title {
   margin: 0;
   font-size: 24px;
-  font-weight: 700;
-  color: #172033;
+  font-weight: 400;
+  color: var(--rdm-text);
 }
 
 .cancel-loading {
@@ -387,7 +387,7 @@ onMounted(() => {
   width: 24px;
   height: 24px;
   border: 3px solid #cbd5e1;
-  border-top-color: #3867d6;
+  border-top-color: var(--rdm-interactive);
   border-radius: 50%;
   animation: cancel-spin 0.8s linear infinite;
 }
@@ -400,7 +400,7 @@ onMounted(() => {
 
 .cancel-banner {
   padding: 14px 18px;
-  border-radius: 12px;
+  border-radius: 0;
   margin-bottom: 20px;
   font-size: 14px;
   line-height: 1.5;
@@ -446,8 +446,8 @@ onMounted(() => {
 .cancel-summary-panel {
   padding: 18px 20px;
   border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  background: #f8fafc;
+  border-radius: 0;
+  background: var(--rdm-bg);
   margin-bottom: 20px;
 }
 
@@ -483,8 +483,8 @@ onMounted(() => {
 
 .cancel-warning-box {
   padding: 14px 16px;
-  border-radius: 10px;
-  background: #fffbeb;
+  border-radius: 0;
+  background: #fcf4d6;
   border-left: 4px solid #f59e0b;
   color: #92400e;
   font-size: 13px;
@@ -507,15 +507,15 @@ onMounted(() => {
   font-size: 15px;
   font-weight: 650;
   color: #ffffff;
-  background: #dc2626;
+  background: var(--rdm-danger);
   border: 0;
-  border-radius: 12px;
+  border-radius: 0;
   cursor: pointer;
   transition: background 0.15s ease-in-out;
 }
 
 .cancel-btn-confirm:hover:not(:disabled) {
-  background: #b91c1c;
+  background: var(--rdm-danger-hover);
 }
 
 .cancel-btn-confirm:disabled {
@@ -529,7 +529,7 @@ onMounted(() => {
   padding: 12px 16px;
   background: #f8fafc;
   border: 1px solid #e2e8f0;
-  border-radius: 10px;
+  border-radius: 0;
   font-size: 13px;
 }
 
@@ -545,7 +545,7 @@ onMounted(() => {
 @media (max-width: 600px) {
   .cancel-card {
     padding: 20px 16px;
-    border-radius: 16px;
+    border-radius: 0;
   }
   .cancel-dl {
     grid-template-columns: 1fr;
