@@ -1,0 +1,43 @@
+services:
+  postgres:
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    ports: !override
+      - "127.0.0.1:5432:5432"
+
+  redis:
+    restart: unless-stopped
+
+  backend:
+    image: rdm-backend:${RDM_RELEASE:?set RDM_RELEASE}
+    restart: unless-stopped
+    env_file: !override
+      - ${RDM_ENV_FILE:-.env.stage}
+    ports: !override
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health/live || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    image: rdm-backend:${RDM_RELEASE:?set RDM_RELEASE}
+    restart: unless-stopped
+    env_file: !override
+      - ${RDM_ENV_FILE:-.env.stage}
+
+  beat:
+    image: rdm-backend:${RDM_RELEASE:?set RDM_RELEASE}
+    restart: unless-stopped
+    env_file: !override
+      - ${RDM_ENV_FILE:-.env.stage}
+
+  frontend:
+    image: rdm-frontend:${RDM_RELEASE:?set RDM_RELEASE}
+    restart: unless-stopped
+    ports: !override
+      - "8080:80"
+    depends_on: !override
+      backend:
+        condition: service_healthy

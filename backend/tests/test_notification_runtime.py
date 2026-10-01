@@ -454,3 +454,37 @@ def test_message_is_minimal_and_contains_card_link() -> None:
     assert "Test Client" in message
     assert "https://rdm.example/cards/" in message
     assert "recipient-1" not in message
+
+
+def test_omnidesk_outbox_is_scheduled_by_default_and_gated_by_flag() -> None:
+    from types import SimpleNamespace
+
+    from app.worker import build_beat_schedule
+
+    base = {
+        "notification_delivery_enabled": False,
+        "reminder_scanner_enabled": False,
+        "reminder_scan_interval_seconds": 60,
+    }
+    enabled = build_beat_schedule(
+        SimpleNamespace(**base, omnidesk_outbox_delivery_enabled=True)
+    )
+    disabled = build_beat_schedule(
+        SimpleNamespace(**base, omnidesk_outbox_delivery_enabled=False)
+    )
+
+    assert enabled["deliver-omnidesk-outbox"]["options"]["queue"] == "notifications"
+    assert "deliver-omnidesk-outbox" not in disabled
+    # Internal jobs stay regardless of the Omnidesk flag.
+    assert "extend-sessions" in disabled
+
+
+def test_disabled_omnidesk_outbox_task_does_not_open_database(monkeypatch) -> None:
+    from app.worker import deliver_omnidesk_outbox
+
+    monkeypatch.setattr("app.worker.settings.omnidesk_outbox_delivery_enabled", False)
+    monkeypatch.setattr(
+        "app.worker.db_connection", lambda: (_ for _ in ()).throw(AssertionError())
+    )
+
+    assert deliver_omnidesk_outbox() == 0

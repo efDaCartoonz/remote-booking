@@ -1,0 +1,17 @@
+[Unit]
+Description=RDM Stage Docker Compose services
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/user-rdm/remote-booking-new
+EnvironmentFile=-/home/user-rdm/remote-booking-new/deploy/stage/.state/release.env
+ExecStart=/usr/bin/docker compose -p rdm-stage --env-file .env.stage -f docker-compose.yml -f docker-compose.stage.yml up -d
+ExecStop=/usr/bin/docker compose -p rdm-stage --env-file .env.stage -f docker-compose.yml -f docker-compose.stage.yml stop
+RemainAfterExit=yes
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

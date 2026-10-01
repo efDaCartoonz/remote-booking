@@ -66,40 +66,46 @@ def extend_sessions() -> int:
         return process_due_in_progress_sessions(connection)
 
 
-celery_app.conf.beat_schedule = {}
-
-if settings.notification_delivery_enabled:
-    celery_app.conf.beat_schedule["deliver-notifications"] = {
-        "task": "app.worker.deliver_notifications",
-        "schedule": 10.0,
+def build_beat_schedule(cfg) -> dict:
+    """Periodic jobs; every job that writes to an external system is flag-gated."""
+    schedule: dict = {}
+    if cfg.notification_delivery_enabled:
+        schedule["deliver-notifications"] = {
+            "task": "app.worker.deliver_notifications",
+            "schedule": 10.0,
+            "options": {"queue": "notifications"},
+        }
+    if cfg.reminder_scanner_enabled:
+        schedule["scan-reminders"] = {
+            "task": "app.worker.scan_reminders",
+            "schedule": cfg.reminder_scan_interval_seconds,
+            "options": {"queue": "notifications"},
+        }
+    schedule["extend-sessions"] = {
+        "task": "app.worker.extend_sessions",
+        "schedule": 60.0,  # Run every minute
         "options": {"queue": "notifications"},
     }
+    # Writes to Omnidesk (notes, assignees, client warnings, cancellation
+    # links). Enabled by default; the test stand turns it off explicitly.
+    if cfg.omnidesk_outbox_delivery_enabled:
+        schedule["deliver-omnidesk-outbox"] = {
+            "task": "app.worker.deliver_omnidesk_outbox",
+            "schedule": 10.0,
+            "options": {"queue": "notifications"},
+        }
+    return schedule
 
-if settings.reminder_scanner_enabled:
-    celery_app.conf.beat_schedule["scan-reminders"] = {
-        "task": "app.worker.scan_reminders",
-        "schedule": settings.reminder_scan_interval_seconds,
-        "options": {"queue": "notifications"},
-    }
 
-celery_app.conf.beat_schedule["extend-sessions"] = {
-    "task": "app.worker.extend_sessions",
-    "schedule": 60.0,  # Run every minute
-    "options": {"queue": "notifications"},
-}
+celery_app.conf.beat_schedule = build_beat_schedule(settings)
 
 
 @celery_app.task(name="app.worker.deliver_omnidesk_outbox", queue="notifications")
 def deliver_omnidesk_outbox() -> int:
+    if not settings.omnidesk_outbox_delivery_enabled:
+        return 0
     with db_connection() as connection:
         return deliver_pending_omnidesk_outbox(
             PostgresOmnideskOutboxRepository(connection),
             get_omnidesk_ticket_client(),
         )
-
-
-celery_app.conf.beat_schedule["deliver-omnidesk-outbox"] = {
-    "task": "app.worker.deliver_omnidesk_outbox",
-    "schedule": 10.0,
-    "options": {"queue": "notifications"},
-}

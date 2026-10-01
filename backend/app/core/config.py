@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     notification_lock_seconds: int = 300
     notification_http_timeout_seconds: float = 5.0
     notification_delivery_enabled: bool = False
+    omnidesk_outbox_delivery_enabled: bool = True
     reminder_l2_interval_seconds: int = 600
     reminder_l2_escalation_after_count: int = 2
     reminder_l1_interval_seconds: int = 600
