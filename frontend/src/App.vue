@@ -929,7 +929,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
       <template v-else-if="!user">
         <p class="eyebrow">RDM</p>
         <h1>Вход</h1>
-        <p class="muted">Войдите, чтобы открыть внутреннюю карточку.</p>
+        <p class="muted">Войдите, чтобы продолжить работу.</p>
         <form class="form" @submit.prevent="login">
           <label>Логин<input v-model="username" autocomplete="username" required /></label>
           <label>Пароль<input v-model="password" type="password" autocomplete="current-password" required /></label>
@@ -970,7 +970,8 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
 
       <template v-else-if="adminPath || reportsPath">
         <header class="top"><div><p class="eyebrow">RDM</p><h1>{{ adminPath ? "Администрирование" : "Отчёты" }}</h1><p class="muted">Часовой пояс: {{ profileTimeZone }}</p></div></header>
-        <AdminWorkspace v-if="adminPath" :current-user="user" :timezone="profileTimeZone" />
+        <AdminWorkspace v-if="adminPath && hasRole(4)" :current-user="user" :timezone="profileTimeZone" />
+        <p v-else-if="adminPath" class="error" role="alert">Доступ к администрированию запрещён (403).</p>
         <ReportsWorkspace v-else :current-user="user" :timezone="profileTimeZone" />
       </template>
 
@@ -1001,9 +1002,6 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
             <p class="eyebrow">Внутренняя карточка</p>
             <h1>{{ card.number }}</h1>
           </div>
-          <button class="secondary" @click="logout">Выйти</button>
-          <a v-if="hasL1Role || hasL2Role" class="button-link" href="/work">Мои карточки</a>
-          <a v-if="hasRole(3)" class="button-link" href="/manager">Панель руководителя</a>
         </header>
 
         <div class="status-line">

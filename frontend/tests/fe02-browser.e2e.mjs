@@ -142,7 +142,7 @@ describe("RDM FE-02 Bounded Playwright Browser Suite", () => {
       await page.selectOption(".role-create-form [data-test='role-slot-date']", { index: 2 });
       await page.selectOption(".role-create-form [data-test='role-slot-time']", "10:00");
       await page.fill(".role-create-form textarea", "L1 client card");
-      await page.click(".role-create-form button");
+      await Promise.all([page.waitForURL(/\/cards\//), page.click(".role-create-form button")]);
 
       // Verify L1 create payload
       const l1CreateCall = interceptedRequests.find((r) => r.url.endsWith("/cards/l1") && r.method === "POST");
