@@ -27,6 +27,8 @@ export interface AdminUser {
   timezone: string;
   telegram_chat_id: string | null;
   bitrix24_user_id: string | null;
+  notify_telegram: boolean;
+  notify_bitrix24: boolean;
 }
 
 export interface UserCreatePayload {
@@ -38,6 +40,10 @@ export interface UserCreatePayload {
   omnidesk_staff_id?: string | null;
   roles: number[];
   is_active?: boolean;
+  telegram_chat_id?: string | null;
+  bitrix24_user_id?: string | null;
+  notify_telegram?: boolean;
+  notify_bitrix24?: boolean;
 }
 
 export interface UserUpdatePayload {
@@ -46,6 +52,10 @@ export interface UserUpdatePayload {
   phone?: string | null;
   omnidesk_staff_id?: string | null;
   is_active?: boolean | null;
+  telegram_chat_id?: string | null;
+  bitrix24_user_id?: string | null;
+  notify_telegram?: boolean;
+  notify_bitrix24?: boolean;
 }
 
 export interface ScheduleItem {

@@ -29,8 +29,10 @@ const sampleUsers = [
     is_active: true,
     roles: [{ id: 4, name: "Администратор" }],
     timezone: "Europe/Moscow",
-    telegram_chat_id: "tg_admin",
-    bitrix24_user_id: "b24_admin",
+    telegram_chat_id: "12345",
+    bitrix24_user_id: "67890",
+    notify_telegram: true,
+    notify_bitrix24: true,
   },
   {
     id: 2,
@@ -42,8 +44,10 @@ const sampleUsers = [
     is_active: true,
     roles: [{ id: 2, name: "Инженер L2" }],
     timezone: "Asia/Yekaterinburg",
-    telegram_chat_id: "tg_l2",
-    bitrix24_user_id: "b24_l2",
+    telegram_chat_id: null,
+    bitrix24_user_id: null,
+    notify_telegram: true,
+    notify_bitrix24: true,
   },
 ];
 
@@ -86,7 +90,7 @@ describe("FE-04 AdminWorkspace", () => {
     expect(fetchMock).toHaveBeenCalledTimes(0);
   });
 
-  it("renders admin workspace and loads users list for ADMIN role", async () => {
+  it("renders admin workspace and loads users list with telegram/bitrix status for ADMIN role", async () => {
     globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.includes("/api/v1/admin/users")) {
@@ -107,6 +111,16 @@ describe("FE-04 AdminWorkspace", () => {
     expect(wrapper.text()).toContain("Панель администратора");
     expect(wrapper.text()).toContain("Главный Администратор");
     expect(wrapper.text()).toContain("engineer_l2");
+
+    // Check user 1 has configured channels
+    const row1 = wrapper.find('[data-test="user-row-1"]');
+    expect(row1.text()).toContain("Telegram: настроен");
+    expect(row1.text()).toContain("Битрикс24: настроен");
+
+    // Check user 2 has unconfigured channels
+    const row2 = wrapper.find('[data-test="user-row-2"]');
+    expect(row2.text()).toContain("Telegram: нет");
+    expect(row2.text()).toContain("Битрикс24: нет");
   });
 
   it("creates user without leaking password in DOM after submission", async () => {
@@ -127,6 +141,10 @@ describe("FE-04 AdminWorkspace", () => {
           is_active: true,
           roles: [{ id: 2, name: "Инженер L2" }],
           timezone: "Asia/Yekaterinburg",
+          telegram_chat_id: body.telegram_chat_id,
+          bitrix24_user_id: body.bitrix24_user_id,
+          notify_telegram: body.notify_telegram ?? true,
+          notify_bitrix24: body.notify_bitrix24 ?? true,
         });
       }
       if (url.includes("/api/v1/admin/users")) {
@@ -167,6 +185,93 @@ describe("FE-04 AdminWorkspace", () => {
     expect(wrapper.html()).not.toContain(secretPassword);
     expect(wrapper.text()).not.toContain(secretPassword);
     expect(wrapper.text()).toContain("Пользователь new_engineer успешно создан.");
+  });
+
+  it("edits user with telegram, bitrix24 and notification flags sending only modified fields", async () => {
+    let patchPayload: Record<string, unknown> | null = null;
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/admin/users/2" && init?.method === "PATCH") {
+        patchPayload = JSON.parse(String(init.body));
+        return ok({
+          ...sampleUsers[1],
+          ...patchPayload,
+        });
+      }
+      if (url.includes("/api/v1/admin/users")) {
+        return ok(sampleUsers);
+      }
+      return fail(404, "not_found");
+    });
+
+    const wrapper = mount(AdminWorkspace, {
+      props: {
+        currentUser: { id: 1, username: "admin_user", roles: [4] },
+      },
+    });
+    await flushPromises();
+
+    // Click edit on user 2
+    await wrapper.find('[data-test="btn-edit-user-2"]').trigger("click");
+    expect(wrapper.find('[data-test="modal-edit-user"]').exists()).toBe(true);
+
+    // Fill Telegram and Bitrix24 fields and change notify checkbox
+    await wrapper.find('[data-test="input-edit-telegram-chat-id"]').setValue("-100998877");
+    await wrapper.find('[data-test="input-edit-bitrix24-user-id"]').setValue("777");
+    await wrapper.find('[data-test="checkbox-edit-notify-telegram"]').setValue(false);
+
+    // Submit edit form
+    await wrapper.find('[data-test="modal-edit-user"] form').trigger("submit.prevent");
+    await flushPromises();
+
+    // Verify only changed fields were sent in PATCH
+    expect(patchPayload).toEqual({
+      telegram_chat_id: "-100998877",
+      bitrix24_user_id: "777",
+      notify_telegram: false,
+    });
+    expect(wrapper.text()).toContain("Данные пользователя engineer_l2 обновлены.");
+  });
+
+  it("clears telegram and bitrix24 to null when emptied in edit form", async () => {
+    let patchPayload: Record<string, unknown> | null = null;
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/api/v1/admin/users/1" && init?.method === "PATCH") {
+        patchPayload = JSON.parse(String(init.body));
+        return ok({
+          ...sampleUsers[0],
+          ...patchPayload,
+        });
+      }
+      if (url.includes("/api/v1/admin/users")) {
+        return ok(sampleUsers);
+      }
+      return fail(404, "not_found");
+    });
+
+    const wrapper = mount(AdminWorkspace, {
+      props: {
+        currentUser: { id: 1, username: "admin_user", roles: [4] },
+      },
+    });
+    await flushPromises();
+
+    // Click edit on user 1
+    await wrapper.find('[data-test="btn-edit-user-1"]').trigger("click");
+
+    // Clear Telegram and Bitrix24
+    await wrapper.find('[data-test="input-edit-telegram-chat-id"]').setValue("   ");
+    await wrapper.find('[data-test="input-edit-bitrix24-user-id"]').setValue("");
+
+    // Submit edit form
+    await wrapper.find('[data-test="modal-edit-user"] form').trigger("submit.prevent");
+    await flushPromises();
+
+    expect(patchPayload).toEqual({
+      telegram_chat_id: null,
+      bitrix24_user_id: null,
+    });
   });
 
   it("requires mandatory reason for distribution membership updates", async () => {
@@ -262,7 +367,7 @@ describe("FE-04 AdminWorkspace", () => {
     // Open create user
     await wrapper.find('[data-test="btn-open-create-user"]').trigger("click");
     await wrapper.find('[data-test="input-new-username"]').setValue("admin_user");
-    await wrapper.find('[data-test="input-new-password"]').setValue("pwd");
+    await wrapper.find('[data-test="input-new-password"]').setValue("password123");
     await wrapper.find('[data-test="input-new-fullname"]').setValue("Duplicate User");
     await wrapper.find('[data-test="modal-create-user"] form').trigger("submit.prevent");
     await flushPromises();
@@ -271,5 +376,29 @@ describe("FE-04 AdminWorkspace", () => {
     expect(wrapper.find('[data-test="admin-error"]').text()).toContain(
       "Пользователь с таким логином уже существует."
     );
+  });
+
+  it("rejects a password shorter than 8 characters without calling the API", async () => {
+    const fetchMock = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      if (String(input).includes("/api/v1/admin/users")) return ok(sampleUsers);
+      return fail(404, "not_found");
+    });
+    globalThis.fetch = fetchMock;
+
+    const wrapper = mount(AdminWorkspace, {
+      props: { currentUser: { id: 1, username: "admin_user", roles: [4] } },
+    });
+    await flushPromises();
+    const callsBefore = fetchMock.mock.calls.length;
+
+    await wrapper.find('[data-test="btn-open-create-user"]').trigger("click");
+    await wrapper.find('[data-test="input-new-username"]').setValue("short_user");
+    await wrapper.find('[data-test="input-new-password"]').setValue("1234567");
+    await wrapper.find('[data-test="input-new-fullname"]').setValue("Short Password");
+    await wrapper.find('[data-test="modal-create-user"] form').trigger("submit.prevent");
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="admin-error"]').text()).toContain("не менее 8 символов");
+    expect(fetchMock.mock.calls.length).toBe(callsBefore);
   });
 });

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Generator
 from ipaddress import ip_address
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.admin.users import (
     AdminUserRepository,
@@ -32,6 +33,38 @@ require_admin_role = require_roles(int(RoleId.ADMIN))
 StaffId = Annotated[str, Field(pattern=r"^[0-9]{1,100}$")]
 
 
+def _validate_telegram_chat_id(v: Any) -> str | None:
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError("telegram_chat_id must be a string")
+    s = v.strip()
+    if not s:
+        return None
+    if len(s) > 100:
+        raise ValueError("telegram_chat_id must be at most 100 characters")
+    if not re.fullmatch(r"^-?[0-9]+$", s):
+        raise ValueError(
+            "telegram_chat_id must contain only digits with optional leading minus"
+        )
+    return s
+
+
+def _validate_bitrix24_user_id(v: Any) -> str | None:
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        raise ValueError("bitrix24_user_id must be a string")
+    s = v.strip()
+    if not s:
+        return None
+    if len(s) > 100:
+        raise ValueError("bitrix24_user_id must be at most 100 characters")
+    if not re.fullmatch(r"^[0-9]+$", s):
+        raise ValueError("bitrix24_user_id must contain only digits")
+    return s
+
+
 class RoleResponse(BaseModel):
     id: int
     name: str
@@ -49,17 +82,33 @@ class AdminUserResponse(BaseModel):
     timezone: str = "Asia/Yekaterinburg"
     telegram_chat_id: str | None = None
     bitrix24_user_id: str | None = None
+    notify_telegram: bool = True
+    notify_bitrix24: bool = True
 
 
 class UserCreateRequest(BaseModel):
     username: str = Field(min_length=1, max_length=100)
-    password: str = Field(min_length=1)
+    password: str = Field(min_length=8, max_length=128)
     full_name: str = Field(min_length=1, max_length=255)
     email: str | None = Field(default=None, max_length=255)
     phone: str | None = Field(default=None, max_length=50)
     omnidesk_staff_id: StaffId | None = None
     roles: list[int] = Field(default_factory=lambda: [int(RoleId.L1)])
     is_active: bool = True
+    telegram_chat_id: str | None = None
+    bitrix24_user_id: str | None = None
+    notify_telegram: bool = True
+    notify_bitrix24: bool = True
+
+    @field_validator("telegram_chat_id", mode="before")
+    @classmethod
+    def check_telegram_chat_id(cls, v: Any) -> str | None:
+        return _validate_telegram_chat_id(v)
+
+    @field_validator("bitrix24_user_id", mode="before")
+    @classmethod
+    def check_bitrix24_user_id(cls, v: Any) -> str | None:
+        return _validate_bitrix24_user_id(v)
 
 
 class UserUpdateRequest(BaseModel):
@@ -68,6 +117,20 @@ class UserUpdateRequest(BaseModel):
     phone: str | None = Field(default=None, max_length=50)
     omnidesk_staff_id: StaffId | None = None
     is_active: bool | None = None
+    telegram_chat_id: str | None = None
+    bitrix24_user_id: str | None = None
+    notify_telegram: bool | None = None
+    notify_bitrix24: bool | None = None
+
+    @field_validator("telegram_chat_id", mode="before")
+    @classmethod
+    def check_telegram_chat_id(cls, v: Any) -> str | None:
+        return _validate_telegram_chat_id(v)
+
+    @field_validator("bitrix24_user_id", mode="before")
+    @classmethod
+    def check_bitrix24_user_id(cls, v: Any) -> str | None:
+        return _validate_bitrix24_user_id(v)
 
 
 class UserRolesUpdateRequest(BaseModel):
@@ -103,6 +166,8 @@ def _serialize_user(user: AdminUserRecord) -> AdminUserResponse:
         timezone=user.timezone,
         telegram_chat_id=user.telegram_chat_id,
         bitrix24_user_id=user.bitrix24_user_id,
+        notify_telegram=user.notify_telegram,
+        notify_bitrix24=user.notify_bitrix24,
     )
 
 
@@ -147,6 +212,10 @@ def create_user(
             omnidesk_staff_id=payload.omnidesk_staff_id,
             roles=payload.roles,
             is_active=payload.is_active,
+            telegram_chat_id=payload.telegram_chat_id,
+            bitrix24_user_id=payload.bitrix24_user_id,
+            notify_telegram=payload.notify_telegram,
+            notify_bitrix24=payload.notify_bitrix24,
             actor_user_id=actor.id,
             ip_address=_client_ip(request),
             user_agent=request.headers.get("user-agent"),
@@ -185,6 +254,13 @@ def update_user(
             phone=payload.phone,
             omnidesk_staff_id=payload.omnidesk_staff_id,
             is_active=payload.is_active,
+            **{
+                name: getattr(payload, name)
+                for name in ("telegram_chat_id", "bitrix24_user_id")
+                if name in payload.model_fields_set
+            },
+            notify_telegram=payload.notify_telegram,
+            notify_bitrix24=payload.notify_bitrix24,
             actor_user_id=actor.id,
             fields_set=payload.model_fields_set,
             ip_address=_client_ip(request),

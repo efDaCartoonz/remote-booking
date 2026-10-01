@@ -900,3 +900,20 @@ class AdministrativeRepository:
             },
         )
         return NotificationTemplateRecord(**updated)
+
+    def get_active_notification_template_body(self, code: str) -> str | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT body_template
+                FROM notification_templates
+                WHERE code = %s AND visible = true
+                """,
+                (code,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            if isinstance(row, dict):
+                return row.get("body_template")
+            return row[0]

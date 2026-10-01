@@ -41,6 +41,7 @@ import {
   deleteAbsence,
   getCalendarDays,
   getConnectionResults,
+  UserUpdatePayload,
 } from "./adminApi";
 import {
   formatDateInTz,
@@ -106,6 +107,10 @@ const newStaffId = ref("");
 const newRoles = ref<number[]>([1]); // default L1
 const newTimezone = ref(profileTz.value);
 const newIsActive = ref(true);
+const newTelegramChatId = ref("");
+const newBitrix24UserId = ref("");
+const newNotifyTelegram = ref(true);
+const newNotifyBitrix24 = ref(true);
 
 // Edit user state
 const editFullName = ref("");
@@ -115,6 +120,10 @@ const editStaffId = ref("");
 const editIsActive = ref(true);
 const editRoles = ref<number[]>([]);
 const editUserTz = ref("");
+const editTelegramChatId = ref("");
+const editBitrix24UserId = ref("");
+const editNotifyTelegram = ref(true);
+const editNotifyBitrix24 = ref(true);
 
 const filteredUsers = computed(() => {
   if (!usersSearch.value.trim()) return users.value;
@@ -150,6 +159,10 @@ function openCreateUser() {
   newRoles.value = [1];
   newTimezone.value = profileTz.value;
   newIsActive.value = true;
+  newTelegramChatId.value = "";
+  newBitrix24UserId.value = "";
+  newNotifyTelegram.value = true;
+  newNotifyBitrix24.value = true;
   showCreateUserModal.value = true;
 }
 
@@ -157,6 +170,10 @@ async function handleCreateUser() {
   clearAlerts();
   if (!newUsername.value.trim() || !newPassword.value || !newFullName.value.trim()) {
     actionError.value = "Укажите логин, пароль и ФИО пользователя.";
+    return;
+  }
+  if (newPassword.value.length < 8) {
+    actionError.value = "Пароль должен содержать не менее 8 символов.";
     return;
   }
   if (newRoles.value.length === 0) {
@@ -179,6 +196,10 @@ async function handleCreateUser() {
       omnidesk_staff_id: newStaffId.value.trim() || null,
       roles: newRoles.value,
       is_active: newIsActive.value,
+      telegram_chat_id: newTelegramChatId.value.trim() || null,
+      bitrix24_user_id: newBitrix24UserId.value.trim() || null,
+      notify_telegram: newNotifyTelegram.value,
+      notify_bitrix24: newNotifyBitrix24.value,
     });
 
     if (newTimezone.value && newTimezone.value !== "Asia/Yekaterinburg") {
@@ -209,6 +230,10 @@ function startEditUser(user: AdminUser) {
   editIsActive.value = user.is_active;
   editRoles.value = user.roles.map((r) => r.id);
   editUserTz.value = user.timezone || profileTz.value;
+  editTelegramChatId.value = user.telegram_chat_id ?? "";
+  editBitrix24UserId.value = user.bitrix24_user_id ?? "";
+  editNotifyTelegram.value = user.notify_telegram !== false;
+  editNotifyBitrix24.value = user.notify_bitrix24 !== false;
 }
 
 function cancelEditUser() {
@@ -231,18 +256,66 @@ async function handleSaveUser() {
     return;
   }
 
+  const payload: UserUpdatePayload = {};
+
+  const nextFullName = editFullName.value.trim() || null;
+  if (nextFullName !== (editingUser.value.full_name || null)) {
+    payload.full_name = nextFullName;
+  }
+
+  const nextEmail = editEmail.value.trim() || null;
+  if (nextEmail !== (editingUser.value.email || null)) {
+    payload.email = nextEmail;
+  }
+
+  const nextPhone = editPhone.value.trim() || null;
+  if (nextPhone !== (editingUser.value.phone || null)) {
+    payload.phone = nextPhone;
+  }
+
+  const nextStaffId = editStaffId.value.trim() || null;
+  if (nextStaffId !== (editingUser.value.omnidesk_staff_id ?? null)) {
+    payload.omnidesk_staff_id = nextStaffId;
+  }
+
+  if (editIsActive.value !== editingUser.value.is_active) {
+    payload.is_active = editIsActive.value;
+  }
+
+  const nextTg = editTelegramChatId.value.trim() || null;
+  if (nextTg !== (editingUser.value.telegram_chat_id ?? null)) {
+    payload.telegram_chat_id = nextTg;
+  }
+
+  const nextB24 = editBitrix24UserId.value.trim() || null;
+  if (nextB24 !== (editingUser.value.bitrix24_user_id ?? null)) {
+    payload.bitrix24_user_id = nextB24;
+  }
+
+  if (editNotifyTelegram.value !== (editingUser.value.notify_telegram !== false)) {
+    payload.notify_telegram = editNotifyTelegram.value;
+  }
+
+  if (editNotifyBitrix24.value !== (editingUser.value.notify_bitrix24 !== false)) {
+    payload.notify_bitrix24 = editNotifyBitrix24.value;
+  }
+
   busy.value = true;
   try {
     const userId = editingUser.value.id;
-    await updateUser(userId, {
-      full_name: editFullName.value.trim() || null,
-      email: editEmail.value.trim() || null,
-      phone: editPhone.value.trim() || null,
-      omnidesk_staff_id: editStaffId.value.trim() || null,
-      is_active: editIsActive.value,
-    });
+    if (Object.keys(payload).length > 0) {
+      await updateUser(userId, payload);
+    }
 
-    await updateUserRoles(userId, editRoles.value);
+    const currentRoleIds = editingUser.value.roles.map((r) => r.id).sort();
+    const nextRoleIds = [...editRoles.value].sort();
+    const rolesChanged =
+      currentRoleIds.length !== nextRoleIds.length ||
+      currentRoleIds.some((id, idx) => id !== nextRoleIds[idx]);
+
+    if (rolesChanged) {
+      await updateUserRoles(userId, editRoles.value);
+    }
 
     if (editUserTz.value && editUserTz.value !== editingUser.value.timezone) {
       await updateUserTimezone(userId, editUserTz.value);
@@ -871,6 +944,8 @@ function getUserDisplayName(userId: number): string {
                 v-model="newPassword"
                 type="password"
                 required
+                minlength="8"
+                maxlength="128"
                 autocomplete="new-password"
                 data-test="input-new-password"
               />
@@ -978,6 +1053,51 @@ function getUserDisplayName(userId: number): string {
 
           <div class="grid">
             <label>
+              <span>Telegram chat ID</span>
+              <input
+                v-model.trim="editTelegramChatId"
+                type="text"
+                placeholder="ID чата (цифры, опц. минус в начале)"
+                data-test="input-edit-telegram-chat-id"
+              />
+            </label>
+            <label>
+              <span>Bitrix24 user ID</span>
+              <input
+                v-model.trim="editBitrix24UserId"
+                type="text"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                placeholder="ID пользователя (цифры)"
+                data-test="input-edit-bitrix24-user-id"
+              />
+            </label>
+          </div>
+
+          <fieldset>
+            <legend>Каналы уведомлений</legend>
+            <div class="action-row">
+              <label class="choice">
+                <input
+                  v-model="editNotifyTelegram"
+                  type="checkbox"
+                  data-test="checkbox-edit-notify-telegram"
+                />
+                <span>Уведомлять в Telegram</span>
+              </label>
+              <label class="choice">
+                <input
+                  v-model="editNotifyBitrix24"
+                  type="checkbox"
+                  data-test="checkbox-edit-notify-bitrix24"
+                />
+                <span>Уведомлять в Битрикс24</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <div class="grid">
+            <label>
               <span>Часовой пояс</span>
               <select v-model="editUserTz" data-test="select-edit-timezone">
                 <option v-for="tz in STANDARD_TIMEZONES" :key="tz" :value="tz">{{ tz }}</option>
@@ -1032,6 +1152,7 @@ function getUserDisplayName(userId: number): string {
               <th>ФИО</th>
               <th>Email / Телефон</th>
               <th>Omnidesk ID</th>
+              <th>Каналы уведомлений</th>
               <th>Роли</th>
               <th>Часовой пояс</th>
               <th>Статус</th>
@@ -1048,6 +1169,10 @@ function getUserDisplayName(userId: number): string {
                 <small class="muted">{{ u.phone || '' }}</small>
               </td>
               <td>{{ u.omnidesk_staff_id ?? '—' }}</td>
+              <td>
+                <div>Telegram: {{ u.telegram_chat_id ? 'настроен' : 'нет' }}</div>
+                <div>Битрикс24: {{ u.bitrix24_user_id ? 'настроен' : 'нет' }}</div>
+              </td>
               <td>
                 <span
                   v-for="r in u.roles"
@@ -1077,7 +1202,7 @@ function getUserDisplayName(userId: number): string {
               </td>
             </tr>
             <tr v-if="filteredUsers.length === 0">
-              <td colspan="9" class="muted" style="text-align: center; padding: 20px;">
+              <td colspan="10" class="muted" style="text-align: center; padding: 20px;">
                 Пользователи не найдены
               </td>
             </tr>

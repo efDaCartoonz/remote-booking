@@ -33,24 +33,12 @@ class InvalidTemplatePlaceholderError(CatalogError):
 ALLOWED_NOTIFICATION_PLACEHOLDERS: frozenset[str] = frozenset(
     {
         "card_number",
-        "number",
-        "card_public_id",
-        "public_id",
-        "url",
-        "omnidesk_ticket_number",
         "ticket",
-        "ticket_number",
-        "client_display_name",
-        "client",
-        "client_name",
-        "planned_start_at",
         "timestamp",
-        "planned_duration_minutes",
         "duration",
-        "duration_minutes",
-        "card_status_code",
+        "client_suffix",
+        "url",
         "status",
-        "source_event_comment",
         "reason",
         "action",
     }
@@ -66,8 +54,7 @@ def extract_template_placeholders(template_str: str | None) -> set[str]:
     try:
         for _, field_name, _, _ in formatter.parse(template_str):
             if field_name is not None and field_name != "":
-                var_name = field_name.split(".")[0].split("[")[0]
-                placeholders.add(var_name)
+                placeholders.add(field_name)
     except Exception as exc:
         raise InvalidTemplatePlaceholderError(
             f"invalid_template_syntax: {exc}"

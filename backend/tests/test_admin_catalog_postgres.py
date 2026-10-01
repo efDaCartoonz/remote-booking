@@ -218,7 +218,7 @@ def test_notification_templates_crud_validation_and_audit_postgres(
             "/api/v1/admin/notification-templates/test_l1_followup",
             json={
                 "subject_template": "Заявка {card_number}",
-                "body_template": "Карточка {card_number} для клиента {client_display_name}; начало {timestamp}; длительность {duration} мин. Ссылка: {url}",
+                "body_template": "Карточка {card_number}{client_suffix}; начало {timestamp}; длительность {duration} мин. Ссылка: {url}",
                 "visible": False,
             },
         )

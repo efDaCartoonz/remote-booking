@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import string
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -10,6 +11,10 @@ import httpx
 import psycopg
 from psycopg.types.json import Jsonb
 
+from app.admin.catalog import (
+    ALLOWED_NOTIFICATION_PLACEHOLDERS,
+    extract_template_placeholders,
+)
 from app.core.config import settings
 from app.cards.constants import CARD_STATUS_LABELS, CardStatus
 
@@ -31,10 +36,49 @@ NOTIFICATION_EVENT_CODES = {
     "card_cancelled": 9,
 }
 NOTIFICATION_CHANNEL_CODES = {"telegram": 0, "bitrix24": 1}
+NOTIFICATION_EVENT_NAMES = {v: k for k, v in NOTIFICATION_EVENT_CODES.items()}
+NOTIFICATION_CHANNEL_NAMES = {v: k for k, v in NOTIFICATION_CHANNEL_CODES.items()}
 SAFE_NOTIFICATION_PAYLOAD_KEYS = frozenset({"card_id", "assignment"})
 RETRYABLE_BITRIX24_ERRORS = frozenset(
     {"QUERY_LIMIT_EXCEEDED", "RATE_LIMIT_EXCEEDED", "SERVICE_UNAVAILABLE"}
 )
+
+DEFAULT_NOTIFICATION_TEMPLATES: dict[str, str] = {
+    "omnidesk_staff_mapping_missing": (
+        "Не настроена связь исполнителя RDM с сотрудником Omnidesk. "
+        "Проверьте назначение в карточке {card_number}{client_suffix}; тикет {ticket}; "
+        "{timestamp}; {duration} мин. {url}"
+    ),
+    "card_cancelled": (
+        "Карточка {card_number} отменена{client_suffix}; тикет {ticket}; "
+        "{timestamp}; {duration} мин. {url}"
+    ),
+    "manager_escalation": (
+        "Карточка {card_number}{client_suffix}; тикет {ticket}; {timestamp}; "
+        "{duration} мин; причина: {reason}; "
+        "текущий статус: {status}; действие: {action}. {url}"
+    ),
+    "l1_followup": (
+        "Карточка {card_number}{client_suffix}; тикет {ticket}; {timestamp}; "
+        "{duration} мин. {url}"
+    ),
+    "l2_reminder": (
+        "Карточка {card_number}{client_suffix}; тикет {ticket}; {timestamp}; "
+        "{duration} мин. {url}"
+    ),
+    "l1_reminder": (
+        "Карточка {card_number}{client_suffix}; тикет {ticket}; {timestamp}; "
+        "{duration} мин. {url}"
+    ),
+    "urgent_collision": (
+        "Карточка {card_number}{client_suffix}; тикет {ticket}; {timestamp}; "
+        "{duration} мин. {url}"
+    ),
+    "card_ended_automatically": (
+        "Карточка {card_number}{client_suffix}; тикет {ticket}; {timestamp}; "
+        "{duration} мин. {url}"
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -332,12 +376,37 @@ class NotificationRuntimeRepository(Protocol):
 
     def mark_failed(self, intent: NotificationIntent, *, reason: str) -> None: ...
 
+    def get_notification_template(self, code: str) -> str | None: ...
+
 
 class PostgresNotificationRuntimeRepository:
     """Owns short PostgreSQL transactions; adapters run after each commit."""
 
     def __init__(self, connection: psycopg.Connection) -> None:
         self.connection = connection
+
+    def get_notification_template(self, code: str) -> str | None:
+        try:
+            # A savepoint keeps a failed read from aborting the delivery
+            # transaction that records the attempt result.
+            with self.connection.transaction(), self.connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    SELECT body_template
+                    FROM notification_templates
+                    WHERE code = %s AND visible = true
+                    """,
+                    (code,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                if isinstance(row, dict):
+                    return row.get("body_template")
+                return row[0]
+        except Exception as exc:
+            logger.warning("failed to fetch notification template %s: %s", code, exc)
+            return None
 
     def recover_stale_locks(self, *, now: datetime, max_attempts: int) -> int:
         stale_before = now - timedelta(seconds=settings.notification_lock_seconds)
@@ -568,7 +637,21 @@ def deliver_pending_notifications(
             adapter = adapters.get(intent.channel_code)
             if adapter is None:
                 raise PermanentDeliveryError("unsupported_notification_channel")
-            text = _render_message(intent)
+            event_name = NOTIFICATION_EVENT_NAMES.get(intent.event_type_code, "unknown")
+            channel_name = NOTIFICATION_CHANNEL_NAMES.get(
+                intent.channel_code, "unknown"
+            )
+            template_code = f"{event_name}.{channel_name}"
+            custom_template = None
+            if hasattr(repository, "get_notification_template"):
+                try:
+                    custom_template = repository.get_notification_template(
+                        template_code
+                    )
+                except Exception as exc:
+                    logger.warning("failed to get template %s: %s", template_code, exc)
+                    custom_template = None
+            text = _render_message(intent, custom_template=custom_template)
             if not intent.recipient:
                 raise PermanentDeliveryError("notification_recipient_not_configured")
             adapter.send(
@@ -592,7 +675,40 @@ def deliver_pending_notifications(
     return delivered
 
 
-def _render_message(intent: NotificationIntent) -> str:
+class SafeNotificationFormatter(string.Formatter):
+    """Restricts formatting to simple keyword lookups without attribute/item traversal."""
+
+    def get_field(
+        self, field_name: str, args: tuple, kwargs: dict
+    ) -> tuple[object, str]:
+        if field_name not in kwargs:
+            raise KeyError(field_name)
+        return kwargs[field_name], field_name
+
+
+_SAFE_FORMATTER = SafeNotificationFormatter()
+
+
+def _render_template_string(template_str: str, context: dict[str, str]) -> str:
+    if (
+        not template_str
+        or not isinstance(template_str, str)
+        or not template_str.strip()
+    ):
+        raise ValueError("empty_template")
+    placeholders = extract_template_placeholders(template_str)
+    if not placeholders.issubset(ALLOWED_NOTIFICATION_PLACEHOLDERS):
+        raise ValueError(
+            f"unknown_placeholders: {placeholders - ALLOWED_NOTIFICATION_PLACEHOLDERS}"
+        )
+    return _SAFE_FORMATTER.vformat(template_str, (), context)
+
+
+def _render_message(
+    intent: NotificationIntent,
+    templates: dict[str, str] | None = None,
+    custom_template: str | None = None,
+) -> str:
     if not settings.notification_card_base_url or not intent.card_public_id:
         raise PermanentDeliveryError("notification_card_url_not_configured")
     timestamp = "не указано"
@@ -608,38 +724,55 @@ def _render_message(intent: NotificationIntent) -> str:
     ticket = intent.omnidesk_ticket_number or "не указан"
     card_number = intent.card_number or f"RDM-{intent.id}"
     url = f"{settings.notification_card_base_url.rstrip('/')}/cards/{intent.card_public_id}"
-    client = (
+    client_suffix = (
         f"; клиент {intent.client_display_name}" if intent.client_display_name else ""
     )
-    if (
-        intent.event_type_code
-        == NOTIFICATION_EVENT_CODES["omnidesk_staff_mapping_missing"]
-    ):
-        return (
-            f"Не настроена связь исполнителя RDM с сотрудником Omnidesk. "
-            f"Проверьте назначение в карточке {card_number}{client}; тикет {ticket}; "
-            f"{timestamp}; {duration} мин. {url}"
-        )
-    if intent.event_type_code == NOTIFICATION_EVENT_CODES["card_cancelled"]:
-        return (
-            f"Карточка {card_number} отменена{client}; тикет {ticket}; "
-            f"{timestamp}; {duration} мин. {url}"
-        )
+    event_name = NOTIFICATION_EVENT_NAMES.get(intent.event_type_code, "unknown")
+    channel_name = NOTIFICATION_CHANNEL_NAMES.get(intent.channel_code, "unknown")
+    template_code = f"{event_name}.{channel_name}"
+
+    reason = ""
+    action = ""
+    status = ""
     if intent.event_type_code == NOTIFICATION_EVENT_CODES["manager_escalation"]:
         reason, action = _manager_escalation_context(intent.source_event_comment)
         try:
             status = CARD_STATUS_LABELS[CardStatus(intent.card_status_code)]
         except (ValueError, KeyError, TypeError):
             status = "неизвестен"
-        return (
-            f"Карточка {card_number}{client}; тикет {ticket}; {timestamp}; "
-            f"{duration} мин; причина: {reason}; "
-            f"текущий статус: {status}; действие: {action}. {url}"
-        )
-    return (
-        f"Карточка {card_number}{client}; тикет {ticket}; {timestamp}; "
-        f"{duration} мин. {url}"
+
+    context = {
+        "card_number": card_number,
+        "ticket": ticket,
+        "timestamp": timestamp,
+        "duration": str(duration),
+        "client_suffix": client_suffix,
+        "url": url,
+        "status": status,
+        "reason": reason,
+        "action": action,
+    }
+
+    candidate: str | None = None
+    if custom_template is not None:
+        candidate = custom_template
+    elif templates is not None:
+        candidate = templates.get(template_code) or templates.get(event_name)
+
+    if candidate is not None:
+        try:
+            return _render_template_string(candidate, context)
+        except Exception as exc:
+            logger.warning(
+                "failed to render custom template for %s, falling back to default: %s",
+                template_code,
+                exc,
+            )
+
+    default_template = DEFAULT_NOTIFICATION_TEMPLATES.get(
+        event_name, DEFAULT_NOTIFICATION_TEMPLATES["l1_followup"]
     )
+    return _render_template_string(default_template, context)
 
 
 def _manager_escalation_context(comment: str | None) -> tuple[str, str]:

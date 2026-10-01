@@ -205,11 +205,9 @@ def app(fake_connection: FakeConnection) -> FastAPI:
 
 
 def test_template_placeholders_extraction_and_validation() -> None:
-    valid_template = (
-        "Карточка {card_number}; тикет {ticket}; клиент {client_display_name}; {url}"
-    )
+    valid_template = "Карточка {card_number}; тикет {ticket}{client_suffix}; {url}"
     placeholders = extract_template_placeholders(valid_template)
-    assert placeholders == {"card_number", "ticket", "client_display_name", "url"}
+    assert placeholders == {"card_number", "ticket", "client_suffix", "url"}
     validate_template_placeholders(valid_template)
 
     # Empty template
@@ -511,7 +509,7 @@ def test_notification_templates_crud_and_placeholders(
         "/api/v1/admin/notification-templates/card_created",
         json={
             "subject_template": "Обновлено: {card_number}",
-            "body_template": "Новое тело {card_number}; клиент {client_display_name}; {url}",
+            "body_template": "Новое тело {card_number}{client_suffix}; {url}",
             "visible": False,
         },
     )

@@ -52,6 +52,10 @@ class FakeAdminUserRepository:
         omnidesk_staff_id: str | None,
         roles: list[int],
         is_active: bool,
+        telegram_chat_id: str | None = None,
+        bitrix24_user_id: str | None = None,
+        notify_telegram: bool = True,
+        notify_bitrix24: bool = True,
         actor_user_id: int,
         ip_address: str | None = None,
         user_agent: str | None = None,
@@ -90,8 +94,10 @@ class FakeAdminUserRepository:
                 AdminRoleRecord(id=r, name=role_names[r]) for r in sorted(role_set)
             ),
             timezone="Asia/Yekaterinburg",
-            telegram_chat_id=None,
-            bitrix24_user_id=None,
+            telegram_chat_id=telegram_chat_id,
+            bitrix24_user_id=bitrix24_user_id,
+            notify_telegram=notify_telegram,
+            notify_bitrix24=notify_bitrix24,
         )
         self.users[user_id] = record
         self.audit_log.append(
@@ -125,6 +131,10 @@ class FakeAdminUserRepository:
         phone: str | None = None,
         omnidesk_staff_id: str | None = None,
         is_active: bool | None = None,
+        telegram_chat_id: str | None = None,
+        bitrix24_user_id: str | None = None,
+        notify_telegram: bool | None = None,
+        notify_bitrix24: bool | None = None,
         actor_user_id: int,
         fields_set: set[str] | None = None,
         ip_address: str | None = None,
@@ -146,6 +156,14 @@ class FakeAdminUserRepository:
                 fields_set.add("omnidesk_staff_id")
             if is_active is not None:
                 fields_set.add("is_active")
+            if telegram_chat_id is not None:
+                fields_set.add("telegram_chat_id")
+            if bitrix24_user_id is not None:
+                fields_set.add("bitrix24_user_id")
+            if notify_telegram is not None:
+                fields_set.add("notify_telegram")
+            if notify_bitrix24 is not None:
+                fields_set.add("notify_bitrix24")
 
         if "is_active" in fields_set and is_active is False and old_user.is_active:
             if actor_user_id == user_id:
@@ -176,6 +194,26 @@ class FakeAdminUserRepository:
             else old_user.omnidesk_staff_id
         )
         new_active = is_active if "is_active" in fields_set else old_user.is_active
+        new_tg = (
+            telegram_chat_id
+            if "telegram_chat_id" in fields_set
+            else old_user.telegram_chat_id
+        )
+        new_b24 = (
+            bitrix24_user_id
+            if "bitrix24_user_id" in fields_set
+            else old_user.bitrix24_user_id
+        )
+        new_notify_tg = (
+            notify_telegram
+            if "notify_telegram" in fields_set
+            else old_user.notify_telegram
+        )
+        new_notify_b24 = (
+            notify_bitrix24
+            if "notify_bitrix24" in fields_set
+            else old_user.notify_bitrix24
+        )
 
         updated = AdminUserRecord(
             id=old_user.id,
@@ -189,32 +227,59 @@ class FakeAdminUserRepository:
             is_active=new_active if new_active is not None else old_user.is_active,
             roles=old_user.roles,
             timezone=old_user.timezone,
-            telegram_chat_id=old_user.telegram_chat_id,
-            bitrix24_user_id=old_user.bitrix24_user_id,
+            telegram_chat_id=new_tg,
+            bitrix24_user_id=new_b24,
+            notify_telegram=new_notify_tg,
+            notify_bitrix24=new_notify_b24,
         )
         self.users[user_id] = updated
 
         if "is_active" in fields_set and is_active is False and old_user.is_active:
             self.revoked_sessions_for_user.append(user_id)
 
-        self.audit_log.append(
-            {
-                "actor_user_id": actor_user_id,
-                "action": 1,
-                "entity_type": "user",
-                "entity_id": user_id,
-                "old_values": {
-                    "full_name": old_user.full_name,
-                    "is_active": old_user.is_active,
-                },
-                "new_values": {
-                    "full_name": updated.full_name,
-                    "is_active": updated.is_active,
-                },
-                "ip_address": ip_address,
-                "user_agent": user_agent,
-            }
-        )
+        old_values: dict[str, Any] = {}
+        new_values: dict[str, Any] = {}
+        if "full_name" in fields_set:
+            old_values["full_name"] = old_user.full_name
+            new_values["full_name"] = updated.full_name
+        if "email" in fields_set:
+            old_values["email"] = old_user.email
+            new_values["email"] = updated.email
+        if "phone" in fields_set:
+            old_values["phone"] = old_user.phone
+            new_values["phone"] = updated.phone
+        if "omnidesk_staff_id" in fields_set:
+            old_values["omnidesk_staff_id"] = old_user.omnidesk_staff_id
+            new_values["omnidesk_staff_id"] = updated.omnidesk_staff_id
+        if "is_active" in fields_set:
+            old_values["is_active"] = old_user.is_active
+            new_values["is_active"] = updated.is_active
+        if "telegram_chat_id" in fields_set:
+            old_values["telegram_chat_id"] = old_user.telegram_chat_id
+            new_values["telegram_chat_id"] = updated.telegram_chat_id
+        if "bitrix24_user_id" in fields_set:
+            old_values["bitrix24_user_id"] = old_user.bitrix24_user_id
+            new_values["bitrix24_user_id"] = updated.bitrix24_user_id
+        if "notify_telegram" in fields_set:
+            old_values["notify_telegram"] = old_user.notify_telegram
+            new_values["notify_telegram"] = updated.notify_telegram
+        if "notify_bitrix24" in fields_set:
+            old_values["notify_bitrix24"] = old_user.notify_bitrix24
+            new_values["notify_bitrix24"] = updated.notify_bitrix24
+
+        if old_values or new_values:
+            self.audit_log.append(
+                {
+                    "actor_user_id": actor_user_id,
+                    "action": 1,
+                    "entity_type": "user",
+                    "entity_id": user_id,
+                    "old_values": old_values,
+                    "new_values": new_values,
+                    "ip_address": ip_address,
+                    "user_agent": user_agent,
+                }
+            )
         return updated
 
     def update_user_roles(
@@ -434,7 +499,7 @@ def test_create_user_duplicate_username_conflict_409() -> None:
         "/api/v1/admin/users",
         json={
             "username": "existing_user",
-            "password": "any",
+            "password": "password-123",
             "full_name": "Another Name",
             "roles": [1],
         },
@@ -466,7 +531,7 @@ def test_create_user_duplicate_omnidesk_staff_id_conflict_409() -> None:
         "/api/v1/admin/users",
         json={
             "username": "user2",
-            "password": "any",
+            "password": "password-123",
             "full_name": "User 2",
             "omnidesk_staff_id": "999",
             "roles": [1],
@@ -486,7 +551,7 @@ def test_create_user_invalid_role_422() -> None:
         "/api/v1/admin/users",
         json={
             "username": "user_invalid_role",
-            "password": "any",
+            "password": "password-123",
             "full_name": "Test User",
             "roles": [99],
         },
@@ -687,3 +752,201 @@ def test_unauthenticated_401() -> None:
     response = client.get("/api/v1/admin/users")
     assert response.status_code == 401
     assert response.json()["detail"] == "not_authenticated"
+
+
+def test_patch_user_notification_settings_and_audit() -> None:
+    admin = make_admin_user(1)
+    u = AdminUserRecord(
+        id=2,
+        username="specialist",
+        full_name="Specialist",
+        email="spec@test.local",
+        phone=None,
+        omnidesk_staff_id=None,
+        is_active=True,
+        roles=(AdminRoleRecord(1, "Специалист Л1"),),
+        timezone="Asia/Yekaterinburg",
+        telegram_chat_id="12345",
+        bitrix24_user_id="6789",
+        notify_telegram=True,
+        notify_bitrix24=True,
+    )
+    repo = FakeAdminUserRepository([u])
+    app = create_test_app(repo, admin)
+    client = TestClient(app)
+
+    response = client.patch(
+        "/api/v1/admin/users/2",
+        json={
+            "telegram_chat_id": "-100987654321",
+            "bitrix24_user_id": "9999",
+            "notify_telegram": False,
+            "notify_bitrix24": False,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["telegram_chat_id"] == "-100987654321"
+    assert data["bitrix24_user_id"] == "9999"
+    assert data["notify_telegram"] is False
+    assert data["notify_bitrix24"] is False
+
+    assert len(repo.audit_log) == 1
+    audit = repo.audit_log[0]
+    assert audit["entity_type"] == "user"
+    assert audit["entity_id"] == 2
+    assert audit["old_values"] == {
+        "telegram_chat_id": "12345",
+        "bitrix24_user_id": "6789",
+        "notify_telegram": True,
+        "notify_bitrix24": True,
+    }
+    assert audit["new_values"] == {
+        "telegram_chat_id": "-100987654321",
+        "bitrix24_user_id": "9999",
+        "notify_telegram": False,
+        "notify_bitrix24": False,
+    }
+
+
+def test_patch_user_clear_telegram_and_bitrix_to_null() -> None:
+    admin = make_admin_user(1)
+    u = AdminUserRecord(
+        id=2,
+        username="specialist",
+        full_name="Specialist",
+        email="spec@test.local",
+        phone=None,
+        omnidesk_staff_id=None,
+        is_active=True,
+        roles=(AdminRoleRecord(1, "Специалист Л1"),),
+        timezone="Asia/Yekaterinburg",
+        telegram_chat_id="12345",
+        bitrix24_user_id="6789",
+        notify_telegram=True,
+        notify_bitrix24=True,
+    )
+    repo = FakeAdminUserRepository([u])
+    app = create_test_app(repo, admin)
+    client = TestClient(app)
+
+    response = client.patch(
+        "/api/v1/admin/users/2",
+        json={
+            "telegram_chat_id": None,
+            "bitrix24_user_id": None,
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["telegram_chat_id"] is None
+    assert data["bitrix24_user_id"] is None
+
+
+def test_patch_user_strip_and_empty_string_to_null() -> None:
+    admin = make_admin_user(1)
+    u = AdminUserRecord(
+        id=2,
+        username="specialist",
+        full_name="Specialist",
+        email="spec@test.local",
+        phone=None,
+        omnidesk_staff_id=None,
+        is_active=True,
+        roles=(AdminRoleRecord(1, "Специалист Л1"),),
+        timezone="Asia/Yekaterinburg",
+        telegram_chat_id="12345",
+        bitrix24_user_id="6789",
+    )
+    repo = FakeAdminUserRepository([u])
+    app = create_test_app(repo, admin)
+    client = TestClient(app)
+
+    response = client.patch(
+        "/api/v1/admin/users/2",
+        json={
+            "telegram_chat_id": "   ",
+            "bitrix24_user_id": "   ",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["telegram_chat_id"] is None
+    assert data["bitrix24_user_id"] is None
+
+
+def test_patch_user_invalid_telegram_chat_id_422() -> None:
+    admin = make_admin_user(1)
+    repo = FakeAdminUserRepository([])
+    app = create_test_app(repo, admin)
+    client = TestClient(app)
+
+    # Letters not allowed
+    resp1 = client.patch(
+        "/api/v1/admin/users/2", json={"telegram_chat_id": "tg_invalid"}
+    )
+    assert resp1.status_code == 422
+
+    # Plus sign or invalid minus placement
+    resp2 = client.patch("/api/v1/admin/users/2", json={"telegram_chat_id": "123-456"})
+    assert resp2.status_code == 422
+
+
+def test_patch_user_invalid_bitrix24_user_id_422() -> None:
+    admin = make_admin_user(1)
+    repo = FakeAdminUserRepository([])
+    app = create_test_app(repo, admin)
+    client = TestClient(app)
+
+    # Minus not allowed for Bitrix24 user id (digits only)
+    resp1 = client.patch("/api/v1/admin/users/2", json={"bitrix24_user_id": "-123"})
+    assert resp1.status_code == 422
+
+    # Letters not allowed
+    resp2 = client.patch("/api/v1/admin/users/2", json={"bitrix24_user_id": "b24_user"})
+    assert resp2.status_code == 422
+
+
+def test_create_user_with_notification_fields() -> None:
+    admin = make_admin_user(1)
+    repo = FakeAdminUserRepository([])
+    app = create_test_app(repo, admin)
+    client = TestClient(app)
+
+    payload = {
+        "username": "user_with_channels",
+        "password": "password-123",
+        "full_name": "Full Name",
+        "roles": [1],
+        "telegram_chat_id": "  987654  ",
+        "bitrix24_user_id": "  42  ",
+        "notify_telegram": False,
+        "notify_bitrix24": True,
+    }
+    response = client.post("/api/v1/admin/users", json=payload)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["telegram_chat_id"] == "987654"
+    assert data["bitrix24_user_id"] == "42"
+    assert data["notify_telegram"] is False
+    assert data["notify_bitrix24"] is True
+
+
+def test_create_user_rejects_password_shorter_than_8_characters() -> None:
+    admin = make_admin_user(1)
+    repo = FakeAdminUserRepository([])
+    client = TestClient(create_test_app(repo, admin))
+
+    response = client.post(
+        "/api/v1/admin/users",
+        json={
+            "username": "short_pass",
+            "password": "1234567",
+            "full_name": "Short Pass",
+            "roles": [1],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"][-1] == "password"
+    assert repo.audit_log == []

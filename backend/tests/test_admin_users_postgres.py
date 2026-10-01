@@ -316,7 +316,7 @@ def test_non_admin_forbidden_403(database_url: str) -> None:
         assert (
             client.post(
                 "/api/v1/admin/users",
-                json={"username": "u", "password": "p", "full_name": "f"},
+                json={"username": "u", "password": "password-123", "full_name": "f"},
             ).status_code
             == 403
         )
@@ -332,3 +332,225 @@ def test_non_admin_forbidden_403(database_url: str) -> None:
             ).status_code
             == 403
         )
+
+
+def test_patch_user_settings_upsert_on_first_patch(database_url: str) -> None:
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        seed_admin_user(connection, 93001, "adm-93001")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO users (id, username, password_hash, full_name, is_active)
+                VALUES (93100, 'user-93100', 'hash', 'User 93100', true)
+                """
+            )
+            cursor.execute(
+                "INSERT INTO user_roles (user_id, role_id) VALUES (93100, 1)"
+            )
+
+        admin_auth = UserAuthRecord(
+            id=93001,
+            username="adm-93001",
+            password_hash="hash",
+            full_name="Test Admin",
+            email=None,
+            roles=(RoleRecord(id=int(RoleId.ADMIN), name="Администратор"),),
+        )
+        client = make_client(connection, admin_auth)
+
+        response = client.patch(
+            "/api/v1/admin/users/93100",
+            json={
+                "telegram_chat_id": "-100123456",
+                "bitrix24_user_id": "501",
+                "notify_telegram": False,
+                "notify_bitrix24": True,
+            },
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["telegram_chat_id"] == "-100123456"
+        assert data["bitrix24_user_id"] == "501"
+        assert data["notify_telegram"] is False
+        assert data["notify_bitrix24"] is True
+        assert data["timezone"] == "Asia/Yekaterinburg"
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT timezone, telegram_chat_id, bitrix24_user_id, notify_telegram, notify_bitrix24
+                FROM user_settings
+                WHERE user_id = 93100
+                """
+            )
+            settings_row = cursor.fetchone()
+            assert settings_row is not None
+            assert settings_row["timezone"] == "Asia/Yekaterinburg"
+            assert settings_row["telegram_chat_id"] == "-100123456"
+            assert settings_row["bitrix24_user_id"] == "501"
+            assert settings_row["notify_telegram"] is False
+            assert settings_row["notify_bitrix24"] is True
+
+            cursor.execute(
+                """
+                SELECT action_code, entity_type, entity_id, old_values, new_values
+                FROM audit_log
+                WHERE entity_type = 'user' AND entity_id = 93100
+                """
+            )
+            audit = cursor.fetchone()
+            assert audit is not None
+            assert audit["old_values"]["telegram_chat_id"] is None
+            assert audit["old_values"]["bitrix24_user_id"] is None
+            assert audit["old_values"]["notify_telegram"] is True
+            assert audit["old_values"]["notify_bitrix24"] is True
+            assert audit["new_values"]["telegram_chat_id"] == "-100123456"
+            assert audit["new_values"]["bitrix24_user_id"] == "501"
+            assert audit["new_values"]["notify_telegram"] is False
+            assert audit["new_values"]["notify_bitrix24"] is True
+
+
+def test_patch_user_settings_updates_and_preserves_other_fields(
+    database_url: str,
+) -> None:
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        seed_admin_user(connection, 93001, "adm-93001")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO users (id, username, password_hash, full_name, is_active)
+                VALUES (93101, 'user-93101', 'hash', 'Original Full Name', true)
+                """
+            )
+            cursor.execute(
+                "INSERT INTO user_roles (user_id, role_id) VALUES (93101, 1)"
+            )
+            cursor.execute(
+                """
+                INSERT INTO user_settings (user_id, timezone, telegram_chat_id, bitrix24_user_id, notify_telegram, notify_bitrix24)
+                VALUES (93101, 'Europe/Moscow', '111', '222', true, true)
+                """
+            )
+
+        admin_auth = UserAuthRecord(
+            id=93001,
+            username="adm-93001",
+            password_hash="hash",
+            full_name="Test Admin",
+            email=None,
+            roles=(RoleRecord(id=int(RoleId.ADMIN), name="Администратор"),),
+        )
+        client = make_client(connection, admin_auth)
+
+        response = client.patch(
+            "/api/v1/admin/users/93101",
+            json={"telegram_chat_id": "999"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["telegram_chat_id"] == "999"
+        assert data["bitrix24_user_id"] == "222"
+        assert data["timezone"] == "Europe/Moscow"
+        assert data["full_name"] == "Original Full Name"
+
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT full_name FROM users WHERE id = 93101")
+            assert cursor.fetchone()["full_name"] == "Original Full Name"
+
+            cursor.execute(
+                """
+                SELECT timezone, telegram_chat_id, bitrix24_user_id, notify_telegram, notify_bitrix24
+                FROM user_settings
+                WHERE user_id = 93101
+                """
+            )
+            settings_row = cursor.fetchone()
+            assert settings_row["timezone"] == "Europe/Moscow"
+            assert settings_row["telegram_chat_id"] == "999"
+            assert settings_row["bitrix24_user_id"] == "222"
+            assert settings_row["notify_telegram"] is True
+            assert settings_row["notify_bitrix24"] is True
+
+            cursor.execute(
+                """
+                SELECT action_code, entity_type, entity_id, old_values, new_values
+                FROM audit_log
+                WHERE entity_type = 'user' AND entity_id = 93101
+                """
+            )
+            audit = cursor.fetchone()
+            assert audit is not None
+            assert audit["old_values"] == {"telegram_chat_id": "111"}
+            assert audit["new_values"] == {"telegram_chat_id": "999"}
+
+
+def test_patch_user_settings_clear_to_null(database_url: str) -> None:
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        seed_admin_user(connection, 93001, "adm-93001")
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                INSERT INTO users (id, username, password_hash, full_name, is_active)
+                VALUES (93102, 'user-93102', 'hash', 'User 93102', true)
+                """
+            )
+            cursor.execute(
+                "INSERT INTO user_roles (user_id, role_id) VALUES (93102, 1)"
+            )
+            cursor.execute(
+                """
+                INSERT INTO user_settings (user_id, timezone, telegram_chat_id, bitrix24_user_id, notify_telegram, notify_bitrix24)
+                VALUES (93102, 'Asia/Yekaterinburg', '111', '222', true, true)
+                """
+            )
+
+        admin_auth = UserAuthRecord(
+            id=93001,
+            username="adm-93001",
+            password_hash="hash",
+            full_name="Test Admin",
+            email=None,
+            roles=(RoleRecord(id=int(RoleId.ADMIN), name="Администратор"),),
+        )
+        client = make_client(connection, admin_auth)
+
+        response = client.patch(
+            "/api/v1/admin/users/93102",
+            json={"telegram_chat_id": None, "bitrix24_user_id": None},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["telegram_chat_id"] is None
+        assert data["bitrix24_user_id"] is None
+
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT telegram_chat_id, bitrix24_user_id
+                FROM user_settings
+                WHERE user_id = 93102
+                """
+            )
+            settings_row = cursor.fetchone()
+            assert settings_row["telegram_chat_id"] is None
+            assert settings_row["bitrix24_user_id"] is None
+
+
+def test_patch_user_settings_non_admin_forbidden_403(database_url: str) -> None:
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        manager_auth = UserAuthRecord(
+            id=93050,
+            username="manager-93050",
+            password_hash="hash",
+            full_name="Manager",
+            email=None,
+            roles=(RoleRecord(id=int(RoleId.MANAGER), name="Руководитель"),),
+        )
+        client = make_client(connection, manager_auth)
+
+        response = client.patch(
+            "/api/v1/admin/users/93001",
+            json={"telegram_chat_id": "12345"},
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "insufficient_role"

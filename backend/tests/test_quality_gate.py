@@ -34,7 +34,7 @@ def test_quality_gate_uses_template_env_and_isolated_docker_project() -> None:
         script.count("PYTHONPATH=/app python scripts/migration_contract_check.py") == 5
     )
     assert "rdm-quality-gate-$$-$RANDOM" in script
-    assert script.count('grep -qx "20260930_0016 (head)"') == 2
+    assert script.count('grep -qx "20261001_0017 (head)"') == 2
     assert "tests/test_cancellation_internal_notification_postgres.py" in script
     assert "tests/test_ie02_beat_worker_postgres.py" in script
     assert "docker-compose.ie02-gate.yml" in script
@@ -48,6 +48,7 @@ def test_quality_gate_uses_template_env_and_isolated_docker_project() -> None:
     assert "tests/test_admin_planning_postgres.py" in script
     assert "tests/test_admin_catalog_postgres.py" in script
     assert "tests/test_reports_postgres.py" in script
+    assert "tests/test_notification_templates_postgres.py" in script
 
 
 def test_docker_quality_path_does_not_require_host_python_or_npm() -> None:

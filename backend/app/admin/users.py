@@ -16,6 +16,9 @@ class AdminRoleRecord:
     name: str
 
 
+UNSET: Any = object()  # distinguishes "not provided" from an explicit null
+
+
 @dataclass(frozen=True)
 class AdminUserRecord:
     id: int
@@ -29,6 +32,8 @@ class AdminUserRecord:
     timezone: str = "Asia/Yekaterinburg"
     telegram_chat_id: str | None = None
     bitrix24_user_id: str | None = None
+    notify_telegram: bool = True
+    notify_bitrix24: bool = True
 
 
 class AdminUserError(Exception):
@@ -98,6 +103,10 @@ class AdminUserRepository(Protocol):
         omnidesk_staff_id: str | None,
         roles: list[int],
         is_active: bool,
+        telegram_chat_id: str | None = None,
+        bitrix24_user_id: str | None = None,
+        notify_telegram: bool = True,
+        notify_bitrix24: bool = True,
         actor_user_id: int,
         ip_address: str | None = None,
         user_agent: str | None = None,
@@ -112,6 +121,10 @@ class AdminUserRepository(Protocol):
         phone: str | None = None,
         omnidesk_staff_id: str | None = None,
         is_active: bool | None = None,
+        telegram_chat_id: str | None = UNSET,
+        bitrix24_user_id: str | None = UNSET,
+        notify_telegram: bool | None = None,
+        notify_bitrix24: bool | None = None,
         actor_user_id: int,
         fields_set: set[str] | None = None,
         ip_address: str | None = None,
@@ -147,7 +160,9 @@ class PostgresAdminUserRepository:
                     u.is_active,
                     COALESCE(us.timezone, 'Asia/Yekaterinburg') AS timezone,
                     us.telegram_chat_id,
-                    us.bitrix24_user_id
+                    us.bitrix24_user_id,
+                    COALESCE(us.notify_telegram, true) AS notify_telegram,
+                    COALESCE(us.notify_bitrix24, true) AS notify_bitrix24
                 FROM users u
                 LEFT JOIN user_settings us ON us.user_id = u.id
                 ORDER BY u.id
@@ -187,6 +202,8 @@ class PostgresAdminUserRepository:
                 timezone=u["timezone"],
                 telegram_chat_id=u["telegram_chat_id"],
                 bitrix24_user_id=u["bitrix24_user_id"],
+                notify_telegram=u["notify_telegram"],
+                notify_bitrix24=u["notify_bitrix24"],
             )
             for u in users_rows
         ]
@@ -205,7 +222,9 @@ class PostgresAdminUserRepository:
                     u.is_active,
                     COALESCE(us.timezone, 'Asia/Yekaterinburg') AS timezone,
                     us.telegram_chat_id,
-                    us.bitrix24_user_id
+                    us.bitrix24_user_id,
+                    COALESCE(us.notify_telegram, true) AS notify_telegram,
+                    COALESCE(us.notify_bitrix24, true) AS notify_bitrix24
                 FROM users u
                 LEFT JOIN user_settings us ON us.user_id = u.id
                 WHERE u.id = %(user_id)s
@@ -241,6 +260,8 @@ class PostgresAdminUserRepository:
             timezone=u["timezone"],
             telegram_chat_id=u["telegram_chat_id"],
             bitrix24_user_id=u["bitrix24_user_id"],
+            notify_telegram=u["notify_telegram"],
+            notify_bitrix24=u["notify_bitrix24"],
         )
 
     def create_user(
@@ -254,6 +275,10 @@ class PostgresAdminUserRepository:
         omnidesk_staff_id: str | None,
         roles: list[int],
         is_active: bool,
+        telegram_chat_id: str | None = None,
+        bitrix24_user_id: str | None = None,
+        notify_telegram: bool = True,
+        notify_bitrix24: bool = True,
         actor_user_id: int,
         ip_address: str | None = None,
         user_agent: str | None = None,
@@ -310,21 +335,70 @@ class PostgresAdminUserRepository:
                     {"user_id": user_id, "role_id": r_id},
                 )
 
+            if (
+                telegram_chat_id is not None
+                or bitrix24_user_id is not None
+                or not notify_telegram
+                or not notify_bitrix24
+            ):
+                cursor.execute(
+                    """
+                    INSERT INTO user_settings (
+                        user_id,
+                        timezone,
+                        telegram_chat_id,
+                        bitrix24_user_id,
+                        notify_telegram,
+                        notify_bitrix24
+                    )
+                    VALUES (
+                        %(user_id)s,
+                        'Asia/Yekaterinburg',
+                        %(telegram_chat_id)s,
+                        %(bitrix24_user_id)s,
+                        %(notify_telegram)s,
+                        %(notify_bitrix24)s
+                    )
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        telegram_chat_id = EXCLUDED.telegram_chat_id,
+                        bitrix24_user_id = EXCLUDED.bitrix24_user_id,
+                        notify_telegram = EXCLUDED.notify_telegram,
+                        notify_bitrix24 = EXCLUDED.notify_bitrix24
+                    """,
+                    {
+                        "user_id": user_id,
+                        "telegram_chat_id": telegram_chat_id,
+                        "bitrix24_user_id": bitrix24_user_id,
+                        "notify_telegram": notify_telegram,
+                        "notify_bitrix24": notify_bitrix24,
+                    },
+                )
+
+            audit_new_values: dict[str, Any] = {
+                "username": username,
+                "full_name": full_name,
+                "email": email,
+                "phone": phone,
+                "omnidesk_staff_id": omnidesk_staff_id,
+                "is_active": is_active,
+                "roles": sorted(list(role_set)),
+            }
+            if telegram_chat_id is not None:
+                audit_new_values["telegram_chat_id"] = telegram_chat_id
+            if bitrix24_user_id is not None:
+                audit_new_values["bitrix24_user_id"] = bitrix24_user_id
+            if not notify_telegram:
+                audit_new_values["notify_telegram"] = notify_telegram
+            if not notify_bitrix24:
+                audit_new_values["notify_bitrix24"] = notify_bitrix24
+
             self._audit(
                 actor_user_id=actor_user_id,
                 action=AuditAction.CREATE,
                 entity_type="user",
                 entity_id=user_id,
                 old_values=None,
-                new_values={
-                    "username": username,
-                    "full_name": full_name,
-                    "email": email,
-                    "phone": phone,
-                    "omnidesk_staff_id": omnidesk_staff_id,
-                    "is_active": is_active,
-                    "roles": sorted(list(role_set)),
-                },
+                new_values=audit_new_values,
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
@@ -343,6 +417,10 @@ class PostgresAdminUserRepository:
         phone: str | None = None,
         omnidesk_staff_id: str | None = None,
         is_active: bool | None = None,
+        telegram_chat_id: str | None = UNSET,
+        bitrix24_user_id: str | None = UNSET,
+        notify_telegram: bool | None = None,
+        notify_bitrix24: bool | None = None,
         actor_user_id: int,
         fields_set: set[str] | None = None,
         ip_address: str | None = None,
@@ -360,14 +438,35 @@ class PostgresAdminUserRepository:
                 fields_set.add("omnidesk_staff_id")
             if is_active is not None:
                 fields_set.add("is_active")
+            if telegram_chat_id is not UNSET:
+                fields_set.add("telegram_chat_id")
+            if bitrix24_user_id is not UNSET:
+                fields_set.add("bitrix24_user_id")
+            if notify_telegram is not None:
+                fields_set.add("notify_telegram")
+            if notify_bitrix24 is not None:
+                fields_set.add("notify_bitrix24")
 
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, username, full_name, email, phone, omnidesk_staff_id, is_active
-                FROM users
-                WHERE id = %(user_id)s
-                FOR UPDATE
+                SELECT
+                    u.id,
+                    u.username,
+                    u.full_name,
+                    u.email,
+                    u.phone,
+                    u.omnidesk_staff_id,
+                    u.is_active,
+                    COALESCE(us.timezone, 'Asia/Yekaterinburg') AS timezone,
+                    us.telegram_chat_id,
+                    us.bitrix24_user_id,
+                    COALESCE(us.notify_telegram, true) AS notify_telegram,
+                    COALESCE(us.notify_bitrix24, true) AS notify_bitrix24
+                FROM users u
+                LEFT JOIN user_settings us ON us.user_id = u.id
+                WHERE u.id = %(user_id)s
+                FOR UPDATE OF u
                 """,
                 {"user_id": user_id},
             )
@@ -457,6 +556,22 @@ class PostgresAdminUserRepository:
                 old_values["is_active"] = old_user["is_active"]
                 new_values["is_active"] = is_active
 
+            if "telegram_chat_id" in fields_set:
+                old_values["telegram_chat_id"] = old_user["telegram_chat_id"]
+                new_values["telegram_chat_id"] = telegram_chat_id
+
+            if "bitrix24_user_id" in fields_set:
+                old_values["bitrix24_user_id"] = old_user["bitrix24_user_id"]
+                new_values["bitrix24_user_id"] = bitrix24_user_id
+
+            if "notify_telegram" in fields_set:
+                old_values["notify_telegram"] = old_user["notify_telegram"]
+                new_values["notify_telegram"] = notify_telegram
+
+            if "notify_bitrix24" in fields_set:
+                old_values["notify_bitrix24"] = old_user["notify_bitrix24"]
+                new_values["notify_bitrix24"] = notify_bitrix24
+
             if updates:
                 cursor.execute(
                     f"UPDATE users SET {', '.join(updates)} WHERE id = %(user_id)s",
@@ -477,6 +592,73 @@ class PostgresAdminUserRepository:
                         {"user_id": user_id},
                     )
 
+            user_settings_fields = {
+                "telegram_chat_id",
+                "bitrix24_user_id",
+                "notify_telegram",
+                "notify_bitrix24",
+            }
+            if user_settings_fields.intersection(fields_set):
+                target_tg = (
+                    telegram_chat_id
+                    if "telegram_chat_id" in fields_set
+                    else old_user["telegram_chat_id"]
+                )
+                target_b24 = (
+                    bitrix24_user_id
+                    if "bitrix24_user_id" in fields_set
+                    else old_user["bitrix24_user_id"]
+                )
+                target_notify_tg = (
+                    notify_telegram
+                    if "notify_telegram" in fields_set
+                    else old_user["notify_telegram"]
+                )
+                target_notify_b24 = (
+                    notify_bitrix24
+                    if "notify_bitrix24" in fields_set
+                    else old_user["notify_bitrix24"]
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO user_settings (
+                        user_id,
+                        timezone,
+                        telegram_chat_id,
+                        bitrix24_user_id,
+                        notify_telegram,
+                        notify_bitrix24
+                    )
+                    VALUES (
+                        %(user_id)s,
+                        %(timezone)s,
+                        %(telegram_chat_id)s,
+                        %(bitrix24_user_id)s,
+                        %(notify_telegram)s,
+                        %(notify_bitrix24)s
+                    )
+                    ON CONFLICT (user_id)
+                    DO UPDATE SET
+                        telegram_chat_id = CASE WHEN %(set_tg)s THEN %(telegram_chat_id)s ELSE user_settings.telegram_chat_id END,
+                        bitrix24_user_id = CASE WHEN %(set_b24)s THEN %(bitrix24_user_id)s ELSE user_settings.bitrix24_user_id END,
+                        notify_telegram = CASE WHEN %(set_notif_tg)s THEN %(notify_telegram)s ELSE user_settings.notify_telegram END,
+                        notify_bitrix24 = CASE WHEN %(set_notif_b24)s THEN %(notify_bitrix24)s ELSE user_settings.notify_bitrix24 END
+                    """,
+                    {
+                        "user_id": user_id,
+                        "timezone": old_user["timezone"],
+                        "telegram_chat_id": target_tg,
+                        "bitrix24_user_id": target_b24,
+                        "notify_telegram": target_notify_tg,
+                        "notify_bitrix24": target_notify_b24,
+                        "set_tg": "telegram_chat_id" in fields_set,
+                        "set_b24": "bitrix24_user_id" in fields_set,
+                        "set_notif_tg": "notify_telegram" in fields_set,
+                        "set_notif_b24": "notify_bitrix24" in fields_set,
+                    },
+                )
+
+            if old_values or new_values:
                 self._audit(
                     actor_user_id=actor_user_id,
                     action=AuditAction.UPDATE,
