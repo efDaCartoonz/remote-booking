@@ -28,16 +28,21 @@ def test_quality_gate_uses_template_env_and_isolated_docker_project() -> None:
     assert "alembic upgrade 20260901_0001" in script
     assert "alembic downgrade 20260901_0001" in script
     assert "migration_contract_check.py seed-baseline" in script
+    assert "migration_contract_check.py seed-fe03-link-intent" in script
     assert script.count("migration_contract_check.py check-head") == 2
     assert (
-        script.count("PYTHONPATH=/app python scripts/migration_contract_check.py") == 4
+        script.count("PYTHONPATH=/app python scripts/migration_contract_check.py") == 5
     )
     assert "rdm-quality-gate-$$-$RANDOM" in script
-    assert script.count('grep -qx "20260925_0014 (head)"') == 2
+    assert script.count('grep -qx "20260930_0016 (head)"') == 2
     assert "tests/test_cancellation_internal_notification_postgres.py" in script
     assert "tests/test_ie02_beat_worker_postgres.py" in script
     assert "docker-compose.ie02-gate.yml" in script
     assert "RDM_IE02_BEAT_WORKER=1" in script
+    assert "run_fe03_matrix" in script
+    assert "tests/test_fe03_cancellation_postgres.py" in script
+    assert "tests/test_fe03_frame_details_postgres.py" in script
+    assert "tests/test_fe03_timezone_postgres.py" in script
 
 
 def test_docker_quality_path_does_not_require_host_python_or_npm() -> None:

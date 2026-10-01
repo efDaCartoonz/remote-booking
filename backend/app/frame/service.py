@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from uuid import UUID
 
-from app.cards.constants import ActorType, CreatedSource
+from app.cards.constants import ActorType, CardStatus, CreatedSource
 from app.cards.repository import CardRecord, CardRepository, ClientSyncData
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService
@@ -15,6 +16,8 @@ from app.frame.omnidesk import (
     OmnideskTicketReopenError,
     validate_ticket_response,
 )
+from app.cancellation.schemas import CancellationLinkResponse
+from app.cancellation.service import CancellationService
 from app.frame.schemas import FrameCardCreateRequest
 from app.frame.sessions import CreatedFrameSession, FrameSession, FrameSessionStore
 
@@ -74,6 +77,9 @@ class FrameService:
             omnidesk_user_id=ticket.user_id,
             omnidesk_company_id=ticket.company_id,
             origin=origin,
+            client_display_name=ticket.client_display_name,
+            client_company_name=ticket.client_company_name,
+            client_contact_value=ticket.client_contact_value,
         )
 
     def get_session(
@@ -90,7 +96,49 @@ class FrameService:
 
     def list_cards(self, session: FrameSession) -> list[CardRecord]:
         self._validate_current_ticket(session)
-        return self.repository.list_cards_by_ticket(session.omnidesk_ticket_number)
+        all_cards = self.repository.list_cards_by_ticket(session.omnidesk_ticket_number)
+        can_create = not any(_is_active_card(card) for card in all_cards)
+
+        client_ownership: dict[int, bool] = {}
+        owned_cards: list[CardRecord] = []
+        for card in all_cards:
+            if card.client_id is None:
+                continue
+            if card.client_id not in client_ownership:
+                client = self.repository.get_client_by_id(card.client_id)
+                client_ownership[card.client_id] = (
+                    client is not None
+                    and client.omnidesk_user_id == session.omnidesk_user_id
+                )
+            if client_ownership[card.client_id]:
+                owned_cards.append(card)
+
+        class FrameCardList(list):
+            can_create: bool
+
+        result = FrameCardList(owned_cards)
+        result.can_create = can_create
+        return result
+
+    def request_cancellation_link(
+        self,
+        *,
+        session: FrameSession,
+        card_id: UUID,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> CancellationLinkResponse:
+        self._validate_current_ticket(session)
+        cancellation_service = CancellationService(
+            repository=self.repository,
+            card_service=self.card_service,
+        )
+        return cancellation_service.request_cancellation_link(
+            session=session,
+            card_id=card_id,
+            ip_address=ip_address,
+            user_agent=user_agent,
+        )
 
     def create_card(
         self,
@@ -107,14 +155,29 @@ class FrameService:
         if self.repository.has_active_card_for_ticket(ticket.number):
             raise FrameCardConflictError
 
+        final_client_name = (
+            payload.client_name.strip()
+            if payload.client_name and payload.client_name.strip()
+            else ticket.client_display_name
+        )
+        final_company_name = (
+            payload.client_company_name.strip()
+            if payload.client_company_name and payload.client_company_name.strip()
+            else ticket.client_company_name
+        )
+        final_contact_value = (
+            payload.client_contact_value.strip()
+            if payload.client_contact_value and payload.client_contact_value.strip()
+            else ticket.client_contact_value
+        )
+
         client = self.repository.get_or_create_client(
             ClientSyncData(
                 omnidesk_user_id=ticket.user_id or session.omnidesk_user_id,
                 omnidesk_company_id=ticket.company_id,
                 display_name=ticket.client_display_name,
                 preferred_contact_type_code=payload.client_contact_type_code,
-                preferred_contact_value=payload.client_contact_value
-                or ticket.client_contact_value,
+                preferred_contact_value=final_contact_value,
                 last_confirmed_timezone=payload.client_timezone_at_creation,
                 timezone_source_code=payload.timezone_source_code,
             )
@@ -124,11 +187,12 @@ class FrameService:
             planned_start_at=payload.planned_start_at,
             planned_duration_minutes=payload.planned_duration_minutes,
             client_id=client.id,
+            client_name=final_client_name,
+            client_company_name=final_company_name,
             client_timezone_at_creation=payload.client_timezone_at_creation,
             timezone_source_code=payload.timezone_source_code,
             client_contact_type_code=payload.client_contact_type_code,
-            client_contact_value=payload.client_contact_value
-            or ticket.client_contact_value,
+            client_contact_value=final_contact_value,
             description=payload.description,
         )
         return self.card_service.create_card(
@@ -144,7 +208,11 @@ class FrameService:
         ticket = self._get_available_ticket(
             session.omnidesk_case_id, session.omnidesk_ticket_number
         )
-        if ticket.user_id != session.omnidesk_user_id:
+        if (
+            not ticket.user_id
+            or not session.omnidesk_user_id
+            or ticket.user_id != session.omnidesk_user_id
+        ):
             raise FrameTicketAccessError("ticket_client_mismatch")
         return ticket
 
@@ -203,3 +271,10 @@ class FrameService:
             raise FrameCardValidationError("planned_start_too_soon")
         if planned_start_at > now + timedelta(days=14):
             raise FrameCardValidationError("planned_start_too_far")
+
+
+def _is_active_card(card: CardRecord) -> bool:
+    return CardStatus(card.status_code) not in {
+        CardStatus.COMPLETED,
+        CardStatus.CANCELLED,
+    }

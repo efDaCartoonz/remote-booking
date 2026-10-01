@@ -90,6 +90,59 @@ class FakeAuthStore:
             }
         )
 
+    def get_user_timezone(self, user_id: int) -> str | None:
+        if user_id == self.user.id:
+            return self.user.timezone
+        for u in self.users.values():
+            if u.id == user_id:
+                return u.timezone
+        return None
+
+    def set_user_timezone(
+        self,
+        *,
+        actor_user_id: int,
+        target_user_id: int,
+        timezone: str,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> str:
+        target = None
+        if self.user.id == target_user_id:
+            target = self.user
+        else:
+            for u in self.users.values():
+                if u.id == target_user_id:
+                    target = u
+                    break
+        if target is None:
+            raise ValueError("user_not_found")
+
+        updated = UserAuthRecord(
+            id=target.id,
+            username=target.username,
+            password_hash=target.password_hash,
+            full_name=target.full_name,
+            email=target.email,
+            roles=target.roles,
+            timezone=timezone,
+        )
+        self.users[updated.username] = updated
+        if self.user.id == updated.id:
+            self.user = updated
+
+        self.audit_events.append(
+            {
+                "actor_user_id": actor_user_id,
+                "target_user_id": target_user_id,
+                "action_code": 1,
+                "timezone": timezone,
+                "ip_address": ip_address,
+                "user_agent": user_agent,
+            }
+        )
+        return timezone
+
 
 def make_client(store: FakeAuthStore) -> TestClient:
     app = create_app()
@@ -121,6 +174,7 @@ def test_login_success_creates_session_cookie_and_audit_event() -> None:
         "full_name": "Иван Иванов",
         "email": "ivanov@example.test",
         "roles": [{"id": 1, "name": "Специалист Л1"}],
+        "timezone": "Asia/Yekaterinburg",
     }
     set_cookie = response.headers["set-cookie"]
     assert f"{settings.auth_session_cookie_name}=" in set_cookie

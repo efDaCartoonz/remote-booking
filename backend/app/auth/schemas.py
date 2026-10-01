@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+from zoneinfo import ZoneInfo
 
 
 class LoginRequest(BaseModel):
@@ -17,7 +18,29 @@ class CurrentUserResponse(BaseModel):
     full_name: str
     email: str | None
     roles: list[RoleResponse]
+    timezone: str = "Asia/Yekaterinburg"
 
 
 class LoginResponse(BaseModel):
     user: CurrentUserResponse
+
+
+class TimezoneResponse(BaseModel):
+    user_id: int
+    timezone: str
+
+
+class TimezoneUpdateRequest(BaseModel):
+    timezone: str = Field(min_length=1, max_length=64)
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_iana_timezone(cls, v: str) -> str:
+        trimmed = v.strip()
+        if not trimmed:
+            raise ValueError("invalid_timezone")
+        try:
+            ZoneInfo(trimmed)
+        except Exception:
+            raise ValueError("invalid_timezone")
+        return trimmed

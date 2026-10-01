@@ -20,6 +20,7 @@ class OmnideskTicket:
     spam: bool = False
     company_id: str | None = None
     client_display_name: str | None = None
+    client_company_name: str | None = None
     client_contact_value: str | None = None
     case_type: str | None = None
     case_category: str | None = None
@@ -345,8 +346,14 @@ def _parse_ticket(case: Any) -> OmnideskTicket:
                 "user_full_name",
                 "user_name",
                 "customer_full_name",
+            ),
+        ),
+        client_company_name=_first_string(
+            case,
+            (
                 "company_name",
                 "user_company_name",
+                "customer_company_name",
             ),
         ),
         client_contact_value=_first_string(

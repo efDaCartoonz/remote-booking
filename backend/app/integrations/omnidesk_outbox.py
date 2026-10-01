@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -59,6 +60,9 @@ class OmnideskOutboxRepository(Protocol):
     def is_card_confirmed(self, card_id: int) -> bool: ...
 
     def get_card_info(self, card_id: int) -> dict[str, Any] | None: ...
+    def get_cancellation_token_info(
+        self, token_id: int | None = None, token_hash: str | None = None
+    ) -> dict[str, Any] | None: ...
 
 
 class PostgresOmnideskOutboxRepository:
@@ -151,9 +155,14 @@ class PostgresOmnideskOutboxRepository:
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT o.card_id, o.source_event_id, e.event_type_code
+                SELECT o.card_id, e.id AS source_event_id, e.event_type_code
                 FROM omnidesk_outbox o
-                JOIN card_events e ON e.id = o.source_event_id
+                JOIN card_events e ON e.id = COALESCE(
+                    o.source_event_id,
+                    (SELECT latest.id FROM card_events latest
+                     WHERE latest.card_id = o.card_id
+                     ORDER BY latest.id DESC LIMIT 1)
+                )
                 WHERE o.id = %(intent_id)s
                 """,
                 {"intent_id": intent_id},
@@ -210,7 +219,8 @@ class PostgresOmnideskOutboxRepository:
         with self.connection.cursor(row_factory=dict_row) as cursor:
             cursor.execute(
                 """
-                SELECT c.status_code, c.planned_start_at,
+                SELECT c.id, c.status_code, c.planned_start_at, c.omnidesk_ticket_number, c.client_id,
+                       cl.omnidesk_user_id,
                        COALESCE((
                            SELECT value #>> '{}' = 'true'
                            FROM system_settings
@@ -221,10 +231,40 @@ class PostgresOmnideskOutboxRepository:
                            FROM system_settings
                            WHERE key = 'omnidesk_cancellation_public_notification_enabled'
                        ), true) AS cancellation_public_notification_enabled
-                FROM connection_cards c WHERE c.id = %(id)s
+                FROM connection_cards c
+                LEFT JOIN clients cl ON cl.id = c.client_id
+                WHERE c.id = %(id)s
                 """,
                 {"id": card_id},
             )
+            return cursor.fetchone()
+
+    def get_cancellation_token_info(
+        self, token_id: int | None = None, token_hash: str | None = None
+    ) -> dict | None:
+        if not token_id and not token_hash:
+            return None
+        with self.connection.cursor(row_factory=dict_row) as cursor:
+            if token_id:
+                cursor.execute(
+                    """
+                    SELECT id, nonce, token_hash, card_id, omnidesk_ticket_number,
+                           omnidesk_user_id, expires_at, consumed_at
+                    FROM client_cancellation_tokens
+                    WHERE id = %(id)s
+                    """,
+                    {"id": token_id},
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, nonce, token_hash, card_id, omnidesk_ticket_number,
+                           omnidesk_user_id, expires_at, consumed_at
+                    FROM client_cancellation_tokens
+                    WHERE token_hash = %(hash)s
+                    """,
+                    {"hash": token_hash},
+                )
             return cursor.fetchone()
 
 
@@ -346,6 +386,97 @@ def _process_intent(
         content = intent.payload.get("content")
         if not content:
             raise SuppressedIntent("cancellation_public_notification_content_missing")
+        client.send_public_message(case_id, content, staff_id=None)
+
+    elif intent.action_type == "cancellation_link_public_message":
+        now = datetime.now(UTC)
+
+        token_id = intent.payload.get("token_id")
+        if not token_id:
+            raise SuppressedIntent("cancellation_link_token_missing")
+
+        token_info = repository.get_cancellation_token_info(token_id=token_id)
+        if not token_info:
+            raise SuppressedIntent("cancellation_link_token_not_found")
+
+        # 1. Expiry check: suppress stale links (>5m from issuance)
+        expires_at = token_info.get("expires_at")
+        if not expires_at:
+            raise SuppressedIntent("cancellation_link_expired")
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at.replace("Z", "+00:00"))
+        if now > expires_at:
+            raise SuppressedIntent("cancellation_link_expired")
+
+        # 2. Consumption check: suppress already consumed tokens
+        if token_info.get("consumed_at") is not None:
+            raise SuppressedIntent("cancellation_link_already_consumed")
+
+        # 3. Card check: card must exist, match ticket, and be in cancellable status
+        card_info = repository.get_card_info(intent.card_id)
+        if not card_info:
+            raise SuppressedIntent("cancellation_link_card_not_found")
+
+        if token_info.get("card_id") and token_info["card_id"] != intent.card_id:
+            raise SuppressedIntent("cancellation_link_card_mismatch")
+
+        if card_info["status_code"] not in (
+            int(CardStatus.ASSIGNED),
+            int(CardStatus.CONFIRMED),
+            int(CardStatus.REJECTED),
+        ):
+            raise SuppressedIntent("cancellation_link_card_not_cancellable")
+
+        card_ticket = card_info.get("omnidesk_ticket_number")
+        token_ticket = token_info.get("omnidesk_ticket_number")
+        if not card_ticket or card_ticket != intent.omnidesk_ticket_number:
+            raise SuppressedIntent("cancellation_link_ticket_mismatch")
+        if token_ticket and token_ticket != intent.omnidesk_ticket_number:
+            raise SuppressedIntent("cancellation_link_ticket_mismatch")
+
+        # 4. Ownership verification: FAIL CLOSED on missing values or mismatch
+        if not card_info.get("client_id"):
+            raise SuppressedIntent("cancellation_link_client_missing")
+
+        card_user_id = card_info.get("omnidesk_user_id")
+        if not card_user_id:
+            raise SuppressedIntent("cancellation_link_client_user_id_missing")
+
+        token_user_id = token_info.get("omnidesk_user_id")
+        if not token_user_id:
+            raise SuppressedIntent("cancellation_link_token_user_id_missing")
+
+        if card_user_id != token_user_id:
+            raise SuppressedIntent("cancellation_link_client_mismatch")
+
+        if not ticket or not ticket.user_id:
+            raise SuppressedIntent("cancellation_link_ticket_user_id_missing")
+
+        if ticket.user_id != card_user_id:
+            raise SuppressedIntent("cancellation_link_client_mismatch")
+
+        # 5. Nonce and token derivation in memory using trusted base URL
+        nonce = token_info.get("nonce")
+        if not nonce:
+            raise SuppressedIntent("cancellation_link_nonce_missing")
+
+        from app.cancellation.service import (
+            derive_cancellation_token,
+            get_trusted_cancellation_base_url,
+        )
+
+        raw_token = derive_cancellation_token(nonce)
+        derived_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        if token_info.get("token_hash") and derived_hash != token_info["token_hash"]:
+            raise SuppressedIntent("cancellation_link_token_integrity_error")
+
+        trusted_base_url = get_trusted_cancellation_base_url()
+        cancellation_url = f"{trusted_base_url}/cancel#token={raw_token}"
+        content = (
+            f"Для подтверждения отмены записи на удаленное подключение перейдите по ссылке "
+            f"(действительна 5 минут): {cancellation_url}"
+        )
+
         client.send_public_message(case_id, content, staff_id=None)
 
 

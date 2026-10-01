@@ -364,7 +364,7 @@ describe("RDM FE-02 Bounded Playwright Browser Suite", () => {
       });
 
       await page.goto(`${baseUrl}/cards/00000000-0000-0000-0000-000000000001`);
-      await page.waitForSelector(".shell");
+      await page.getByText("Решение доступно только назначенному инженеру L2").waitFor();
 
       const bodyText = await page.textContent("body");
       // Unassigned L2 sees hint & self-assign panel, but not confirm/reject/manager controls

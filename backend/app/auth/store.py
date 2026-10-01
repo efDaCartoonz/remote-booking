@@ -22,6 +22,7 @@ class UserAuthRecord:
     full_name: str
     email: str | None
     roles: tuple[RoleRecord, ...]
+    timezone: str = "Asia/Yekaterinburg"
 
 
 @dataclass(frozen=True)
@@ -66,6 +67,18 @@ class AuthStore(Protocol):
         user_agent: str | None,
     ) -> None: ...
 
+    def get_user_timezone(self, user_id: int) -> str | None: ...
+
+    def set_user_timezone(
+        self,
+        *,
+        actor_user_id: int,
+        target_user_id: int,
+        timezone: str,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> str: ...
+
 
 class PostgresAuthStore:
     def __init__(self, connection: psycopg.Connection) -> None:
@@ -75,9 +88,16 @@ class PostgresAuthStore:
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT id, username, password_hash, full_name, email
-                FROM users
-                WHERE username = %(username)s AND is_active = true
+                SELECT
+                    u.id,
+                    u.username,
+                    u.password_hash,
+                    u.full_name,
+                    u.email,
+                    COALESCE(us.timezone, 'Asia/Yekaterinburg') AS timezone
+                FROM users u
+                LEFT JOIN user_settings us ON us.user_id = u.id
+                WHERE u.username = %(username)s AND u.is_active = true
                 """,
                 {"username": username},
             )
@@ -93,6 +113,7 @@ class PostgresAuthStore:
             full_name=row["full_name"],
             email=row["email"],
             roles=self._load_roles(row["id"]),
+            timezone=row["timezone"],
         )
 
     def get_user_by_session_hash(self, session_hash: str) -> AuthSessionRecord | None:
@@ -111,9 +132,11 @@ class PostgresAuthStore:
                     u.username,
                     u.password_hash,
                     u.full_name,
-                    u.email
+                    u.email,
+                    COALESCE(us.timezone, 'Asia/Yekaterinburg') AS timezone
                 FROM auth_sessions s
                 JOIN users u ON u.id = s.user_id
+                LEFT JOIN user_settings us ON us.user_id = u.id
                 WHERE s.session_hash = %(session_hash)s
                   AND s.revoked_at IS NULL
                   AND u.is_active = true
@@ -132,6 +155,7 @@ class PostgresAuthStore:
             full_name=row["full_name"],
             email=row["email"],
             roles=self._load_roles(row["user_id"]),
+            timezone=row["timezone"],
         )
         session = SessionRecord(
             id=row["session_id"],
@@ -252,3 +276,93 @@ class PostgresAuthStore:
             rows = cursor.fetchall()
 
         return tuple(RoleRecord(id=row["id"], name=row["name"]) for row in rows)
+
+    def get_user_timezone(self, user_id: int) -> str | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COALESCE(us.timezone, 'Asia/Yekaterinburg') AS timezone
+                FROM users u
+                LEFT JOIN user_settings us ON us.user_id = u.id
+                WHERE u.id = %(user_id)s AND u.is_active = true
+                """,
+                {"user_id": user_id},
+            )
+            row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        return row["timezone"]
+
+    def set_user_timezone(
+        self,
+        *,
+        actor_user_id: int,
+        target_user_id: int,
+        timezone: str,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> str:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT COALESCE(us.timezone, 'Asia/Yekaterinburg') AS old_timezone
+                FROM users u
+                LEFT JOIN user_settings us ON us.user_id = u.id
+                WHERE u.id = %(user_id)s AND u.is_active = true
+                FOR UPDATE OF u
+                """,
+                {"user_id": target_user_id},
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ValueError("user_not_found")
+            old_timezone = row["old_timezone"]
+
+            cursor.execute(
+                """
+                INSERT INTO user_settings (user_id, timezone)
+                VALUES (%(user_id)s, %(timezone)s)
+                ON CONFLICT (user_id)
+                DO UPDATE SET timezone = EXCLUDED.timezone
+                """,
+                {"user_id": target_user_id, "timezone": timezone},
+            )
+
+            cursor.execute(
+                """
+                INSERT INTO audit_log (
+                    actor_user_id,
+                    actor_type_code,
+                    action_code,
+                    entity_type,
+                    entity_id,
+                    ip_address,
+                    user_agent,
+                    old_values,
+                    new_values
+                )
+                VALUES (
+                    %(actor_user_id)s,
+                    0,
+                    1,
+                    'user_settings',
+                    %(target_user_id)s,
+                    %(ip_address)s,
+                    %(user_agent)s,
+                    %(old_values)s,
+                    %(new_values)s
+                )
+                """,
+                {
+                    "actor_user_id": actor_user_id,
+                    "target_user_id": target_user_id,
+                    "ip_address": ip_address,
+                    "user_agent": user_agent,
+                    "old_values": Jsonb({"timezone": old_timezone}),
+                    "new_values": Jsonb({"timezone": timezone}),
+                },
+            )
+
+        return timezone

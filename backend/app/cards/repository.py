@@ -72,6 +72,8 @@ class CardRecord:
     client_informed: bool = False
     l1_owner_name: str | None = None
     l2_engineer_name: str | None = None
+    client_name: str | None = None
+    client_company_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,22 @@ class CardHistoryRecord:
     actor_type_code: int
     actor_name: str | None
     created_at: datetime
+
+
+@dataclass(frozen=True)
+class CancellationRecord:
+    id: int
+    token_hash: str
+    card_id: int
+    omnidesk_ticket_number: str
+    omnidesk_user_id: str | None
+    action: str
+    created_at: datetime
+    expires_at: datetime
+    nonce: str = ""
+    consumed_at: datetime | None = None
+    consumed_by_ip: str | None = None
+    consumed_by_user_agent: str | None = None
 
 
 @dataclass(frozen=True)
@@ -109,6 +127,8 @@ class CreateCardData:
     created_by_id: int | None
     status: CardStatus
     client_id: int | None = None
+    client_name: str | None = None
+    client_company_name: str | None = None
     criticality_code: int = 0
     urgency_code: int = 0
     client_timezone_at_creation: str | None = None
@@ -174,6 +194,7 @@ class CardRepository(Protocol):
     def create_card(self, data: CreateCardData) -> CardRecord: ...
 
     def get_or_create_client(self, data: ClientSyncData) -> ClientRecord: ...
+    def get_client_by_id(self, client_id: int) -> ClientRecord | None: ...
 
     def get_user_display_name(self, user_id: int) -> str | None: ...
 
@@ -291,6 +312,43 @@ class CardRepository(Protocol):
         interval_minutes: int,
         now: datetime,
     ) -> None: ...
+
+    def get_card_by_id(self, card_id: int) -> CardRecord | None: ...
+
+    def create_cancellation_token(
+        self,
+        *,
+        nonce: str,
+        token_hash: str,
+        card_id: int,
+        omnidesk_ticket_number: str,
+        omnidesk_user_id: str | None,
+        expires_at: datetime,
+        created_at: datetime | None = None,
+    ) -> int: ...
+
+    def get_cancellation_token(self, token_hash: str) -> CancellationRecord | None: ...
+
+    def get_cancellation_token_by_id(
+        self, token_id: int
+    ) -> CancellationRecord | None: ...
+
+    def get_cancellation_token_for_update(
+        self, token_hash: str
+    ) -> CancellationRecord | None: ...
+
+    def consume_cancellation_token(
+        self,
+        *,
+        token_id: int,
+        consumed_at: datetime,
+        consumed_by_ip: str | None = None,
+        consumed_by_user_agent: str | None = None,
+    ) -> bool: ...
+
+    def get_latest_active_cancellation_token(
+        self, card_id: int, *, now: datetime
+    ) -> CancellationRecord | None: ...
 
 
 class PostgresCardRepository:
@@ -417,6 +475,8 @@ class PostgresCardRepository:
                     number,
                     omnidesk_ticket_number,
                     client_id,
+                    client_name,
+                    client_company_name,
                     status_code,
                     criticality_code,
                     urgency_code,
@@ -445,6 +505,8 @@ class PostgresCardRepository:
                     NULL,
                     %(omnidesk_ticket_number)s,
                     %(client_id)s,
+                    %(client_name)s,
+                    %(client_company_name)s,
                     %(status_code)s,
                     %(criticality_code)s,
                     %(urgency_code)s,
@@ -474,6 +536,8 @@ class PostgresCardRepository:
                 {
                     "omnidesk_ticket_number": data.omnidesk_ticket_number,
                     "client_id": data.client_id,
+                    "client_name": data.client_name,
+                    "client_company_name": data.client_company_name,
                     "status_code": int(data.status),
                     "criticality_code": data.criticality_code,
                     "urgency_code": data.urgency_code,
@@ -1145,6 +1209,26 @@ class PostgresCardRepository:
             omnidesk_company_id=row["omnidesk_company_id"],
             display_name=row["display_name"],
         )
+
+    def get_client_by_id(self, client_id: int) -> ClientRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, omnidesk_user_id, omnidesk_company_id, display_name
+                FROM clients
+                WHERE id = %(id)s
+                """,
+                {"id": client_id},
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return ClientRecord(
+                id=row["id"],
+                omnidesk_user_id=row["omnidesk_user_id"],
+                omnidesk_company_id=row["omnidesk_company_id"],
+                display_name=row["display_name"],
+            )
 
     def list_cards_by_ticket(self, omnidesk_ticket_number: str) -> list[CardRecord]:
         with self.connection.cursor() as cursor:
@@ -2032,6 +2116,230 @@ class PostgresCardRepository:
             return None
         return _card_from_row(row)
 
+    def get_card_by_id(self, card_id: int) -> CardRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT c.*,
+                       l1.full_name AS l1_owner_name,
+                       l2.full_name AS l2_engineer_name
+                FROM connection_cards c
+                LEFT JOIN users l1 ON l1.id = c.l1_owner_id
+                LEFT JOIN users l2 ON l2.id = c.l2_engineer_id
+                WHERE c.id = %(card_id)s
+                """,
+                {"card_id": card_id},
+            )
+            row = cursor.fetchone()
+        if row is None:
+            return None
+        return _card_from_row(row)
+
+    def create_cancellation_token(
+        self,
+        *,
+        nonce: str,
+        token_hash: str,
+        card_id: int,
+        omnidesk_ticket_number: str,
+        omnidesk_user_id: str | None,
+        expires_at: datetime,
+        created_at: datetime | None = None,
+    ) -> int:
+        with self.connection.cursor() as cursor:
+            if created_at is not None:
+                cursor.execute(
+                    """
+                    INSERT INTO client_cancellation_tokens (
+                        nonce, token_hash, card_id, omnidesk_ticket_number, omnidesk_user_id,
+                        action, expires_at, created_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'cancel', %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        nonce,
+                        token_hash,
+                        card_id,
+                        omnidesk_ticket_number,
+                        omnidesk_user_id,
+                        expires_at,
+                        created_at,
+                    ),
+                )
+            else:
+                cursor.execute(
+                    """
+                    INSERT INTO client_cancellation_tokens (
+                        nonce, token_hash, card_id, omnidesk_ticket_number, omnidesk_user_id,
+                        action, expires_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 'cancel', %s)
+                    RETURNING id
+                    """,
+                    (
+                        nonce,
+                        token_hash,
+                        card_id,
+                        omnidesk_ticket_number,
+                        omnidesk_user_id,
+                        expires_at,
+                    ),
+                )
+            row = cursor.fetchone()
+            return row["id"]
+
+    def get_cancellation_token(self, token_hash: str) -> CancellationRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, nonce, token_hash, card_id, omnidesk_ticket_number, omnidesk_user_id,
+                       action, created_at, expires_at, consumed_at,
+                       consumed_by_ip::text AS consumed_by_ip, consumed_by_user_agent
+                FROM client_cancellation_tokens
+                WHERE token_hash = %s
+                """,
+                (token_hash,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return CancellationRecord(
+                id=row["id"],
+                nonce=row["nonce"],
+                token_hash=row["token_hash"],
+                card_id=row["card_id"],
+                omnidesk_ticket_number=row["omnidesk_ticket_number"],
+                omnidesk_user_id=row["omnidesk_user_id"],
+                action=row["action"],
+                created_at=row["created_at"],
+                expires_at=row["expires_at"],
+                consumed_at=row["consumed_at"],
+                consumed_by_ip=row["consumed_by_ip"],
+                consumed_by_user_agent=row["consumed_by_user_agent"],
+            )
+
+    def get_cancellation_token_by_id(self, token_id: int) -> CancellationRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, nonce, token_hash, card_id, omnidesk_ticket_number, omnidesk_user_id,
+                       action, created_at, expires_at, consumed_at,
+                       consumed_by_ip::text AS consumed_by_ip, consumed_by_user_agent
+                FROM client_cancellation_tokens
+                WHERE id = %s
+                """,
+                (token_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return CancellationRecord(
+                id=row["id"],
+                nonce=row["nonce"],
+                token_hash=row["token_hash"],
+                card_id=row["card_id"],
+                omnidesk_ticket_number=row["omnidesk_ticket_number"],
+                omnidesk_user_id=row["omnidesk_user_id"],
+                action=row["action"],
+                created_at=row["created_at"],
+                expires_at=row["expires_at"],
+                consumed_at=row["consumed_at"],
+                consumed_by_ip=row["consumed_by_ip"],
+                consumed_by_user_agent=row["consumed_by_user_agent"],
+            )
+
+    def get_cancellation_token_for_update(
+        self, token_hash: str
+    ) -> CancellationRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, nonce, token_hash, card_id, omnidesk_ticket_number, omnidesk_user_id,
+                       action, created_at, expires_at, consumed_at,
+                       consumed_by_ip::text AS consumed_by_ip, consumed_by_user_agent
+                FROM client_cancellation_tokens
+                WHERE token_hash = %s
+                FOR UPDATE
+                """,
+                (token_hash,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return CancellationRecord(
+                id=row["id"],
+                nonce=row["nonce"],
+                token_hash=row["token_hash"],
+                card_id=row["card_id"],
+                omnidesk_ticket_number=row["omnidesk_ticket_number"],
+                omnidesk_user_id=row["omnidesk_user_id"],
+                action=row["action"],
+                created_at=row["created_at"],
+                expires_at=row["expires_at"],
+                consumed_at=row["consumed_at"],
+                consumed_by_ip=row["consumed_by_ip"],
+                consumed_by_user_agent=row["consumed_by_user_agent"],
+            )
+
+    def consume_cancellation_token(
+        self,
+        *,
+        token_id: int,
+        consumed_at: datetime,
+        consumed_by_ip: str | None = None,
+        consumed_by_user_agent: str | None = None,
+    ) -> bool:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                UPDATE client_cancellation_tokens
+                SET consumed_at = %s,
+                    consumed_by_ip = %s,
+                    consumed_by_user_agent = %s
+                WHERE id = %s
+                  AND consumed_at IS NULL
+                """,
+                (consumed_at, consumed_by_ip, consumed_by_user_agent, token_id),
+            )
+            return cursor.rowcount == 1
+
+    def get_latest_active_cancellation_token(
+        self, card_id: int, *, now: datetime
+    ) -> CancellationRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, nonce, token_hash, card_id, omnidesk_ticket_number, omnidesk_user_id,
+                       action, created_at, expires_at, consumed_at,
+                       consumed_by_ip::text AS consumed_by_ip, consumed_by_user_agent
+                FROM client_cancellation_tokens
+                WHERE card_id = %s
+                  AND consumed_at IS NULL
+                  AND expires_at > %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (card_id, now),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return CancellationRecord(
+                id=row["id"],
+                nonce=row["nonce"],
+                token_hash=row["token_hash"],
+                card_id=row["card_id"],
+                omnidesk_ticket_number=row["omnidesk_ticket_number"],
+                omnidesk_user_id=row["omnidesk_user_id"],
+                action=row["action"],
+                created_at=row["created_at"],
+                expires_at=row["expires_at"],
+                consumed_at=row["consumed_at"],
+                consumed_by_ip=row["consumed_by_ip"],
+                consumed_by_user_agent=row["consumed_by_user_agent"],
+            )
+
 
 def _card_from_row(row: dict[str, Any]) -> CardRecord:
     return CardRecord(
@@ -2073,6 +2381,8 @@ def _card_from_row(row: dict[str, Any]) -> CardRecord:
         client_informed=row.get("client_informed", False),
         l1_owner_name=row.get("l1_owner_name"),
         l2_engineer_name=row.get("l2_engineer_name"),
+        client_name=row.get("client_name"),
+        client_company_name=row.get("client_company_name"),
     )
 
 

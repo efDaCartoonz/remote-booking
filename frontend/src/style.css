@@ -122,3 +122,58 @@ input:focus, textarea:focus, button:focus-visible { outline: 3px solid rgba(56, 
   .work-row { flex-direction: column; }
   .calendar-head, .calendar-body { grid-template-columns: 48px repeat(var(--calendar-days, 7), minmax(135px, 1fr)); }
 }
+
+/* Frame UI Scoped Styles */
+.frame-shell { min-height: 100vh; padding: 20px 16px; background: #f8fafc; }
+.frame-card { width: 100%; max-width: 800px; margin: 0 auto; padding: 24px; border-radius: 16px; background: #fff; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.06); }
+.frame-header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #e2e8f0; }
+.frame-header-main { display: grid; gap: 4px; }
+.frame-eyebrow { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: #3867d6; }
+.frame-title { font-size: 22px; font-weight: 700; margin: 0; color: #1e293b; }
+.frame-tz-control { display: grid; gap: 4px; min-width: 220px; }
+.frame-tz-label { font-size: 12px; font-weight: 600; color: #64748b; }
+.frame-tz-select { padding: 6px 10px; font-size: 13px; border: 1px solid #cbd5e1; border-radius: 8px; background: #fff; }
+.frame-tz-hint { font-size: 11px; color: #64748b; }
+.frame-tz-manual { color: #d97706; }
+.frame-banner { padding: 12px 16px; border-radius: 10px; margin-bottom: 18px; font-size: 14px; line-height: 1.5; }
+.frame-banner-error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.frame-banner-success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+.frame-banner-info { background: #e0f2fe; color: #075985; border: 1px solid #bae6fd; }
+.frame-loading, .frame-waiting { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 40px 16px; color: #64748b; font-size: 15px; }
+.frame-spinner { width: 22px; height: 22px; border: 3px solid #cbd5e1; border-top-color: #3867d6; border-radius: 50%; animation: frame-spin 0.8s linear infinite; }
+@keyframes frame-spin { to { transform: rotate(360deg); } }
+.frame-section { margin-bottom: 24px; }
+.frame-section-title { font-size: 16px; font-weight: 700; margin: 0 0 12px; color: #334155; }
+.frame-section-desc { font-size: 13px; color: #64748b; margin: 0 0 16px; }
+.frame-cards-list { display: grid; gap: 12px; margin-bottom: 16px; }
+.frame-ticket-card { padding: 14px 16px; border-radius: 12px; border: 1px solid #e2e8f0; background: #f8fafc; }
+.frame-card-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.frame-duration { font-size: 12px; font-weight: 600; color: #64748b; }
+.frame-card-details { display: grid; gap: 6px; font-size: 14px; }
+.frame-detail-row { display: flex; gap: 8px; }
+.frame-detail-label { color: #64748b; min-width: 90px; }
+.frame-detail-value { font-weight: 500; color: #1e293b; }
+.frame-notice { padding: 12px 14px; border-radius: 10px; font-size: 13px; line-height: 1.5; }
+.frame-notice p { margin: 0; }
+.frame-notice-reschedule { background: #f1f5f9; color: #475569; border-left: 4px solid #94a3b8; }
+.frame-form { display: grid; gap: 14px; }
+.frame-form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.frame-field { display: grid; gap: 6px; font-size: 13px; font-weight: 600; color: #334155; }
+.frame-field .req { color: #dc2626; }
+.frame-field input, .frame-field select, .frame-field textarea { width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; }
+.frame-field-full { grid-column: 1 / -1; }
+.frame-form-actions { display: flex; justify-content: flex-end; margin-top: 8px; }
+.frame-btn-submit { padding: 10px 20px; font-size: 14px; font-weight: 600; color: #fff; background: #3867d6; border-radius: 8px; }
+.frame-btn-submit:hover:not(:disabled) { background: #2b52b0; }
+.frame-card-cancel-section { margin-top: 14px; padding-top: 14px; border-top: 1px solid #e2e8f0; }
+.frame-cancel-alert { margin-bottom: 10px; }
+.frame-cancel-action-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.frame-cancel-info { flex: 1 1 250px; margin: 0; color: #475569; font-size: 13px; line-height: 1.5; }
+.frame-btn-cancel-link { padding: 9px 13px; background: #fff; color: #a93226; border: 1px solid #dc9c96; font-size: 13px; font-weight: 650; }
+.frame-btn-cancel-link:hover:not(:disabled) { background: #fff1f2; color: #912b20; }
+
+@media (max-width: 600px) {
+  .frame-form-grid { grid-template-columns: 1fr; }
+  .frame-header { flex-direction: column; }
+  .frame-tz-control { width: 100%; }
+}

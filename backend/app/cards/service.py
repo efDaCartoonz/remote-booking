@@ -576,6 +576,8 @@ class CardService:
                 created_by_id=actor_user_id,
                 status=status,
                 client_id=payload.client_id,
+                client_name=payload.client_name,
+                client_company_name=payload.client_company_name,
                 criticality_code=payload.criticality_code,
                 urgency_code=urgency_code,
                 client_timezone_at_creation=payload.client_timezone_at_creation,
@@ -1120,6 +1122,38 @@ class CardService:
             action=CardAction.CANCEL,
         )
 
+    def cancel_card_by_client(
+        self,
+        public_id: UUID,
+        *,
+        comment: str | None = "client_self_cancellation",
+        ip_address: str | None = None,
+        user_agent: str | None = None,
+    ) -> CardRecord:
+        card = self.repository.get_card_by_public_id(public_id)
+        if card is None:
+            raise CardNotFoundError
+        status = CardStatus(card.status_code)
+        if status == CardStatus.CANCELLED:
+            return card
+        if status not in {
+            CardStatus.ASSIGNED,
+            CardStatus.CONFIRMED,
+            CardStatus.REJECTED,
+        }:
+            raise InvalidCardTransitionError("card_not_cancellable_for_status")
+        return self._change_status(
+            public_id,
+            target_status=CardStatus.CANCELLED,
+            actor_user_id=None,
+            actor_role_ids=None,
+            actor_type=ActorType.FRAME_CLIENT,
+            comment=comment,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            action=CardAction.CANCEL,
+        )
+
     def end_pending_result(
         self,
         public_id: UUID,
@@ -1149,7 +1183,7 @@ class CardService:
         public_id: UUID,
         *,
         target_status: CardStatus,
-        actor_user_id: int,
+        actor_user_id: int | None,
         actor_role_ids: Collection[int] | None,
         actor_type: ActorType = ActorType.INTERNAL_USER,
         comment: str | None,

@@ -24,6 +24,9 @@ class FrameSession:
     origin: str | None
     permissions: tuple[str, ...]
     omnidesk_company_id: str | None = None
+    client_display_name: str | None = None
+    client_company_name: str | None = None
+    client_contact_value: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +44,9 @@ class FrameSessionStore(Protocol):
         omnidesk_user_id: str,
         omnidesk_company_id: str | None,
         origin: str | None,
+        client_display_name: str | None = None,
+        client_company_name: str | None = None,
+        client_contact_value: str | None = None,
     ) -> CreatedFrameSession: ...
 
     def get_session(self, token: str) -> FrameSession | None: ...
@@ -58,6 +64,9 @@ class RedisFrameSessionStore:
         omnidesk_user_id: str,
         omnidesk_company_id: str | None,
         origin: str | None,
+        client_display_name: str | None = None,
+        client_company_name: str | None = None,
+        client_contact_value: str | None = None,
     ) -> CreatedFrameSession:
         token = new_session_token()
         now = datetime.now(UTC)
@@ -71,6 +80,9 @@ class RedisFrameSessionStore:
             expires_at=now + timedelta(seconds=ttl_seconds),
             origin=origin,
             permissions=FRAME_SESSION_PERMISSIONS,
+            client_display_name=client_display_name,
+            client_company_name=client_company_name,
+            client_contact_value=client_contact_value,
         )
         payload = asdict(session)
         payload["created_at"] = session.created_at.isoformat()
@@ -98,6 +110,9 @@ class RedisFrameSessionStore:
             expires_at=expires_at,
             origin=data.get("origin"),
             permissions=tuple(data["permissions"]),
+            client_display_name=data.get("client_display_name"),
+            client_company_name=data.get("client_company_name"),
+            client_contact_value=data.get("client_contact_value"),
         )
 
 

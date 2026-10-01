@@ -37,6 +37,7 @@ from app.cards.constants import (
 from app.cards.create_policy import CreateScenario, validate_role_create
 from app.cards.policy import CardActionPolicyError
 from app.cards.repository import (
+    CancellationRecord,
     CardHistoryRecord,
     CardRecord,
     ClientRecord,
@@ -80,6 +81,9 @@ class FakeCardRepository:
         self.reminder_advances: list[dict[str, Any]] = []
         self.active_result_codes: set[int] = {0}
         self.omnidesk_note_intents: list[dict[str, Any]] = []
+        self.cancellation_tokens: dict[str, CancellationRecord] = {}
+        self.next_token_id = 1
+        self.outbox_intents: list[dict[str, Any]] = []
 
     def create_card(self, data: CreateCardData) -> CardRecord:
         now = datetime.now(UTC)
@@ -135,6 +139,9 @@ class FakeCardRepository:
         self.clients[data.omnidesk_user_id] = client
         return client
 
+    def get_client_by_id(self, client_id: int) -> ClientRecord | None:
+        return next((c for c in self.clients.values() if c.id == client_id), None)
+
     def list_cards_by_ticket(self, omnidesk_ticket_number: str) -> list[CardRecord]:
         return [
             card
@@ -157,13 +164,14 @@ class FakeCardRepository:
         self,
         *,
         card_id: int,
-        source_event_id: int,
+        source_event_id: int | None,
         omnidesk_ticket_number: str,
         action_type: str,
         payload: dict[str, Any],
     ) -> int:
-        if any(
-            intent["source_event_id"] == source_event_id
+        if source_event_id is not None and any(
+            intent.get("source_event_id") == source_event_id
+            and intent.get("action_type") == action_type
             for intent in self.omnidesk_note_intents
         ):
             return 0
@@ -213,6 +221,77 @@ class FakeCardRepository:
 
     def get_card_by_id_for_update(self, card_id: int) -> CardRecord | None:
         return next((card for card in self.cards.values() if card.id == card_id), None)
+
+    def get_card_by_id(self, card_id: int) -> CardRecord | None:
+        return next((card for card in self.cards.values() if card.id == card_id), None)
+
+    def create_cancellation_token(
+        self,
+        *,
+        nonce: str,
+        token_hash: str,
+        card_id: int,
+        omnidesk_ticket_number: str,
+        omnidesk_user_id: str | None,
+        expires_at: datetime,
+        created_at: datetime | None = None,
+    ) -> int:
+        now = created_at or datetime.now(UTC)
+        record = CancellationRecord(
+            id=self.next_token_id,
+            token_hash=token_hash,
+            card_id=card_id,
+            omnidesk_ticket_number=omnidesk_ticket_number,
+            omnidesk_user_id=omnidesk_user_id,
+            action="cancel",
+            created_at=now,
+            expires_at=expires_at,
+            nonce=nonce,
+            consumed_at=None,
+        )
+        self.cancellation_tokens[token_hash] = record
+        token_id = self.next_token_id
+        self.next_token_id += 1
+        return token_id
+
+    def get_cancellation_token(self, token_hash: str) -> CancellationRecord | None:
+        return self.cancellation_tokens.get(token_hash)
+
+    def get_cancellation_token_for_update(
+        self, token_hash: str
+    ) -> CancellationRecord | None:
+        return self.cancellation_tokens.get(token_hash)
+
+    def consume_cancellation_token(
+        self,
+        *,
+        token_id: int,
+        consumed_at: datetime,
+        consumed_by_ip: str | None = None,
+        consumed_by_user_agent: str | None = None,
+    ) -> bool:
+        for k, v in self.cancellation_tokens.items():
+            if v.id == token_id and v.consumed_at is None:
+                self.cancellation_tokens[k] = replace(
+                    v,
+                    consumed_at=consumed_at,
+                    consumed_by_ip=consumed_by_ip,
+                    consumed_by_user_agent=consumed_by_user_agent,
+                )
+                return True
+        return False
+
+    def get_latest_active_cancellation_token(
+        self, card_id: int, *, now: datetime
+    ) -> CancellationRecord | None:
+        candidates = [
+            t
+            for t in self.cancellation_tokens.values()
+            if t.card_id == card_id and t.consumed_at is None and t.expires_at > now
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda t: t.created_at)
 
     def has_card_event_comment(self, *, card_id: int, comment: str) -> bool:
         return any(

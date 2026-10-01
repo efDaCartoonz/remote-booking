@@ -26,6 +26,8 @@ class CardCreateRequest(BaseModel):
     planned_start_at: datetime
     planned_duration_minutes: int = Field(default=60, ge=30, le=720)
     client_id: int | None = None
+    client_name: str | None = Field(default=None, max_length=255)
+    client_company_name: str | None = Field(default=None, max_length=255)
     criticality_code: int = Field(default=0, ge=0)
     urgency_code: int = Field(default=0, ge=0)
     client_timezone_at_creation: str | None = Field(default=None, max_length=64)

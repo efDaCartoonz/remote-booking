@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { getDayBoundsInTz, hasDstTransitionInRange } from "./calendar-timezone";
+import { convertWallTimeToISO } from "./frame/timezone";
 
 type Role = { id: number; name: string };
-type User = { id: number; username: string; full_name: string; roles: Role[] };
+type User = { id: number; username: string; full_name: string; roles: Role[]; timezone?: string };
 type Card = {
   id: string;
   number: string;
@@ -45,6 +47,86 @@ type CreateValidation = CreateValidationSuccess | { ok: false; error: string };
 
 const RETURN_TO_KEY = "rdm.return_to";
 const user = ref<User | null>(null);
+const profileTimeZone = computed(() => user.value?.timezone || "Asia/Yekaterinburg");
+const editTimezone = ref("Asia/Yekaterinburg");
+const tzBusy = ref(false);
+const tzError = ref("");
+const tzSuccess = ref("");
+const standardTimezones = [
+  "Asia/Yekaterinburg",
+  "Europe/Moscow",
+  "Europe/Kaliningrad",
+  "Europe/Samara",
+  "Asia/Omsk",
+  "Asia/Novosibirsk",
+  "Asia/Krasnoyarsk",
+  "Asia/Irkutsk",
+  "Asia/Yakutsk",
+  "Asia/Vladivostok",
+  "Asia/Magadan",
+  "Asia/Kamchatka",
+  "UTC",
+];
+
+function getTzOffsetMs(date: Date, timeZone: string): number {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const p of parts) map[p.type] = p.value;
+  const hour = Number(map.hour) % 24;
+  const asUtc = Date.UTC(
+    Number(map.year),
+    Number(map.month) - 1,
+    Number(map.day),
+    hour,
+    Number(map.minute),
+    Number(map.second)
+  );
+  return asUtc - date.getTime();
+}
+
+function dateInTz(dateValue: string, dayOffset = 0, timeZone = profileTimeZone.value): Date {
+  const [year, month, day] = dateValue.split("-").map(Number);
+  const baseUtc = new Date(Date.UTC(year, month - 1, day + dayOffset, 0, 0, 0));
+  const offset1 = getTzOffsetMs(baseUtc, timeZone);
+  const adjusted = new Date(baseUtc.getTime() - offset1);
+  const offset2 = getTzOffsetMs(adjusted, timeZone);
+  return new Date(baseUtc.getTime() - offset2);
+}
+
+function profileDateTimeToIso(dateTimeValue: string, timeZone = profileTimeZone.value): string {
+  if (!dateTimeValue) return "";
+  const [datePart, timePart] = dateTimeValue.split("T");
+  return convertWallTimeToISO(datePart, timePart, timeZone);
+}
+
+function toProfileInput(value: string, timeZone = profileTimeZone.value): string {
+  const date = new Date(value);
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(date);
+  const map: Record<string, string> = {};
+  for (const p of parts) map[p.type] = p.value;
+  const hour = String(Number(map.hour) % 24).padStart(2, "0");
+  return `${map.year}-${map.month}-${map.day}T${hour}:${map.minute}`;
+}
+
 const card = ref<Card | null>(null);
 const history = ref<HistoryEntry[]>([]);
 const notifications = ref<NotificationEntry[]>([]);
@@ -78,7 +160,6 @@ const rescheduleDuration = ref(60);
 const rescheduleDescription = ref("");
 const cardId = computed(() => location.pathname.match(/^\/cards\/([^/]+)\/?$/)?.[1]);
 const workplacePath = location.pathname === "/work" || location.pathname === "/";
-const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Moscow";
 const managerPath = location.pathname === "/manager";
 const managerNewPath = location.pathname === "/manager/cards/new";
 const manager = ref<ManagerData | null>(null);
@@ -105,14 +186,9 @@ let createTimer: ReturnType<typeof setInterval> | undefined;
 
 type ManagerPeriod = { periodFrom: string | null; periodTo: string | null };
 
-function localDateAt(dateValue: string, dayOffset = 0): Date {
-  const [year, month, day] = dateValue.split("-").map(Number);
-  return new Date(year, month - 1, day + dayOffset, 0, 0, 0, 0);
-}
-
 function managerPeriod(from: string, to: string): ManagerPeriod | string {
-  if (from && to && localDateAt(to) < localDateAt(from)) return "Дата окончания не может быть раньше даты начала.";
-  return { periodFrom: from ? localDateAt(from).toISOString() : null, periodTo: to ? localDateAt(to, 1).toISOString() : null };
+  if (from && to && dateInTz(to, 0) < dateInTz(from, 0)) return "Дата окончания не может быть раньше даты начала.";
+  return { periodFrom: from ? dateInTz(from, 0).toISOString() : null, periodTo: to ? dateInTz(to, 1).toISOString() : null };
 }
 
 const hasL1Role = computed(() => hasRole(1));
@@ -250,7 +326,7 @@ function handleUnauthorized(): void {
 
 function applyCard(value: Card): void {
   card.value = value;
-  rescheduleStart.value = toLocalInput(value.planned_start_at);
+  rescheduleStart.value = toProfileInput(value.planned_start_at);
   rescheduleDuration.value = value.planned_duration_minutes;
   rescheduleDescription.value = value.description ?? "";
 }
@@ -337,6 +413,7 @@ async function load(): Promise<void> {
   rememberCardRoute();
   try {
     user.value = await api<User>("/api/v1/auth/me");
+    editTimezone.value = user.value.timezone || "Asia/Yekaterinburg";
     if (workplacePath) {
       mineRole.value = hasL1Role.value ? "l1" : "l2";
       if (hasL1Role.value || hasL2Role.value) await loadMine();
@@ -395,12 +472,17 @@ function floorToMinute(value: Date): Date {
   return result;
 }
 function localDateTimeInput(value: Date): string {
-  const pad = (part: number) => String(part).padStart(2, "0");
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;
+  return toProfileInput(value.toISOString());
 }
 function validateCreateWindow(startValue: string, durationValue: number, now: Date): CreateValidation {
-  const start = new Date(startValue);
+  let start: Date;
+  try {
+    start = new Date(profileDateTimeToIso(startValue));
+  } catch {
+    return { ok: false, error: "Укажите корректные дату и время начала." };
+  }
   if (!startValue || Number.isNaN(start.getTime())) return { ok: false, error: "Укажите корректные дату и время начала." };
+  if (toProfileInput(start.toISOString()) !== startValue.slice(0, 16)) return { ok: false, error: "Указанное время не существует в часовом поясе профиля." };
   const duration = Number(durationValue);
   if (!Number.isInteger(duration) || duration < 30 || duration > 720) return { ok: false, error: "Длительность должна быть от 30 до 720 минут." };
   const bounds = createWindowBounds(now);
@@ -499,35 +581,65 @@ async function loadManager(): Promise<void> {
 }
 
 const calendarStart = computed(() => {
-  const value = managerFrom.value ? new Date(managerFrom.value) : new Date();
-  value.setSeconds(0, 0);
-  if (calendarMode.value === "week") {
-    const day = value.getDay() || 7;
-    value.setDate(value.getDate() - day + 1);
+  const baseDateStr = managerFrom.value || "";
+  let baseDate: Date;
+  if (baseDateStr) {
+    baseDate = dateInTz(baseDateStr, 0);
+  } else {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: profileTimeZone.value, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date());
+    const m: Record<string, string> = {};
+    for (const p of parts) m[p.type] = p.value;
+    baseDate = dateInTz(`${m.year}-${m.month}-${m.day}`, 0);
   }
-  value.setHours(0, 0, 0, 0);
-  return value;
+  if (calendarMode.value === "week") {
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: profileTimeZone.value, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(baseDate);
+    const m: Record<string, string> = {};
+    for (const p of parts) m[p.type] = p.value;
+    const d = new Date(Date.UTC(Number(m.year), Number(m.month) - 1, Number(m.day)));
+    const weekday = d.getUTCDay() || 7;
+    return dateInTz(`${m.year}-${m.month}-${m.day}`, -(weekday - 1));
+  }
+  return baseDate;
 });
 const calendarDays = computed(() => Array.from({ length: calendarMode.value === "day" ? 1 : 7 }, (_, index) => {
-  const value = new Date(calendarStart.value);
-  value.setDate(value.getDate() + index);
-  return value;
+  const startDate = toProfileInput(calendarStart.value.toISOString()).slice(0, 10);
+  return dateInTz(startDate, index);
 }));
 const calendarHours = Array.from({ length: 25 }, (_, index) => index);
+const hasCalendarDstTransition = computed(() => {
+  return hasDstTransitionInRange(calendarDays.value, profileTimeZone.value);
+});
+const calendarPeriodItems = computed(() => {
+  if (!manager.value?.items.length || !calendarDays.value.length) return [];
+  const firstDay = calendarDays.value[0];
+  const lastDay = calendarDays.value[calendarDays.value.length - 1];
+  const startBounds = getDayBoundsInTz(firstDay, profileTimeZone.value);
+  const endBounds = getDayBoundsInTz(lastDay, profileTimeZone.value);
+  const periodStart = startBounds.dayStart.getTime();
+  const periodEnd = endBounds.dayEnd.getTime();
+  return manager.value.items.filter((item) => {
+    const start = new Date(item.planned_start_at).getTime();
+    const end = new Date(item.planned_end_at).getTime();
+    return start < periodEnd && end > periodStart;
+  });
+});
 function calendarEventStyle(item: ManagerCard, day: Date): Record<string, string> {
-  const start = new Date(item.planned_start_at);
-  const end = new Date(item.planned_end_at);
-  const dayStart = new Date(day);
-  const dayEnd = new Date(day); dayEnd.setDate(dayEnd.getDate() + 1);
-  const visibleStart = Math.max(start.getTime(), dayStart.getTime());
-  const visibleEnd = Math.min(end.getTime(), dayEnd.getTime());
-  const top = ((visibleStart - dayStart.getTime()) / 60000) / 15 * 20;
+  const start = new Date(item.planned_start_at).getTime();
+  const end = new Date(item.planned_end_at).getTime();
+  const bounds = getDayBoundsInTz(day, profileTimeZone.value);
+  const dayStart = bounds.dayStart.getTime();
+  const dayEnd = bounds.dayEnd.getTime();
+  const visibleStart = Math.max(start, dayStart);
+  const visibleEnd = Math.min(end, dayEnd);
+  const top = ((visibleStart - dayStart) / 60000) / 15 * 20;
   const height = Math.max(24, ((visibleEnd - visibleStart) / 60000) / 15 * 20);
   return { top: `${top}px`, height: `${height}px` };
 }
 function calendarItems(day: Date): ManagerCard[] {
-  const dayEnd = new Date(day); dayEnd.setDate(dayEnd.getDate() + 1);
-  return manager.value?.items.filter((item) => new Date(item.planned_start_at) < dayEnd && new Date(item.planned_end_at) > day) ?? [];
+  const bounds = getDayBoundsInTz(day, profileTimeZone.value);
+  const dayStart = bounds.dayStart.getTime();
+  const dayEnd = bounds.dayEnd.getTime();
+  return manager.value?.items.filter((item) => new Date(item.planned_start_at).getTime() < dayEnd && new Date(item.planned_end_at).getTime() > dayStart) ?? [];
 }
 
 async function login(): Promise<void> {
@@ -557,6 +669,37 @@ async function logout(): Promise<void> {
     user.value = null;
     card.value = null;
     history.value = [];
+  }
+}
+
+async function saveProfileTimezone(): Promise<void> {
+  if (tzBusy.value || !editTimezone.value.trim()) return;
+  tzBusy.value = true;
+  tzError.value = "";
+  tzSuccess.value = "";
+  try {
+    const res = await api<{ user_id: number; timezone: string }>("/api/v1/auth/timezone", {
+      method: "PUT",
+      body: JSON.stringify({ timezone: editTimezone.value.trim() }),
+    });
+    if (user.value) {
+      user.value.timezone = res.timezone;
+    }
+    editTimezone.value = res.timezone;
+    tzSuccess.value = "Часовой пояс сохранён.";
+    if (managerPath && manager.value) {
+      await loadManager();
+    }
+  } catch (error) {
+    if ((error as ApiError).status === 401) {
+      handleUnauthorized();
+    } else if ((error as ApiError).status === 422) {
+      tzError.value = "Недопустимый часовой пояс IANA.";
+    } else {
+      tzError.value = readableError(error);
+    }
+  } finally {
+    tzBusy.value = false;
   }
 }
 
@@ -597,9 +740,16 @@ function rescheduleCard(): Promise<void> {
     actionError.value = "Укажите причину переноса.";
     return Promise.resolve();
   }
+  let plannedStart: string;
+  try {
+    plannedStart = profileDateTimeToIso(rescheduleStart.value);
+  } catch {
+    actionError.value = "Укажите существующее и однозначное время в часовом поясе профиля.";
+    return Promise.resolve();
+  }
   return runAction("reschedule", `/api/v1/cards/${encodeURIComponent(cardId.value ?? "")}/l1/reschedule`, {
     method: "POST",
-    body: JSON.stringify({ planned_start_at: new Date(rescheduleStart.value).toISOString(), planned_duration_minutes: rescheduleDuration.value, description: rescheduleDescription.value || null, reason: rescheduleReason.value || null }),
+    body: JSON.stringify({ planned_start_at: plannedStart, planned_duration_minutes: rescheduleDuration.value, description: rescheduleDescription.value || null, reason: rescheduleReason.value || null }),
   });
 }
 
@@ -661,10 +811,17 @@ async function setReminderInterval(): Promise<void> {
 
 async function submitRoleCreate(): Promise<void> {
   if (!user.value || roleCreateBusy.value) return;
+  let plannedStart: string;
+  try {
+    plannedStart = profileDateTimeToIso(roleCreate.value.start);
+  } catch {
+    roleCreateError.value = "Укажите существующее и однозначное время в часовом поясе профиля.";
+    return;
+  }
   roleCreateBusy.value = true;
   roleCreateError.value = "";
   const scenario = mineRole.value === "l1" ? "l1" : roleCreate.value.scenario === "urgent" ? "l2/urgent" : roleCreate.value.scenario === "retroactive" ? "l2/retroactive" : "l2";
-  const payload: Record<string, unknown> = { case_number: roleCreate.value.caseNumber, planned_start_at: new Date(roleCreate.value.start).toISOString(), planned_duration_minutes: roleCreate.value.duration, description: roleCreate.value.description || null };
+  const payload: Record<string, unknown> = { case_number: roleCreate.value.caseNumber, planned_start_at: plannedStart, planned_duration_minutes: roleCreate.value.duration, description: roleCreate.value.description || null };
   if (scenario === "l2/urgent") payload.urgent_reason = roleCreate.value.urgentReason;
   if (scenario === "l2/retroactive") {
     if (roleCreate.value.resultCode) payload.result_code = Number(roleCreate.value.resultCode);
@@ -679,17 +836,11 @@ async function submitRoleCreate(): Promise<void> {
   } finally { roleCreateBusy.value = false; }
 }
 
-function formatDateTime(value: string, timeZone = browserTimeZone): string {
+function formatDateTime(value: string, timeZone = profileTimeZone.value): string {
   return new Intl.DateTimeFormat("ru-RU", { dateStyle: "medium", timeStyle: "short", timeZone }).format(new Date(value));
 }
-function formatTime(value: string): string {
-  return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone: browserTimeZone }).format(new Date(value));
-}
-
-function toLocalInput(value: string): string {
-  const date = new Date(value);
-  const pad = (part: number) => String(part).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+function formatTime(value: string, timeZone = profileTimeZone.value): string {
+  return new Intl.DateTimeFormat("ru-RU", { hour: "2-digit", minute: "2-digit", timeZone }).format(new Date(value));
 }
 
 function formatDuration(minutes: number): string {
@@ -756,6 +907,16 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
             <p v-if="roleCreateError" class="error" role="alert">{{ roleCreateError }}</p><button :disabled="roleCreateBusy">{{ roleCreateBusy ? "Создаём…" : "Создать карточку" }}</button>
           </form>
         </section>
+        <section class="panel profile-tz-panel">
+          <h2>Часовой пояс профиля</h2>
+          <form class="inline-form" @submit.prevent="saveProfileTimezone">
+            <input v-model="editTimezone" list="staff-timezones" aria-label="Часовой пояс профиля" />
+            <datalist id="staff-timezones"><option v-for="tz in standardTimezones" :key="tz" :value="tz" /></datalist>
+            <button type="submit" :disabled="tzBusy">{{ tzBusy ? "Сохраняем…" : "Сохранить часовой пояс" }}</button>
+          </form>
+          <p v-if="tzError" class="error profile-tz-error" role="alert">{{ tzError }}</p>
+          <p v-if="tzSuccess" class="success profile-tz-success" role="status">{{ tzSuccess }}</p>
+        </section>
       </template>
 
       <template v-else-if="showCard && card">
@@ -786,7 +947,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
               <dt>Начало</dt><dd>{{ formatDateTime(card.planned_start_at) }}</dd>
               <dt>Окончание</dt><dd>{{ formatDateTime(card.planned_end_at) }}</dd>
               <dt>Длительность</dt><dd>{{ formatDuration(card.planned_duration_minutes) }}</dd>
-              <dt>Часовой пояс отображения</dt><dd>{{ browserTimeZone }}</dd>
+              <dt>Часовой пояс отображения</dt><dd>{{ profileTimeZone }}</dd>
               <dt>То же время по Москве</dt><dd>{{ formatDateTime(card.planned_start_at, "Europe/Moscow") }} — {{ formatDateTime(card.planned_end_at, "Europe/Moscow") }}</dd>
             </dl>
           </section>
@@ -868,6 +1029,17 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
 
         <section class="panel"><h2>Уведомления</h2><p v-if="notificationError" class="muted">{{ notificationError }}</p><p v-else-if="!notifications.length" class="muted">Уведомлений пока нет.</p><ol v-else class="notification-list"><li v-for="(entry, index) in notifications" :key="`${entry.created_at}-${index}`">{{ entry.event }} · {{ entry.channel }} · {{ entry.status }} · {{ formatDateTime(entry.created_at) }}</li></ol></section>
 
+        <section class="panel profile-tz-panel">
+          <h2>Часовой пояс профиля</h2>
+          <form class="inline-form" @submit.prevent="saveProfileTimezone">
+            <input v-model="editTimezone" list="staff-timezones" aria-label="Часовой пояс профиля" />
+            <datalist id="staff-timezones"><option v-for="tz in standardTimezones" :key="tz" :value="tz" /></datalist>
+            <button type="submit" :disabled="tzBusy">{{ tzBusy ? "Сохраняем…" : "Сохранить часовой пояс" }}</button>
+          </form>
+          <p v-if="tzError" class="error profile-tz-error" role="alert">{{ tzError }}</p>
+          <p v-if="tzSuccess" class="success profile-tz-success" role="status">{{ tzSuccess }}</p>
+        </section>
+
         <footer class="footer muted">Вы вошли как {{ user.full_name || user.username }}.</footer>
       </template>
 
@@ -876,7 +1048,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
       </template>
       <template v-else-if="managerNewPath">
         <header class="top"><div><p class="eyebrow">RDM</p><h1>Новая карточка</h1><p class="muted">Создание доступно только руководителю.</p></div><a class="button-link" href="/manager">← Вернуться к панели</a></header>
-        <p class="hint">Допустимое начало: не раньше чем через 2 часа и не позднее 14 дней. Длительность: 30–720 минут. Часовой пояс: {{ browserTimeZone }}.</p>
+        <p class="hint">Допустимое начало: не раньше чем через 2 часа и не позднее 14 дней. Длительность: 30–720 минут. Часовой пояс: {{ profileTimeZone }}.</p>
         <form class="form create-form" @submit.prevent="submitCreate">
           <label>Номер тикета<input v-model.trim="create.caseNumber" required /></label>
           <button type="button" class="secondary" :disabled="preflightLoading || !create.caseNumber" @click="preflightTicket">{{ preflightLoading ? "Проверяем…" : "Проверить тикет" }}</button>
@@ -892,7 +1064,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <h1>Панель руководителя</h1><p v-if="managerError" class="error" role="alert">{{ managerError }}</p><button v-if="hasRole(3)" @click="loadManager">Повторить</button>
       </template>
       <template v-else-if="managerPath && manager">
-        <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ browserTimeZone }}</p></div><div class="top-actions"><a class="button-link" href="/manager/cards/new">+ Создать карточку</a><button class="secondary" @click="logout">Выйти</button></div></header>
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ profileTimeZone }}</p></div><div class="top-actions"><a class="button-link" href="/manager/cards/new">+ Создать карточку</a><button class="secondary" @click="logout">Выйти</button></div></header>
         <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div><div class="panel"><strong>{{ manager.summary.urgent }}</strong><span>Срочно</span></div><div class="panel"><strong>{{ manager.summary.urgent_collision }}</strong><span>Коллизии</span></div></div>
         <section v-if="attentionItems.length" class="panel"><h2>Требуют внимания</h2><div class="work-list"><a v-for="item in attentionItems" :key="item.public_id" class="work-row" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ item.repeated_unsuccessful_cycle ? 'Повторный неуспешный цикл' : item.first_unsuccessful_cycle ? 'Первый неуспешный цикл' : item.status_label }}{{ item.overdue ? ' · Просрочено' : '' }}{{ item.urgent ? ' · Срочно' : '' }}</span></a></div></section>
         <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>Дата с<input v-model="managerFrom" type="date" /></label><label>Дата по<input v-model="managerTo" type="date" /></label><button>Применить</button></form>
@@ -902,7 +1074,22 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <div class="manager-toggle" role="group" aria-label="Режим отображения"><button type="button" :class="{ selected: managerView === 'list' }" @click="managerView = 'list'">Список</button><button type="button" :class="{ selected: managerView === 'calendar' }" @click="managerView = 'calendar'">Календарь</button><template v-if="managerView === 'calendar'"><button type="button" :class="{ selected: calendarMode === 'day' }" @click="calendarMode = 'day'">День</button><button type="button" :class="{ selected: calendarMode === 'week' }" @click="calendarMode = 'week'">Неделя</button></template></div>
         <p v-if="!managerLoading && !manager.items.length" class="hint">Карточки не найдены за выбранный период.</p>
         <div v-else-if="managerView === 'list'" class="manager-list"><a v-for="item in manager.items" :key="item.public_id" class="manager-row panel" :href="`/cards/${item.public_id}`"><div><strong>{{ item.number }}</strong><span class="muted">Тикет {{ item.omnidesk_ticket_number }}</span></div><span class="status" :class="`status-${item.status}`">{{ item.status_label }}</span><span>{{ formatDateTime(item.planned_start_at) }} · {{ formatDuration(item.planned_duration_minutes) }}</span><span>L2: {{ item.l2_engineer_name || "Не назначен" }}</span><span v-if="item.urgent || item.overdue" class="muted">{{ item.urgent ? "Срочно " : "" }}{{ item.overdue ? "Просрочено" : "" }}</span></a></div>
-        <div v-else class="calendar" :style="{ '--calendar-days': String(calendarDays.length) }" :data-calendar-days="calendarDays.length"><div class="calendar-head"><span>Время</span><strong v-for="day in calendarDays" :key="day.toISOString()">{{ new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "short" }).format(day) }}</strong></div><div class="calendar-body"><div class="calendar-times"><span v-for="hour in calendarHours" :key="hour">{{ String(hour).padStart(2, "0") }}:00</span></div><div v-for="day in calendarDays" :key="`col-${day.toISOString()}`" class="calendar-column"><span v-for="hour in calendarHours" :key="hour" class="calendar-line" :style="{ top: `${hour * 80}px` }"></span><a v-for="item in calendarItems(day)" :key="item.public_id" class="calendar-event" :class="[`status-${item.status}`, { urgent: item.urgent, overdue: item.overdue }]" :style="calendarEventStyle(item, day)" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ formatTime(item.planned_start_at) }}–{{ formatTime(item.planned_end_at) }} · L2: {{ item.l2_engineer_name || "Не назначен" }}</span><small>{{ item.status_label }}{{ item.urgent ? " · Срочно" : "" }}{{ item.overdue ? " · Просрочено" : "" }}</small></a></div></div></div>
+        <template v-else-if="hasCalendarDstTransition">
+          <p class="warning dst-notice" role="status">В выбранном периоде часового пояса {{ profileTimeZone }} происходит переход на сезонное время (DST). Карточки отображаются списком для точного отображения времени.</p>
+          <p v-if="!calendarPeriodItems.length" class="hint">Карточки не найдены за выбранный период.</p>
+          <div v-else class="manager-list"><a v-for="item in calendarPeriodItems" :key="item.public_id" class="manager-row panel" :href="`/cards/${item.public_id}`"><div><strong>{{ item.number }}</strong><span class="muted">Тикет {{ item.omnidesk_ticket_number }}</span></div><span class="status" :class="`status-${item.status}`">{{ item.status_label }}</span><span>{{ formatDateTime(item.planned_start_at) }} · {{ formatDuration(item.planned_duration_minutes) }}</span><span>L2: {{ item.l2_engineer_name || "Не назначен" }}</span><span v-if="item.urgent || item.overdue" class="muted">{{ item.urgent ? "Срочно " : "" }}{{ item.overdue ? "Просрочено" : "" }}</span></a></div>
+        </template>
+        <div v-else class="calendar" :style="{ '--calendar-days': String(calendarDays.length) }" :data-calendar-days="calendarDays.length"><div class="calendar-head"><span>Время</span><strong v-for="day in calendarDays" :key="day.toISOString()">{{ new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "short", timeZone: profileTimeZone }).format(day) }}</strong></div><div class="calendar-body"><div class="calendar-times"><span v-for="hour in calendarHours" :key="hour">{{ String(hour).padStart(2, "0") }}:00</span></div><div v-for="day in calendarDays" :key="`col-${day.toISOString()}`" class="calendar-column"><span v-for="hour in calendarHours" :key="hour" class="calendar-line" :style="{ top: `${hour * 80}px` }"></span><a v-for="item in calendarItems(day)" :key="item.public_id" class="calendar-event" :class="[`status-${item.status}`, { urgent: item.urgent, overdue: item.overdue }]" :style="calendarEventStyle(item, day)" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ formatTime(item.planned_start_at) }}–{{ formatTime(item.planned_end_at) }} · L2: {{ item.l2_engineer_name || "Не назначен" }}</span><small>{{ item.status_label }}{{ item.urgent ? " · Срочно" : "" }}{{ item.overdue ? " · Просрочено" : "" }}</small></a></div></div></div>
+        <section class="panel profile-tz-panel">
+          <h2>Часовой пояс профиля</h2>
+          <form class="inline-form" @submit.prevent="saveProfileTimezone">
+            <input v-model="editTimezone" list="staff-timezones" aria-label="Часовой пояс профиля" />
+            <datalist id="staff-timezones"><option v-for="tz in standardTimezones" :key="tz" :value="tz" /></datalist>
+            <button type="submit" :disabled="tzBusy">{{ tzBusy ? "Сохраняем…" : "Сохранить часовой пояс" }}</button>
+          </form>
+          <p v-if="tzError" class="error profile-tz-error" role="alert">{{ tzError }}</p>
+          <p v-if="tzSuccess" class="success profile-tz-success" role="status">{{ tzSuccess }}</p>
+        </section>
       </template>
 
       <template v-else>

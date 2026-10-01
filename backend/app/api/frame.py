@@ -4,6 +4,7 @@ from collections.abc import Callable
 from ipaddress import ip_address
 from typing import Annotated, TypeVar
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
@@ -25,6 +26,15 @@ from app.frame.schemas import (
     frame_card_response,
     frame_cards_response,
     frame_session_response,
+)
+from app.cancellation.schemas import CancellationLinkResponse
+from app.cancellation.service import (
+    CancellationAccessError,
+    CancellationConfigurationError,
+    CancellationConflictError,
+    CancellationError,
+    CancellationNotFoundError,
+    CancellationThrottledError,
 )
 from app.frame.service import (
     FrameCardConflictError,
@@ -154,6 +164,62 @@ def create_frame_card(
             status_code=status.HTTP_409_CONFLICT, detail=exc.detail
         ) from exc
     return frame_card_response(card)
+
+
+@router.post(
+    "/cards/{card_id}/cancellation-link",
+    response_model=CancellationLinkResponse,
+    status_code=status.HTTP_200_OK,
+)
+def request_card_cancellation_link(
+    card_id: UUID,
+    request: Request,
+    session: Annotated[FrameSession, Depends(get_current_frame_session)],
+    service: Annotated[FrameService, Depends(get_frame_service)],
+) -> CancellationLinkResponse:
+    try:
+        return service.request_cancellation_link(
+            session=session,
+            card_id=card_id,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+    except CancellationNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=exc.detail
+        ) from exc
+    except CancellationAccessError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=exc.detail
+        ) from exc
+    except CancellationConflictError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=exc.detail
+        ) from exc
+    except CancellationThrottledError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=exc.detail
+        ) from exc
+    except CancellationConfigurationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=exc.detail
+        ) from exc
+    except CancellationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=exc.detail
+        ) from exc
+    except FrameTicketAccessError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail=exc.detail
+        ) from exc
+    except OmnideskUnavailableError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=exc.detail
+        ) from exc
+    except OmnideskInvalidResponseError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail=exc.detail
+        ) from exc
 
 
 def _handle_ticket_check(operation: Callable[[], T]) -> T:

@@ -5,10 +5,11 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
 from fastapi.testclient import TestClient
-from test_cards import FakeCardRepository
+from test_cards import FakeCardRepository as BaseFakeCardRepository
 
 from app.api.frame import get_frame_card_repository
 from app.cards.constants import ActorType, CreatedSource
+from app.cards.repository import CardRecord, ClientSyncData, CreateCardData
 from app.cards.schemas import CardCreateRequest
 from app.cards.service import CardService
 from app.core.config import settings
@@ -28,6 +29,18 @@ from app.frame.sessions import (
 from app.main import create_app
 
 
+class FakeCardRepository(BaseFakeCardRepository):
+    def create_card(self, data: CreateCardData) -> CardRecord:
+        card = super().create_card(data)
+        card = replace(
+            card,
+            client_name=data.client_name,
+            client_company_name=data.client_company_name,
+        )
+        self.cards[card.public_id] = card
+        return card
+
+
 class FakeFrameSessionStore:
     def __init__(self) -> None:
         self.sessions: dict[str, FrameSession] = {}
@@ -41,6 +54,9 @@ class FakeFrameSessionStore:
         omnidesk_user_id: str,
         omnidesk_company_id: str | None,
         origin: str | None,
+        client_display_name: str | None = None,
+        client_company_name: str | None = None,
+        client_contact_value: str | None = None,
     ) -> CreatedFrameSession:
         token = f"frame-token-{self.next_token}"
         self.next_token += 1
@@ -54,6 +70,9 @@ class FakeFrameSessionStore:
             expires_at=now + timedelta(minutes=settings.frame_session_ttl_minutes),
             origin=origin,
             permissions=("cards:read", "cards:create"),
+            client_display_name=client_display_name,
+            client_company_name=client_company_name,
+            client_contact_value=client_contact_value,
         )
         self.sessions[token] = session
         return CreatedFrameSession(token=token, session=session)
@@ -146,6 +165,7 @@ def seed_ticket(
     case_id: str = "2000",
     number: str = "123-456789",
     user_id: str | None = "client-1",
+    company_name: str | None = "Компания",
     status: str = "open",
     deleted: bool = False,
     spam: bool = False,
@@ -156,6 +176,7 @@ def seed_ticket(
         user_id=user_id,
         company_id="company-1",
         client_display_name="Клиент",
+        client_company_name=company_name,
         client_contact_value="client@example.test",
         status=status,
         deleted=deleted,
@@ -227,11 +248,18 @@ def test_frame_api_reads_only_current_ticket_with_minimal_card_fields() -> None:
         omnidesk_client=omnidesk_client,
     )
     service = CardService(repository)
+    client_1 = repository.get_or_create_client(
+        ClientSyncData(omnidesk_user_id="client-1")
+    )
+    client_2 = repository.get_or_create_client(
+        ClientSyncData(omnidesk_user_id="client-2")
+    )
     service.create_card(
         CardCreateRequest(
             omnidesk_ticket_number="123-456789",
             planned_start_at=datetime.now(UTC) + timedelta(hours=3),
             l2_engineer_id=20,
+            client_id=client_1.id,
             description="Текущий тикет",
         ),
         actor_user_id=10,
@@ -242,6 +270,7 @@ def test_frame_api_reads_only_current_ticket_with_minimal_card_fields() -> None:
         CardCreateRequest(
             omnidesk_ticket_number="555-000001",
             planned_start_at=datetime.now(UTC) + timedelta(hours=4),
+            client_id=client_2.id,
             description="Другой тикет",
         ),
         actor_user_id=10,
@@ -259,7 +288,7 @@ def test_frame_api_reads_only_current_ticket_with_minimal_card_fields() -> None:
     assert len(body["cards"]) == 1
     card = body["cards"][0]
     assert card["description"] == "Текущий тикет"
-    assert card["available_actions"] == ["read"]
+    assert card["available_actions"] == ["read", "request_cancellation_link"]
     assert "l2_engineer_id" not in card
     assert "created_by_id" not in card
     assert "engineer_report" not in card
@@ -590,3 +619,270 @@ def test_frame_api_does_not_accept_existing_card_changes_or_internal_fields() ->
 
     assert cancel_response.status_code == 404
     assert patch_response.status_code == 404
+
+
+def test_frame_api_returns_safe_client_prefill_info() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(
+        omnidesk_client,
+        case_id="2000",
+        number="123-456789",
+        user_id="client-1",
+        company_name="ООО Вектор",
+    )
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(client, case_id="2000", ticket_number="123-456789")
+
+    response = client.get("/api/v1/frame/cards", headers={FRAME_TOKEN_HEADER: token})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["client_name"] == "Клиент"
+    assert body["client_company_name"] == "ООО Вектор"
+    assert body["client_contact_value"] == "client@example.test"
+
+
+def test_frame_session_validation_does_not_reflect_case_id() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+
+    response = client.post(
+        "/api/v1/frame/sessions",
+        json={"case_id": "private-case-id", "omnidesk_ticket_number": "123-456789"},
+    )
+
+    assert response.status_code == 422
+    assert "case_id" not in response.text
+    assert "private-case-id" not in response.text
+
+
+def test_frame_api_prefills_company_name_and_allows_update_at_creation() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(
+        omnidesk_client,
+        case_id="2000",
+        number="123-456789",
+        user_id="client-1",
+        company_name="ООО Исходная",
+    )
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(client, case_id="2000", ticket_number="123-456789")
+
+    # Client submits edited name, company and contact
+    response = client.post(
+        "/api/v1/frame/cards",
+        json={
+            "planned_start_at": future_start(),
+            "planned_duration_minutes": 60,
+            "client_name": "Иван Обновленный",
+            "client_company_name": "ПАО Новая Компания",
+            "client_contact_type_code": 0,
+            "client_contact_value": "ivan.updated@example.test",
+            "description": "Заказ нового подключения",
+        },
+        headers={FRAME_TOKEN_HEADER: token},
+    )
+
+    assert response.status_code == 201
+    card_body = response.json()
+    assert card_body["client_name"] == "Иван Обновленный"
+    assert card_body["client_company_name"] == "ПАО Новая Компания"
+
+    stored_card = next(iter(repository.cards.values()))
+    assert stored_card.client_name == "Иван Обновленный"
+    assert stored_card.client_company_name == "ПАО Новая Компания"
+    assert stored_card.client_contact_value == "ivan.updated@example.test"
+
+    # Original clients row display_name is preserved unchanged from ticket sync
+    client_record = repository.get_client_by_id(stored_card.client_id)
+    assert client_record is not None
+    assert client_record.display_name == "Клиент"
+
+
+def test_frame_api_falls_back_to_ticket_name_and_company_if_not_submitted() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    seed_ticket(
+        omnidesk_client,
+        case_id="2000",
+        number="123-456789",
+        user_id="client-1",
+        company_name="ООО Авто Заполнение",
+    )
+    client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(client, case_id="2000", ticket_number="123-456789")
+
+    response = client.post(
+        "/api/v1/frame/cards",
+        json={
+            "planned_start_at": future_start(),
+            "planned_duration_minutes": 60,
+        },
+        headers={FRAME_TOKEN_HEADER: token},
+    )
+
+    assert response.status_code == 201
+    card_body = response.json()
+    assert card_body["client_name"] == "Клиент"
+    assert card_body["client_company_name"] == "ООО Авто Заполнение"
+
+    stored_card = next(iter(repository.cards.values()))
+    assert stored_card.client_name == "Клиент"
+    assert stored_card.client_company_name == "ООО Авто Заполнение"
+    assert stored_card.client_contact_value == "client@example.test"
+
+
+def test_frame_api_ticket_user_reassignment_hides_old_owner_cards() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    service = CardService(repository)
+
+    # Initial state: Ticket belongs to client-1
+    seed_ticket(
+        omnidesk_client,
+        case_id="2000",
+        number="123-456789",
+        user_id="client-1",
+    )
+    client_1_record = repository.get_or_create_client(
+        ClientSyncData(omnidesk_user_id="client-1")
+    )
+    card_old = service.create_card(
+        CardCreateRequest(
+            omnidesk_ticket_number="123-456789",
+            planned_start_at=datetime.now(UTC) + timedelta(hours=3),
+            l2_engineer_id=20,
+            client_id=client_1_record.id,
+            description="Карточка старого владельца",
+        ),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    # Ticket reassigned to client-2 in Omnidesk
+    seed_ticket(
+        omnidesk_client,
+        case_id="2000",
+        number="123-456789",
+        user_id="client-2",
+        company_name="ООО Клиент 2",
+    )
+    test_client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token_2 = create_frame_session(
+        test_client, case_id="2000", ticket_number="123-456789"
+    )
+
+    # List cards for client-2: old owner card is hidden, but can_create is False (active card exists)
+    response = test_client.get(
+        "/api/v1/frame/cards", headers={FRAME_TOKEN_HEADER: token_2}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["cards"] == []
+    assert body["can_create"] is False
+
+    # Old card gets cancelled
+    from app.cards.constants import CardStatus
+    from app.cards.repository import StatusUpdateData
+
+    repository.update_card_status(
+        card_old.public_id,
+        StatusUpdateData(status=CardStatus.CANCELLED, actor_user_id=10),
+    )
+
+    # Now client-2 can create a card and still sees no previous cards
+    response_after_cancel = test_client.get(
+        "/api/v1/frame/cards", headers={FRAME_TOKEN_HEADER: token_2}
+    )
+    assert response_after_cancel.status_code == 200
+    body_after = response_after_cancel.json()
+    assert body_after["cards"] == []
+    assert body_after["can_create"] is True
+
+
+def test_frame_api_available_actions_only_assigned_confirmed_rejected() -> None:
+    repository = FakeCardRepository()
+    session_store = FakeFrameSessionStore()
+    omnidesk_client = FakeOmnideskTicketClient()
+    service = CardService(repository)
+
+    seed_ticket(
+        omnidesk_client,
+        case_id="2000",
+        number="123-456789",
+        user_id="client-1",
+    )
+    client_1_record = repository.get_or_create_client(
+        ClientSyncData(omnidesk_user_id="client-1")
+    )
+    test_client = make_client(
+        repository=repository,
+        session_store=session_store,
+        omnidesk_client=omnidesk_client,
+    )
+    token = create_frame_session(
+        test_client, case_id="2000", ticket_number="123-456789"
+    )
+
+    # Card 1: ASSIGNED -> available_actions has request_cancellation_link
+    c_assigned = service.create_card(
+        CardCreateRequest(
+            omnidesk_ticket_number="123-456789",
+            planned_start_at=datetime.now(UTC) + timedelta(hours=3),
+            l2_engineer_id=20,
+            client_id=client_1_record.id,
+        ),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    response = test_client.get(
+        "/api/v1/frame/cards", headers={FRAME_TOKEN_HEADER: token}
+    )
+    assert response.status_code == 200
+    cards = response.json()["cards"]
+    assert len(cards) == 1
+    assert "request_cancellation_link" in cards[0]["available_actions"]
+
+    # Transition to IN_PROGRESS -> available_actions only has read
+    service.start_card(
+        c_assigned.public_id,
+        actor_user_id=20,
+        comment="start",
+        ip_address=None,
+        user_agent=None,
+    )
+    response_in_prog = test_client.get(
+        "/api/v1/frame/cards", headers={FRAME_TOKEN_HEADER: token}
+    )
+    assert response_in_prog.json()["cards"][0]["available_actions"] == ["read"]

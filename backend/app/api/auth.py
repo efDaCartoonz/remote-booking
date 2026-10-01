@@ -10,6 +10,8 @@ from app.auth.schemas import (
     LoginRequest,
     LoginResponse,
     RoleResponse,
+    TimezoneResponse,
+    TimezoneUpdateRequest,
 )
 from app.auth.security import hash_session_token, new_session_token, verify_password
 from app.auth.store import AuthStore, UserAuthRecord
@@ -17,6 +19,7 @@ from app.core.config import settings
 
 AUDIT_ACTION_LOGIN = 3
 AUDIT_ACTION_LOGOUT = 4
+ADMIN_ROLE_ID = 4
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -78,6 +81,96 @@ def me(auth: Annotated[CurrentAuth, Depends(get_current_auth)]) -> CurrentUserRe
     return _serialize_user(auth.user)
 
 
+@router.get("/timezone", response_model=TimezoneResponse)
+def get_own_timezone(
+    auth: Annotated[CurrentAuth, Depends(get_current_auth)],
+    store: Annotated[AuthStore, Depends(get_auth_store)],
+) -> TimezoneResponse:
+    tz = store.get_user_timezone(auth.user.id)
+    if tz is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="user_not_found",
+        )
+    return TimezoneResponse(user_id=auth.user.id, timezone=tz)
+
+
+@router.put("/timezone", response_model=TimezoneResponse)
+def update_own_timezone(
+    payload: TimezoneUpdateRequest,
+    request: Request,
+    auth: Annotated[CurrentAuth, Depends(get_current_auth)],
+    store: Annotated[AuthStore, Depends(get_auth_store)],
+) -> TimezoneResponse:
+    try:
+        new_tz = store.set_user_timezone(
+            actor_user_id=auth.user.id,
+            target_user_id=auth.user.id,
+            timezone=payload.timezone,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="user_not_found",
+        )
+    return TimezoneResponse(user_id=auth.user.id, timezone=new_tz)
+
+
+@router.get("/users/{user_id}/timezone", response_model=TimezoneResponse)
+def get_user_timezone(
+    user_id: int,
+    auth: Annotated[CurrentAuth, Depends(get_current_auth)],
+    store: Annotated[AuthStore, Depends(get_auth_store)],
+) -> TimezoneResponse:
+    if auth.user.id != user_id and not any(
+        role.id == ADMIN_ROLE_ID for role in auth.user.roles
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient_role",
+        )
+    tz = store.get_user_timezone(user_id)
+    if tz is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="user_not_found",
+        )
+    return TimezoneResponse(user_id=user_id, timezone=tz)
+
+
+@router.put("/users/{user_id}/timezone", response_model=TimezoneResponse)
+def update_user_timezone(
+    user_id: int,
+    payload: TimezoneUpdateRequest,
+    request: Request,
+    auth: Annotated[CurrentAuth, Depends(get_current_auth)],
+    store: Annotated[AuthStore, Depends(get_auth_store)],
+) -> TimezoneResponse:
+    if auth.user.id != user_id and not any(
+        role.id == ADMIN_ROLE_ID for role in auth.user.roles
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="insufficient_role",
+        )
+    try:
+        new_tz = store.set_user_timezone(
+            actor_user_id=auth.user.id,
+            target_user_id=user_id,
+            timezone=payload.timezone,
+            ip_address=_client_ip(request),
+            user_agent=request.headers.get("user-agent"),
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="user_not_found",
+        )
+    return TimezoneResponse(user_id=user_id, timezone=new_tz)
+
+
 def _serialize_user(user: UserAuthRecord) -> CurrentUserResponse:
     return CurrentUserResponse(
         id=user.id,
@@ -85,6 +178,7 @@ def _serialize_user(user: UserAuthRecord) -> CurrentUserResponse:
         full_name=user.full_name,
         email=user.email,
         roles=[RoleResponse(id=role.id, name=role.name) for role in user.roles],
+        timezone=user.timezone,
     )
 
 

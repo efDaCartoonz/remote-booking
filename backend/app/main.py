@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.auth import router as auth_router
+from app.api.cancellation import router as cancellation_router
 from app.api.cards import router as cards_router
 from app.api.frame import router as frame_router
 from app.api.health import router as health_router
@@ -25,7 +26,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
     )
 
@@ -37,14 +38,29 @@ def create_app() -> FastAPI:
         # locations and messages but never reflect a browser-supplied internal id.
         detail = []
         for error in exc.errors():
-            safe_error = {key: value for key, value in error.items() if key != "input"}
+            safe_error = {}
+            for key, value in error.items():
+                if key == "input":
+                    continue
+                if key == "ctx" and isinstance(value, dict):
+                    safe_error[key] = {
+                        k: str(v) if isinstance(v, Exception) else v
+                        for k, v in value.items()
+                    }
+                else:
+                    safe_error[key] = value
             if "case_id" in safe_error.get("loc", ()):
-                safe_error["loc"] = ("body",)
+                safe_error = {
+                    "type": safe_error.get("type", "value_error"),
+                    "loc": ("body",),
+                    "msg": "Invalid request context",
+                }
             detail.append(safe_error)
         return JSONResponse(status_code=422, content={"detail": detail})
 
     app.include_router(health_router)
     app.include_router(auth_router)
+    app.include_router(cancellation_router)
     app.include_router(results_router)
     app.include_router(cards_router)
     app.include_router(frame_router)

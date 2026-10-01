@@ -58,6 +58,22 @@ def seed_baseline(connection: psycopg.Connection) -> None:
     assert_baseline_data(connection)
 
 
+def seed_fe03_link_intent(connection: psycopg.Connection) -> None:
+    connection.execute(
+        """
+        INSERT INTO omnidesk_outbox (
+            card_id, source_event_id, omnidesk_ticket_number, action_type, payload
+        )
+        SELECT id, NULL, omnidesk_ticket_number,
+               'cancellation_link_public_message', '{}'::jsonb
+        FROM connection_cards
+        WHERE omnidesk_ticket_number = %s
+        """,
+        (BASELINE_TICKET,),
+    )
+    connection.commit()
+
+
 def assert_head_invariants(connection: psycopg.Connection) -> None:
     assert_baseline_data(connection)
     case_index = connection.execute(
@@ -93,6 +109,28 @@ def assert_head_invariants(connection: psycopg.Connection) -> None:
         "SELECT to_regclass('omnidesk_outbox')"
     ).fetchone()
     assert outbox_table == ("omnidesk_outbox",), outbox_table
+    cancellation_table = connection.execute(
+        "SELECT to_regclass('client_cancellation_tokens')"
+    ).fetchone()
+    assert cancellation_table == ("client_cancellation_tokens",), cancellation_table
+    client_name_col = connection.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'connection_cards' AND column_name = 'client_name'
+        """
+    ).fetchone()
+    assert client_name_col == ("client_name",), client_name_col
+    client_company_name_col = connection.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'connection_cards' AND column_name = 'client_company_name'
+        """
+    ).fetchone()
+    assert client_company_name_col == (
+        "client_company_name",
+    ), client_company_name_col
 
     reminder_index = connection.execute(
         """
@@ -201,9 +239,10 @@ def main() -> None:
         "seed-baseline",
         "check-baseline",
         "check-head",
+        "seed-fe03-link-intent",
     }:
         raise SystemExit(
-            "usage: migration_contract_check.py {seed-baseline|check-baseline|check-head}"
+            "usage: migration_contract_check.py {seed-baseline|check-baseline|check-head|seed-fe03-link-intent}"
         )
 
     with connect() as connection:
@@ -212,6 +251,8 @@ def main() -> None:
             seed_baseline(connection)
         elif command == "check-baseline":
             assert_baseline_data(connection)
+        elif command == "seed-fe03-link-intent":
+            seed_fe03_link_intent(connection)
         else:
             assert_head_invariants(connection)
 

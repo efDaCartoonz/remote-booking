@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     bitrix24_bot_id: str = ""
     bitrix24_bot_client_id: str = ""
     notification_card_base_url: str = ""
+    cancellation_public_base_url: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

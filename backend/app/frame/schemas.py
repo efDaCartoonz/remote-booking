@@ -37,6 +37,8 @@ class FrameCardCreateRequest(BaseModel):
     planned_duration_minutes: int = Field(default=60, ge=30, le=720)
     client_timezone_at_creation: TimezoneName = "Europe/Moscow"
     timezone_source_code: int | None = Field(default=None, ge=0)
+    client_name: str | None = Field(default=None, max_length=255)
+    client_company_name: str | None = Field(default=None, max_length=255)
     client_contact_type_code: int | None = Field(default=None, ge=0)
     client_contact_value: str | None = Field(default=None, max_length=255)
     description: str | None = None
@@ -68,12 +70,17 @@ class FrameCardResponse(BaseModel):
     client_timezone_at_creation: str | None
     description: str | None
     available_actions: list[str]
+    client_name: str | None = None
+    client_company_name: str | None = None
 
 
 class FrameCardsResponse(BaseModel):
     omnidesk_ticket_number: str
     can_create: bool
     cards: list[FrameCardResponse]
+    client_name: str | None = None
+    client_company_name: str | None = None
+    client_contact_value: str | None = None
 
 
 def frame_session_response(
@@ -90,15 +97,31 @@ def frame_session_response(
 def frame_cards_response(
     session: FrameSession, cards: list[CardRecord]
 ) -> FrameCardsResponse:
+    can_create_override = getattr(cards, "can_create", None)
+    can_create = (
+        can_create_override
+        if can_create_override is not None
+        else not any(_is_active(card) for card in cards)
+    )
     return FrameCardsResponse(
         omnidesk_ticket_number=session.omnidesk_ticket_number,
-        can_create=not any(_is_active(card) for card in cards),
+        can_create=can_create,
         cards=[frame_card_response(card) for card in cards],
+        client_name=session.client_display_name,
+        client_company_name=session.client_company_name,
+        client_contact_value=session.client_contact_value,
     )
 
 
 def frame_card_response(card: CardRecord) -> FrameCardResponse:
     card_status = CardStatus(card.status_code)
+    actions = ["read"]
+    if card_status in {
+        CardStatus.ASSIGNED,
+        CardStatus.CONFIRMED,
+        CardStatus.REJECTED,
+    }:
+        actions.append("request_cancellation_link")
     return FrameCardResponse(
         id=card.public_id,
         status=status_slug(card_status),
@@ -109,7 +132,9 @@ def frame_card_response(card: CardRecord) -> FrameCardResponse:
         planned_duration_minutes=card.planned_duration_minutes,
         client_timezone_at_creation=card.client_timezone_at_creation,
         description=card.description,
-        available_actions=["read"],
+        available_actions=actions,
+        client_name=card.client_name,
+        client_company_name=card.client_company_name,
     )
 
 
