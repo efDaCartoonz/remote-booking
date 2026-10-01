@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     omnidesk_case_backfill_max_pages: int = 1000
     omnidesk_case_backfill_from: str = ""
     omnidesk_case_backfill_to: str = ""
+    omnidesk_ticket_verification_enabled: bool = True
     omnidesk_case_lazy_lookup_enabled: bool = False
     omnidesk_case_lazy_lookup_days: int = 7
     omnidesk_case_lazy_lookup_max_pages: int = 5

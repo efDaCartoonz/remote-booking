@@ -25,6 +25,16 @@ class PublicTicketResolutionError(Exception):
         super().__init__(detail)
 
 
+def unverified_ticket(case_number: str) -> OmnideskTicket:
+    """Ticket stand-in for the mode without Omnidesk verification.
+
+    No case id and no client are known; nothing is read from or written to Omnidesk.
+    """
+    return OmnideskTicket(
+        case_id="", number=case_number.strip(), user_id=None, status="unverified"
+    )
+
+
 def resolve_ticket_by_case_number(
     connection, client: OmnideskTicketClient, case_number: str
 ) -> OmnideskTicket:

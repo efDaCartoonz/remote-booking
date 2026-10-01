@@ -10,6 +10,7 @@ from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
 from app.admin.planning_settings import get_planning_settings
+from app.core.config import settings
 from app.admin.repository import AdministrativeRepository
 from app.auth.dependencies import get_current_user, require_roles
 from app.auth.store import UserAuthRecord
@@ -42,6 +43,7 @@ from app.omnidesk_index.resolver import (
     PublicTicketResolutionError,
     resolve_ticket_by_case_id,
     resolve_ticket_by_case_number,
+    unverified_ticket,
 )
 
 router = APIRouter(prefix="/api/v1/manager", tags=["manager"])
@@ -265,6 +267,8 @@ def _manager_ticket(client: OmnideskTicketClient, case_id: str, case_number: str
 def _manager_ticket_by_number(
     connection, client: OmnideskTicketClient, case_number: str
 ):
+    if not settings.omnidesk_ticket_verification_enabled:
+        return unverified_ticket(case_number)
     try:
         return resolve_ticket_by_case_number(connection, client, case_number)
     except PublicTicketResolutionError as exc:
@@ -283,7 +287,10 @@ def manager_ticket_preflight(
     with db_connection() as connection:
         ticket = _manager_ticket_by_number(connection, omnidesk, case_number)
         repository = PostgresCardRepository(connection)
-        can_create = bool(ticket.user_id) and not repository.has_active_card_for_ticket(
+        has_client = (
+            bool(ticket.user_id) or not settings.omnidesk_ticket_verification_enabled
+        )
+        can_create = has_client and not repository.has_active_card_for_ticket(
             ticket.number
         )
     return ManagerTicketPreflightResponse(
@@ -364,21 +371,24 @@ def manager_create_card(
             ticket = _manager_ticket_by_number(
                 connection, omnidesk, payload.case_number
             )
-            if not ticket.user_id:
+            verify = settings.omnidesk_ticket_verification_enabled
+            if verify and not ticket.user_id:
                 raise HTTPException(status_code=422, detail="ticket_client_missing")
             repository = PostgresCardRepository(connection)
             if repository.has_active_card_for_ticket(ticket.number):
                 raise HTTPException(
                     status_code=409, detail="active_card_exists_for_ticket"
                 )
-            client = repository.get_or_create_client(
-                ClientSyncData(
-                    omnidesk_user_id=ticket.user_id,
-                    omnidesk_company_id=ticket.company_id,
-                    display_name=ticket.client_display_name,
-                    preferred_contact_value=ticket.client_contact_value,
-                )
-            )
+            client_id = None
+            if verify:
+                client_id = repository.get_or_create_client(
+                    ClientSyncData(
+                        omnidesk_user_id=ticket.user_id,
+                        omnidesk_company_id=ticket.company_id,
+                        display_name=ticket.client_display_name,
+                        preferred_contact_value=ticket.client_contact_value,
+                    )
+                ).id
             try:
                 card = run_manager_create_transaction(
                     lambda: CardService(
@@ -388,7 +398,7 @@ def manager_create_card(
                             omnidesk_ticket_number=ticket.number,
                             planned_start_at=payload.planned_start_at,
                             planned_duration_minutes=payload.planned_duration_minutes,
-                            client_id=client.id,
+                            client_id=client_id,
                             description=payload.description,
                             l2_engineer_id=payload.l2_user_id,
                         ),

@@ -17,6 +17,7 @@ from app.cards.policy import (
 )
 from app.cards.constants import RoleId
 from app.admin.planning_settings import get_planning_settings
+from app.core.config import settings
 from app.cards.create_policy import CreateScenario, validate_role_create
 from app.cards.repository import (
     CardRecord,
@@ -66,6 +67,7 @@ from app.notifications import (
 from app.omnidesk_index.resolver import (
     PublicTicketResolutionError,
     resolve_ticket_by_case_number,
+    unverified_ticket,
 )
 
 router = APIRouter(prefix="/api/v1/cards", tags=["cards"])
@@ -593,29 +595,35 @@ def _create_role_card(
 
     try:
         with db_connection() as connection:
-            try:
-                ticket = resolve_ticket_by_case_number(
-                    connection, omnidesk, payload.case_number
-                )
-            except PublicTicketResolutionError as exc:
-                raise HTTPException(
-                    status_code=exc.status_code, detail=exc.detail
-                ) from exc
-            if not ticket.user_id:
-                raise HTTPException(status_code=422, detail="ticket_client_missing")
+            verify = settings.omnidesk_ticket_verification_enabled
+            if verify:
+                try:
+                    ticket = resolve_ticket_by_case_number(
+                        connection, omnidesk, payload.case_number
+                    )
+                except PublicTicketResolutionError as exc:
+                    raise HTTPException(
+                        status_code=exc.status_code, detail=exc.detail
+                    ) from exc
+                if not ticket.user_id:
+                    raise HTTPException(status_code=422, detail="ticket_client_missing")
+            else:
+                ticket = unverified_ticket(payload.case_number)
             repository = PostgresCardRepository(connection)
             if repository.has_active_card_for_ticket(ticket.number):
                 raise HTTPException(
                     status_code=409, detail="active_card_exists_for_ticket"
                 )
-            client = repository.get_or_create_client(
-                ClientSyncData(
-                    omnidesk_user_id=ticket.user_id,
-                    omnidesk_company_id=ticket.company_id,
-                    display_name=ticket.client_display_name,
-                    preferred_contact_value=ticket.client_contact_value,
-                )
-            )
+            client_id = None
+            if verify:
+                client_id = repository.get_or_create_client(
+                    ClientSyncData(
+                        omnidesk_user_id=ticket.user_id,
+                        omnidesk_company_id=ticket.company_id,
+                        display_name=ticket.client_display_name,
+                        preferred_contact_value=ticket.client_contact_value,
+                    )
+                ).id
             try:
                 card = run_manager_create_transaction(
                     lambda: CardService(
@@ -625,7 +633,7 @@ def _create_role_card(
                             omnidesk_ticket_number=ticket.number,
                             planned_start_at=payload.planned_start_at,
                             planned_duration_minutes=payload.planned_duration_minutes,
-                            client_id=client.id,
+                            client_id=client_id,
                             description=payload.description,
                         ),
                         actor_user_id=user.id,
