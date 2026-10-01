@@ -325,7 +325,10 @@ def seed_cards(connection, l1_ids, l2_ids, days: int) -> int:
                     )
                     status_event(cursor, card, actual_start, l2, CardStatus.IN_PROGRESS)
                     status_event(cursor, card, actual_end, l2, CardStatus.COMPLETED)
-                    if actual_end > planned + timedelta(minutes=duration):
+                    if (
+                        actual_end > planned + timedelta(minutes=duration)
+                        and rng.random() < 0.25
+                    ):
                         status_event(
                             cursor,
                             card,

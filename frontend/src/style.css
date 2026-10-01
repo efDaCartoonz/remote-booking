@@ -111,6 +111,7 @@ input[type="checkbox"], input[type="radio"] { width: 16px; min-height: 16px; pad
 .action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 16px 0 0; }
 .inline-form { display: flex; flex: 1 1 360px; gap: 8px; }
 .inline-form input { min-width: 0; }
+.inline-form button { flex: 0 0 auto; white-space: nowrap; }
 .reschedule-form { max-width: 560px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--rdm-border); }
 
 .history ol { display: grid; gap: 0; padding: 0; margin: 0; list-style: none; }

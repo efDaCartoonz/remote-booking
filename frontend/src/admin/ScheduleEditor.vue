@@ -289,7 +289,7 @@ onMounted(load);
 <template>
   <div class="schedule-editor" data-test="schedule-editor">
     <div class="section-heading">
-      <h3>Графики работы</h3>
+      <h3>Рабочие смены</h3>
       <div class="action-row">
         <button type="button" class="secondary" data-test="sched-prev" @click="shiftMonth(-1)">←</button>
         <strong data-test="sched-month" style="align-self: center; min-width: 140px; text-align: center;">
