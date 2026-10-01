@@ -1,4 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import { slotInput } from "./testSlot";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App.vue";
 
@@ -162,12 +163,19 @@ describe("FE-03 Profile Timezone in UI", () => {
     expect(wrapper.text()).toContain("Asia/Yekaterinburg");
     expect(wrapper.text()).toContain("15:00");
 
-    // Change profile timezone to UTC
-    const tzSelect = wrapper.find('.profile-tz-panel input[list="staff-timezones"]');
+    // The card page no longer carries the timezone form: it lives in the profile page.
+    expect(wrapper.find(".profile-tz-panel").exists()).toBe(false);
+    wrapper.unmount();
+
+    // Change profile timezone to UTC on the profile page
+    window.history.pushState({}, "", "/profile");
+    const profile = mount(App);
+    await flushPromises();
+    const tzSelect = profile.find('.profile-tz-panel input[list="staff-timezones"]');
     expect(tzSelect.exists()).toBe(true);
     await tzSelect.setValue("UTC");
 
-    const tzForm = wrapper.find(".profile-tz-panel form");
+    const tzForm = profile.find(".profile-tz-panel form");
     await tzForm.trigger("submit");
     await flushPromises();
 
@@ -178,9 +186,8 @@ describe("FE-03 Profile Timezone in UI", () => {
     expect(putCalls.length).toBe(1);
     expect(JSON.parse(String(putCalls[0][1]?.body))).toEqual({ timezone: "UTC" });
 
-    // Verify UI updated to UTC (10:00) and success notice displayed
-    expect(wrapper.text()).toContain("Часовой пояс сохранён.");
-    expect(wrapper.text()).toContain("10:00");
+    // Success notice is displayed on the profile page
+    expect(profile.text()).toContain("Часовой пояс сохранён.");
   });
 
   it("manager date filter converts day bounds according to profile timezone", async () => {
@@ -266,7 +273,7 @@ describe("FE-03 Profile Timezone in UI", () => {
     await wrapper.find(".create-form input[required]").setValue("T-TZ");
     await wrapper.find(".create-form button.secondary").trigger("click");
     await flushPromises();
-    await wrapper.find(".create-form input[type='datetime-local']").setValue(localStart);
+    await slotInput(wrapper.find(".create-form")).setValue(localStart);
     await flushPromises();
     await wrapper.find(".create-form").trigger("submit");
     await flushPromises();

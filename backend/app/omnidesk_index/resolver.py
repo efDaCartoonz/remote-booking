@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.core.config import settings
 from app.frame.omnidesk import (
     OmnideskTicket,
     OmnideskTicketClient,
@@ -9,6 +10,7 @@ from app.frame.omnidesk import (
     OmnideskTicketReopenError,
     validate_ticket_response,
 )
+from app.omnidesk_index.lookup import refresh_recent_cases
 from app.omnidesk_index.repository import (
     CaseIndexRepository,
     CaseIndexTicketAmbiguous,
@@ -28,7 +30,21 @@ def resolve_ticket_by_case_number(
 ) -> OmnideskTicket:
     """Resolve a public ticket number without exposing the internal case id."""
     try:
-        case_id = CaseIndexRepository(connection).resolve_case_id(case_number)
+        try:
+            case_id = CaseIndexRepository(connection).resolve_case_id(case_number)
+        except CaseIndexTicketNotFound:
+            if not settings.omnidesk_case_lazy_lookup_enabled:
+                raise
+            if not refresh_recent_cases(
+                connection,
+                client,
+                case_number=case_number,
+                days=settings.omnidesk_case_lazy_lookup_days,
+                page_size=settings.omnidesk_case_backfill_page_size,
+                max_pages=settings.omnidesk_case_lazy_lookup_max_pages,
+            ):
+                raise
+            case_id = CaseIndexRepository(connection).resolve_case_id(case_number)
     except CaseIndexTicketNotFound as exc:
         raise PublicTicketResolutionError(
             status_code=404, detail="omnidesk_ticket_not_found"

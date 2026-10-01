@@ -67,6 +67,38 @@ export interface ScheduleItem {
   valid_to?: string | null;
 }
 
+export interface DayShiftItem {
+  day: string; // "YYYY-MM-DD"
+  start_time: string; // "HH:MM:SS"
+  end_time: string;
+}
+
+export interface UserDayShifts {
+  user_id: number;
+  timezone: string | null;
+  days: DayShiftItem[];
+}
+
+export interface DayShiftsResponse {
+  date_from: string;
+  date_to: string;
+  users: UserDayShifts[];
+}
+
+export interface ScheduleEmployee {
+  id: number;
+  full_name: string;
+  timezone: string;
+  roles: number[]; // 1 = L1, 2 = L2
+}
+
+export interface DayShiftsReplacePayload {
+  date_from: string;
+  date_to: string;
+  timezone: string;
+  days: DayShiftItem[];
+}
+
 export interface AbsenceItem {
   id: number;
   user_id: number;
@@ -229,6 +261,9 @@ export const KNOWN_ADMIN_ERRORS: Record<string, string> = {
   schedule_start_must_precede_end: "Время начала графика должно предшествовать времени окончания.",
   schedule_validity_range_invalid: "Период действия графика указан неверно.",
   schedule_intervals_overlap: "Интервалы графика пересекаются.",
+  schedule_day_out_of_range: "День графика выходит за выбранный период.",
+  schedule_duplicate_day: "На один день задано несколько смен.",
+  schedule_range_too_long: "Период графика не может превышать 93 дня.",
   absence_not_found: "Запись об отсутствии не найдена.",
   datetime_must_be_timezone_aware: "Дата и время должны содержать информацию о часовом поясе.",
   start_at_must_be_before_end_at: "Время начала отсутствия должно быть раньше времени окончания.",
@@ -381,6 +416,22 @@ export async function replaceUserSchedules(userId: number, schedules: ScheduleIt
   return api<ScheduleItem[]>(`/api/v1/admin/schedules/${userId}`, {
     method: "PUT",
     body: JSON.stringify(schedules),
+  });
+}
+
+export async function getScheduleEmployees(): Promise<ScheduleEmployee[]> {
+  return api<ScheduleEmployee[]>("/api/v1/admin/schedules/employees");
+}
+
+export async function getDayShifts(dateFrom: string, dateTo: string): Promise<DayShiftsResponse> {
+  const query = new URLSearchParams({ date_from: dateFrom, date_to: dateTo });
+  return api<DayShiftsResponse>(`/api/v1/admin/schedules/days?${query.toString()}`);
+}
+
+export async function replaceDayShifts(userId: number, payload: DayShiftsReplacePayload): Promise<UserDayShifts> {
+  return api<UserDayShifts>(`/api/v1/admin/schedules/${userId}/days`, {
+    method: "PUT",
+    body: JSON.stringify(payload),
   });
 }
 

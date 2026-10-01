@@ -152,7 +152,7 @@ run_fe04_matrix() {
             --env-file .env.example run --rm backend alembic upgrade head
         RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
             --env-file .env.example run --rm -e RDM_PG_INTEGRATION=1 quality-backend sh -ec \
-            'pytest -v tests/test_admin_users_postgres.py tests/test_admin_planning_postgres.py tests/test_admin_catalog_postgres.py tests/test_reports_postgres.py tests/test_notification_templates_postgres.py tests/test_create_admin_cli.py'
+            'pytest -v tests/test_admin_users_postgres.py tests/test_admin_planning_postgres.py tests/test_admin_catalog_postgres.py tests/test_reports_postgres.py tests/test_notification_templates_postgres.py tests/test_create_admin_cli.py tests/test_seed_demo_postgres.py'
     )
 }
 

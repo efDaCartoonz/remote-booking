@@ -27,6 +27,9 @@ class Settings(BaseSettings):
     omnidesk_case_backfill_max_pages: int = 1000
     omnidesk_case_backfill_from: str = ""
     omnidesk_case_backfill_to: str = ""
+    omnidesk_case_lazy_lookup_enabled: bool = False
+    omnidesk_case_lazy_lookup_days: int = 7
+    omnidesk_case_lazy_lookup_max_pages: int = 5
     notification_max_attempts: int = 3
     notification_retry_seconds: int = 60
     notification_lock_seconds: int = 300

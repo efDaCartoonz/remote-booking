@@ -177,3 +177,40 @@ input:focus, textarea:focus, button:focus-visible { outline: 3px solid rgba(56, 
   .frame-header { flex-direction: column; }
   .frame-tz-control { width: 100%; }
 }
+
+/* Per-date schedule editor */
+.schedule-grid-wrap { overflow-x: auto; }
+.schedule-grid { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 13px; }
+.schedule-grid th, .schedule-grid td { padding: 2px; border: 1px solid #e2e8f0; text-align: center; white-space: nowrap; }
+.schedule-grid thead th { background: #f1f5f9; font-weight: 600; }
+.schedule-grid thead th small { display: block; font-weight: 400; color: #64748b; }
+.schedule-grid th.weekend, .schedule-grid th.holiday { background: #fef3c7; }
+.schedule-grid .sticky-col { position: sticky; left: 0; z-index: 1; min-width: 190px; text-align: left; padding: 6px 8px; background: #f8fafc; }
+.schedule-grid .cell { width: 100%; min-width: 52px; padding: 6px 2px; border-radius: 6px; color: #94a3b8; background: transparent; font-size: 12px; }
+.schedule-grid .cell:hover:not(:disabled) { background: #e0e7ff; }
+.schedule-grid .cell.work { color: #0f172a; background: #dcfce7; }
+.schedule-grid .cell.holiday:not(.work) { background: #fef3c7; }
+.schedule-grid .cell.chosen { outline: 2px solid #3867d6; }
+.schedule-grid .small { padding: 3px 8px; margin-top: 4px; font-size: 12px; }
+
+.slot-picker { display: flex; gap: 8px; }
+.slot-picker select { flex: 1 1 0; min-width: 0; }
+
+/* Application shell with a section navigation on the left */
+.shell.with-sidebar { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 24px; align-items: start; max-width: 1760px; margin: 0 auto; }
+.shell.with-sidebar .card { width: 100%; margin: 0; }
+.sidebar { position: sticky; top: 24px; display: flex; flex-direction: column; gap: 16px; padding: 20px 14px; border-radius: 20px; background: #fff; box-shadow: 0 16px 48px rgba(23, 32, 51, .08); }
+.sidebar-brand { padding: 0 8px; }
+.sidebar-brand .eyebrow { margin-bottom: 4px; }
+.sidebar-user { display: block; overflow-wrap: anywhere; font-size: 15px; }
+.sidebar-list { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.sidebar-list a { display: block; padding: 10px 12px; border-radius: 10px; color: #334155; font-weight: 600; text-decoration: none; }
+.sidebar-list a:hover { background: #eef2ff; }
+.sidebar-list a.active { background: #3867d6; color: #fff; }
+.sidebar-logout { margin-top: 8px; background: #64748b; }
+.sidebar-logout:hover:not(:disabled) { background: #475569; }
+@media (max-width: 900px) {
+  .shell.with-sidebar { grid-template-columns: 1fr; }
+  .sidebar { position: static; padding: 14px; }
+  .sidebar-list { grid-auto-flow: column; grid-auto-columns: max-content; overflow-x: auto; }
+}

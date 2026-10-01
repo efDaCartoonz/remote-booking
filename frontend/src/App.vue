@@ -3,6 +3,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getDayBoundsInTz, hasDstTransitionInRange } from "./calendar-timezone";
 import { convertWallTimeToISO } from "./frame/timezone";
 import { AdminWorkspace, ReportsWorkspace } from "./admin";
+import SlotPicker from "./SlotPicker.vue";
+import AppSidebar from "./AppSidebar.vue";
+import { ScheduleEditor } from "./admin";
 
 type Role = { id: number; name: string };
 type User = { id: number; username: string; full_name: string; roles: Role[]; timezone?: string };
@@ -160,11 +163,15 @@ const rescheduleStart = ref("");
 const rescheduleDuration = ref(60);
 const rescheduleDescription = ref("");
 const cardId = computed(() => location.pathname.match(/^\/cards\/([^/]+)\/?$/)?.[1]);
+const currentPath = location.pathname;
+const showSidebar = computed(() => !!user.value && !busy.value);
 const workplacePath = location.pathname === "/work" || location.pathname === "/";
 const managerPath = location.pathname === "/manager";
 const managerNewPath = location.pathname === "/manager/cards/new";
 const adminPath = location.pathname === "/admin";
 const reportsPath = location.pathname === "/reports";
+const profilePath = location.pathname === "/profile";
+const schedulesPath = location.pathname === "/schedules";
 const manager = ref<ManagerData | null>(null);
 const managerStatus = ref("");
 const managerFrom = ref("");
@@ -243,6 +250,10 @@ function currentRoute(): string {
   return `${location.pathname}${location.search}${location.hash}`;
 }
 
+function forgetReturnRoute(): void {
+  try { sessionStorage.removeItem(RETURN_TO_KEY); } catch { /* Storage may be unavailable. */ }
+}
+
 function rememberCardRoute(): void {
   if (cardId.value) sessionStorage.setItem(RETURN_TO_KEY, currentRoute());
 }
@@ -303,6 +314,11 @@ const knownErrors: Record<string, string> = {
   card_owner_required: "Действие доступно только владельцу карточки.",
   l1_followup_not_informed: "Сначала отметьте, что клиент проинформирован.",
   action_forbidden: "Недостаточно прав для этого действия.",
+  omnidesk_ticket_not_found: "Тикет с таким номером не найден в индексе RDM. Проверьте номер или обратитесь к администратору.",
+  omnidesk_ticket_ambiguous: "Номеру тикета соответствует несколько записей. Обратитесь к администратору.",
+  omnidesk_ticket_id_number_mismatch: "Номер тикета не совпадает с данными Omnidesk. Обратитесь к администратору.",
+  omnidesk_unavailable: "Omnidesk сейчас недоступен. Повторите попытку позже.",
+  ticket_client_missing: "У тикета в Omnidesk не указан клиент, создать карточку нельзя.",
 };
 
 function readableError(error: unknown): string {
@@ -417,6 +433,7 @@ async function load(): Promise<void> {
   try {
     user.value = await api<User>("/api/v1/auth/me");
     editTimezone.value = user.value.timezone || "Asia/Yekaterinburg";
+    if (hasL1Role.value || hasL2Role.value || hasRole(3)) await loadPlanning();
     if (workplacePath) {
       mineRole.value = hasL1Role.value ? "l1" : "l2";
       if (hasL1Role.value || hasL2Role.value) await loadMine();
@@ -435,7 +452,10 @@ async function load(): Promise<void> {
   } catch (error) {
     const status = (error as ApiError).status ?? 500;
     if (status === 401) handleUnauthorized();
-    else errorStatus.value = status;
+    else {
+      if (status === 403 || status === 404) forgetReturnRoute();
+      errorStatus.value = status;
+    }
   } finally {
     busy.value = false;
   }
@@ -460,8 +480,38 @@ function createErrorMessage(error: unknown): string {
   return "Не удалось выполнить запрос. Повторите попытку.";
 }
 
+type PlanningWindow = { min_lead_minutes: number; horizon_days: number; default_duration_minutes: number; min_duration_minutes: number; max_duration_minutes: number };
+const planning = ref<PlanningWindow>({ min_lead_minutes: 120, horizon_days: 14, default_duration_minutes: 60, min_duration_minutes: 30, max_duration_minutes: 720 });
+async function loadPlanning(): Promise<void> {
+  try {
+    const data = await api<Partial<PlanningWindow>>("/api/v1/cards/planning-window");
+    const next = { ...planning.value };
+    for (const key of Object.keys(next) as Array<keyof PlanningWindow>) {
+      const value = data?.[key];
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) next[key] = value;
+    }
+    planning.value = next;
+  } catch { /* Defaults match the server defaults. */ }
+}
+function plural(count: number, one: string, few: string, many: string): string {
+  const last = count % 10; const lastTwo = count % 100;
+  if (last === 1 && lastTwo !== 11) return one;
+  if (last >= 2 && last <= 4 && (lastTwo < 10 || lastTwo >= 20)) return few;
+  return many;
+}
+function leadText(minutes: number): string {
+  return minutes % 60 === 0 ? `${minutes / 60} ${plural(minutes / 60, "час", "часа", "часов")}` : `${minutes} ${plural(minutes, "минуту", "минуты", "минут")}`;
+}
 function createWindowBounds(now: Date): CreateWindowBounds {
-  return { min: ceilToMinute(new Date(now.getTime() + 120 * 60 * 1000)), max: floorToMinute(new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000)) };
+  return { min: ceilToMinute(new Date(now.getTime() + planning.value.min_lead_minutes * 60 * 1000)), max: floorToMinute(new Date(now.getTime() + planning.value.horizon_days * 24 * 60 * 60 * 1000)) };
+}
+type SlotKind = "normal" | "urgent" | "retroactive";
+function slotWindow(kind: SlotKind, now: Date): { min: string; max: string } {
+  const horizon = floorToMinute(new Date(now.getTime() + planning.value.horizon_days * 24 * 60 * 60 * 1000));
+  if (kind === "retroactive") return { min: localDateTimeInput(new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000)), max: localDateTimeInput(floorToMinute(new Date(now.getTime() - 60 * 1000))) };
+  if (kind === "urgent") return { min: localDateTimeInput(ceilToMinute(now)), max: localDateTimeInput(horizon) };
+  const bounds = createWindowBounds(now);
+  return { min: localDateTimeInput(bounds.min), max: localDateTimeInput(bounds.max) };
 }
 function ceilToMinute(value: Date): Date {
   const result = new Date(value);
@@ -487,10 +537,10 @@ function validateCreateWindow(startValue: string, durationValue: number, now: Da
   if (!startValue || Number.isNaN(start.getTime())) return { ok: false, error: "Укажите корректные дату и время начала." };
   if (toProfileInput(start.toISOString()) !== startValue.slice(0, 16)) return { ok: false, error: "Указанное время не существует в часовом поясе профиля." };
   const duration = Number(durationValue);
-  if (!Number.isInteger(duration) || duration < 30 || duration > 720) return { ok: false, error: "Длительность должна быть от 30 до 720 минут." };
+  if (!Number.isInteger(duration) || duration < planning.value.min_duration_minutes || duration > planning.value.max_duration_minutes) return { ok: false, error: `Длительность должна быть от ${planning.value.min_duration_minutes} до ${planning.value.max_duration_minutes} минут.` };
   const bounds = createWindowBounds(now);
-  if (start < bounds.min) return { ok: false, error: "Начало должно быть не раньше чем через 2 часа." };
-  if (start > bounds.max) return { ok: false, error: "Начало не может быть дальше чем через 14 дней." };
+  if (start < bounds.min) return { ok: false, error: `Начало должно быть не раньше чем через ${leadText(planning.value.min_lead_minutes)}.` };
+  if (start > bounds.max) return { ok: false, error: `Начало не может быть дальше чем через ${planning.value.horizon_days} ${plural(planning.value.horizon_days, "день", "дня", "дней")}.` };
   return { ok: true, start, duration };
 }
 function validateBeforeCreateHttp(): CreateValidationSuccess | null {
@@ -500,6 +550,9 @@ function validateBeforeCreateHttp(): CreateValidationSuccess | null {
   return result;
 }
 const createBounds = computed(() => createWindowBounds(createNow.value));
+const roleKind = computed<SlotKind>(() => (mineRole.value === "l2" && roleCreate.value.scenario === "urgent" ? "urgent" : mineRole.value === "l2" && roleCreate.value.scenario === "retroactive" ? "retroactive" : "normal"));
+const roleWindow = computed(() => slotWindow(roleKind.value, createNow.value));
+const rescheduleWindow = computed(() => slotWindow(card.value?.urgency_code === 1 ? "urgent" : "normal", createNow.value));
 const createMin = computed(() => localDateTimeInput(createBounds.value.min));
 const createMax = computed(() => localDateTimeInput(createBounds.value.max));
 function createStartIso(start: Date): string { return start.toISOString(); }
@@ -866,7 +919,8 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
 </script>
 
 <template>
-  <main class="shell">
+  <main class="shell" :class="{ 'with-sidebar': showSidebar }">
+    <AppSidebar v-if="showSidebar && user" :roles="user.roles.map((role) => role.id)" :full-name="user.full_name" :path="currentPath" @logout="logout" />
     <section class="card" :class="{ 'manager-card': managerPath && !!user }" aria-live="polite">
       <p v-if="busy">Проверяем сессию…</p>
 
@@ -888,36 +942,14 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <p v-if="errorStatus === 403" class="error">Доступ к карточке запрещён (403).</p>
         <p v-else-if="errorStatus === 404" class="error">Карточка не найдена (404).</p>
         <p v-else class="error">Сервис временно недоступен ({{ errorStatus }}).</p>
-        <button @click="load">Повторить</button>
+        <div class="top-actions"><button @click="load">Повторить</button><a class="button-link" href="/" @click="forgetReturnRoute">На главную</a></div>
       </template>
 
-      <template v-else-if="adminPath || reportsPath">
-        <header class="top"><div><p class="eyebrow">RDM</p><h1>{{ adminPath ? "Администрирование" : "Отчёты" }}</h1><p class="muted">Часовой пояс: {{ profileTimeZone }}</p></div><div class="top-actions"><a v-if="hasRole(3)" class="button-link" href="/manager">Панель руководителя</a><a v-if="adminPath && (hasRole(3) || hasRole(4))" class="button-link" href="/reports">Отчёты</a><a v-if="reportsPath && hasRole(4)" class="button-link" href="/admin">Администрирование</a><button class="secondary" @click="logout">Выйти</button></div></header>
-        <AdminWorkspace v-if="adminPath" :current-user="user" :timezone="profileTimeZone" />
-        <ReportsWorkspace v-else :current-user="user" :timezone="profileTimeZone" />
-      </template>
-
-      <template v-else-if="workplacePath">
-        <header class="top"><div><p class="eyebrow">RDM</p><h1>Мои карточки</h1></div><div class="top-actions"><a v-if="hasRole(3)" class="button-link" href="/manager">Панель руководителя</a><a v-if="hasRole(3) || hasRole(4)" class="button-link" href="/reports">Отчёты</a><a v-if="hasRole(4)" class="button-link" href="/admin">Администрирование</a><button class="secondary" @click="logout">Выйти</button></div></header>
-        <div v-if="hasL1Role && hasL2Role" class="manager-toggle" role="group" aria-label="Рабочая роль"><button type="button" :class="{ selected: mineRole === 'l1' }" @click="mineRole = 'l1'; loadMine()">L1</button><button type="button" :class="{ selected: mineRole === 'l2' }" @click="mineRole = 'l2'; loadMine()">L2</button></div>
-        <p v-if="mineError" class="error" role="alert">{{ mineError }}</p>
-        <p v-else-if="!mine.length" class="hint">Назначенных карточек пока нет.</p>
-        <div v-else class="work-list"><a v-for="item in mine" :key="item.id" class="panel work-row" :href="`/cards/${item.id}`"><strong>{{ item.number }}</strong><span>{{ item.status_label }}<template v-if="item.overdue_flag"> · Просрочено</template></span><span>{{ formatDateTime(item.planned_start_at) }}</span></a></div>
-        <section v-if="hasL1Role || hasL2Role" class="panel"><h2>Создать карточку {{ mineRole.toUpperCase() }}</h2>
-          <form class="form role-create-form" @submit.prevent="submitRoleCreate">
-            <label>Номер тикета<input v-model.trim="roleCreate.caseNumber" pattern="[0-9]{3}-[0-9]{6}" required /></label>
-            <label>Начало<input v-model="roleCreate.start" type="datetime-local" required /></label>
-            <label>Длительность, минут<input v-model.number="roleCreate.duration" type="number" min="30" max="720" required /></label>
-            <label>Описание<textarea v-model="roleCreate.description" rows="3"></textarea></label>
-            <template v-if="mineRole === 'l2'"><label>Сценарий<select v-model="roleCreate.scenario"><option value="normal">Обычное для себя</option><option value="urgent">Срочное для себя</option><option value="retroactive">Ретроспективное для себя</option></select></label>
-              <label v-if="roleCreate.scenario === 'urgent'">Причина срочности<input v-model="roleCreate.urgentReason" required /></label>
-              <template v-if="roleCreate.scenario === 'retroactive'"><label>Результат<select v-model="roleCreate.resultCode"><option value="">Не указан</option><option v-for="option in results" :key="option.code" :value="String(option.code)">{{ option.name }}</option></select></label><label>Отчёт<textarea v-model="roleCreate.report" rows="3"></textarea></label></template>
-            </template>
-            <p v-if="roleCreateError" class="error" role="alert">{{ roleCreateError }}</p><button :disabled="roleCreateBusy">{{ roleCreateBusy ? "Создаём…" : "Создать карточку" }}</button>
-          </form>
-        </section>
+      <template v-else-if="profilePath">
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Профиль</h1><p class="muted">{{ user?.full_name }} · {{ user?.username }}</p></div></header>
         <section class="panel profile-tz-panel">
-          <h2>Часовой пояс профиля</h2>
+          <h2>Часовой пояс</h2>
+          <p class="muted">По нему отображается время карточек и календарей. Сохранённые моменты времени при смене пояса не меняются.</p>
           <form class="inline-form" @submit.prevent="saveProfileTimezone">
             <input v-model="editTimezone" list="staff-timezones" aria-label="Часовой пояс профиля" />
             <datalist id="staff-timezones"><option v-for="tz in standardTimezones" :key="tz" :value="tz" /></datalist>
@@ -925,6 +957,39 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
           </form>
           <p v-if="tzError" class="error profile-tz-error" role="alert">{{ tzError }}</p>
           <p v-if="tzSuccess" class="success profile-tz-success" role="status">{{ tzSuccess }}</p>
+        </section>
+      </template>
+
+      <template v-else-if="schedulesPath">
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Графики работы</h1></div></header>
+        <ScheduleEditor v-if="hasRole(3) || hasRole(4)" />
+        <p v-else class="error" role="alert">Доступ к графикам работы запрещён (403).</p>
+      </template>
+
+      <template v-else-if="adminPath || reportsPath">
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>{{ adminPath ? "Администрирование" : "Отчёты" }}</h1><p class="muted">Часовой пояс: {{ profileTimeZone }}</p></div></header>
+        <AdminWorkspace v-if="adminPath" :current-user="user" :timezone="profileTimeZone" />
+        <ReportsWorkspace v-else :current-user="user" :timezone="profileTimeZone" />
+      </template>
+
+      <template v-else-if="workplacePath">
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Мои карточки</h1></div></header>
+        <div v-if="hasL1Role && hasL2Role" class="manager-toggle" role="group" aria-label="Рабочая роль"><button type="button" :class="{ selected: mineRole === 'l1' }" @click="mineRole = 'l1'; loadMine()">L1</button><button type="button" :class="{ selected: mineRole === 'l2' }" @click="mineRole = 'l2'; loadMine()">L2</button></div>
+        <p v-if="mineError" class="error" role="alert">{{ mineError }}</p>
+        <p v-else-if="!mine.length" class="hint">Назначенных карточек пока нет.</p>
+        <div v-else class="work-list"><a v-for="item in mine" :key="item.id" class="panel work-row" :href="`/cards/${item.id}`"><strong>{{ item.number }}</strong><span>{{ item.status_label }}<template v-if="item.overdue_flag"> · Просрочено</template></span><span>{{ formatDateTime(item.planned_start_at) }}</span></a></div>
+        <section v-if="hasL1Role || hasL2Role" class="panel"><h2>Создать карточку {{ mineRole.toUpperCase() }}</h2>
+          <form class="form role-create-form" @submit.prevent="submitRoleCreate">
+            <label>Номер тикета<input v-model.trim="roleCreate.caseNumber" pattern="[0-9]{3}-[0-9]{6}" required /></label>
+            <label>Начало<SlotPicker v-model="roleCreate.start" :min="roleWindow.min" :max="roleWindow.max" required data-test="role-slot" /></label>
+            <label>Длительность, минут<input v-model.number="roleCreate.duration" type="number" :min="planning.min_duration_minutes" :max="planning.max_duration_minutes" required /></label>
+            <label>Описание<textarea v-model="roleCreate.description" rows="3"></textarea></label>
+            <template v-if="mineRole === 'l2'"><label>Сценарий<select v-model="roleCreate.scenario"><option value="normal">Обычное для себя</option><option value="urgent">Срочное для себя</option><option value="retroactive">Ретроспективное для себя</option></select></label>
+              <label v-if="roleCreate.scenario === 'urgent'">Причина срочности<input v-model="roleCreate.urgentReason" required /></label>
+              <template v-if="roleCreate.scenario === 'retroactive'"><label>Результат<select v-model="roleCreate.resultCode"><option value="">Не указан</option><option v-for="option in results" :key="option.code" :value="String(option.code)">{{ option.name }}</option></select></label><label>Отчёт<textarea v-model="roleCreate.report" rows="3"></textarea></label></template>
+            </template>
+            <p v-if="roleCreateError" class="error" role="alert">{{ roleCreateError }}</p><button :disabled="roleCreateBusy">{{ roleCreateBusy ? "Создаём…" : "Создать карточку" }}</button>
+          </form>
         </section>
       </template>
 
@@ -1005,7 +1070,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         </section>
         <p v-else-if="hasL1Role && card.status === 'rejected'" class="hint">Сопровождение доступно только назначенному специалисту L1.</p>
 
-        <section v-if="canReschedule" class="panel actions"><h2>Перенос времени</h2><form class="form reschedule-form" @submit.prevent="rescheduleCard"><label>Новое начало<input v-model="rescheduleStart" type="datetime-local" required /></label><label>Длительность, минут<input v-model.number="rescheduleDuration" type="number" min="30" max="720" required /></label><label>Описание<textarea v-model="rescheduleDescription" rows="4"></textarea></label><label>Причина переноса<input v-model="rescheduleReason" required /></label><button :disabled="!!actionBusy">{{ actionBusy === "reschedule" ? "Сохраняем…" : "Сохранить изменения" }}</button></form></section>
+        <section v-if="canReschedule" class="panel actions"><h2>Перенос времени</h2><form class="form reschedule-form" @submit.prevent="rescheduleCard"><label>Новое начало<SlotPicker v-model="rescheduleStart" :min="rescheduleWindow.min" :max="rescheduleWindow.max" required data-test="reschedule-slot" /></label><label>Длительность, минут<input v-model.number="rescheduleDuration" type="number" :min="planning.min_duration_minutes" :max="planning.max_duration_minutes" required /></label><label>Описание<textarea v-model="rescheduleDescription" rows="4"></textarea></label><label>Причина переноса<input v-model="rescheduleReason" required /></label><button :disabled="!!actionBusy">{{ actionBusy === "reschedule" ? "Сохраняем…" : "Сохранить изменения" }}</button></form></section>
 
         <section v-if="canExecute || canComplete || canEndPendingResult" class="panel actions">
           <h2>Выполнение</h2>
@@ -1038,17 +1103,6 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
 
         <section class="panel"><h2>Уведомления</h2><p v-if="notificationError" class="muted">{{ notificationError }}</p><p v-else-if="!notifications.length" class="muted">Уведомлений пока нет.</p><ol v-else class="notification-list"><li v-for="(entry, index) in notifications" :key="`${entry.created_at}-${index}`">{{ entry.event }} · {{ entry.channel }} · {{ entry.status }} · {{ formatDateTime(entry.created_at) }}</li></ol></section>
 
-        <section class="panel profile-tz-panel">
-          <h2>Часовой пояс профиля</h2>
-          <form class="inline-form" @submit.prevent="saveProfileTimezone">
-            <input v-model="editTimezone" list="staff-timezones" aria-label="Часовой пояс профиля" />
-            <datalist id="staff-timezones"><option v-for="tz in standardTimezones" :key="tz" :value="tz" /></datalist>
-            <button type="submit" :disabled="tzBusy">{{ tzBusy ? "Сохраняем…" : "Сохранить часовой пояс" }}</button>
-          </form>
-          <p v-if="tzError" class="error profile-tz-error" role="alert">{{ tzError }}</p>
-          <p v-if="tzSuccess" class="success profile-tz-success" role="status">{{ tzSuccess }}</p>
-        </section>
-
         <footer class="footer muted">Вы вошли как {{ user.full_name || user.username }}.</footer>
       </template>
 
@@ -1062,7 +1116,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
           <label>Номер тикета<input v-model.trim="create.caseNumber" required /></label>
           <button type="button" class="secondary" :disabled="preflightLoading || !create.caseNumber" @click="preflightTicket">{{ preflightLoading ? "Проверяем…" : "Проверить тикет" }}</button>
           <section v-if="ticketPreflight && ticketPreflight.case_number === create.caseNumber" class="panel"><strong>Тикет {{ ticketPreflight.case_number }}</strong><p class="muted">Статус: {{ ticketPreflight.status }} · Клиент: {{ ticketPreflight.client_display_name || "Не указан" }}</p><p v-if="!ticketPreflight.can_create" class="error">Для этого тикета нельзя создать новую активную карточку.</p></section>
-          <div class="grid"><label>Начало<input v-model="create.start" type="datetime-local" step="60" :min="createMin" :max="createMax" required @focus="refreshCreateNow" /></label><label>Длительность, минут<input v-model.number="create.duration" type="number" min="30" max="720" required /></label></div>
+          <div class="grid"><label>Начало<SlotPicker v-model="create.start" :min="createMin" :max="createMax" required data-test="create-slot" /></label><label>Длительность, минут<input v-model.number="create.duration" type="number" :min="planning.min_duration_minutes" :max="planning.max_duration_minutes" required /></label></div>
           <label>Описание<textarea v-model="create.description" rows="4"></textarea></label>
           <fieldset><legend>Назначение L2</legend><label class="choice"><input v-model="create.assignment" type="radio" value="auto" /> Автоматически</label><label class="choice"><input v-model="create.assignment" type="radio" value="manual" /> Конкретный L2</label><select v-if="create.assignment === 'manual'" v-model="create.l2UserId" required><option value="" disabled>Выберите L2</option><option v-for="option in l2Options" :key="option.user_id" :value="String(option.user_id)" :disabled="!option.available">{{ option.display_name }}{{ option.available ? "" : ` — ${option.reason_code === "schedule_or_conflict" ? "занят или вне графика" : "недоступен"}` }}</option></select><p v-if="create.assignment === 'manual' && !l2Options.length" class="hint">Укажите время и длительность, чтобы загрузить список L2.</p></fieldset>
           <p v-if="createError" class="error" role="alert">{{ createError }}</p><p v-if="createNotice" class="hint">{{ createNotice }}</p>
@@ -1073,7 +1127,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <h1>Панель руководителя</h1><p v-if="managerError" class="error" role="alert">{{ managerError }}</p><button v-if="hasRole(3)" @click="loadManager">Повторить</button>
       </template>
       <template v-else-if="managerPath && manager">
-        <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ profileTimeZone }}</p></div><div class="top-actions"><a class="button-link" href="/manager/cards/new">+ Создать карточку</a><a class="button-link" href="/reports">Отчёты</a><a v-if="hasRole(4)" class="button-link" href="/admin">Администрирование</a><button class="secondary" @click="logout">Выйти</button></div></header>
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ profileTimeZone }}</p></div><div class="top-actions"><a class="button-link" href="/manager/cards/new">+ Создать карточку</a></div></header>
         <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div><div class="panel"><strong>{{ manager.summary.urgent }}</strong><span>Срочно</span></div><div class="panel"><strong>{{ manager.summary.urgent_collision }}</strong><span>Коллизии</span></div></div>
         <section v-if="attentionItems.length" class="panel"><h2>Требуют внимания</h2><div class="work-list"><a v-for="item in attentionItems" :key="item.public_id" class="work-row" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ item.repeated_unsuccessful_cycle ? 'Повторный неуспешный цикл' : item.first_unsuccessful_cycle ? 'Первый неуспешный цикл' : item.status_label }}{{ item.overdue ? ' · Просрочено' : '' }}{{ item.urgent ? ' · Срочно' : '' }}</span></a></div></section>
         <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>Дата с<input v-model="managerFrom" type="date" /></label><label>Дата по<input v-model="managerTo" type="date" /></label><button>Применить</button></form>
@@ -1081,7 +1135,8 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <p v-if="managerLoading" class="hint" role="status">Загрузка календаря…</p>
         <p v-else-if="manager.items.length === manager.limit" class="warning" role="status">Показаны первые {{ manager.limit }} карточек. Данные периода могут быть неполными — сузьте период или фильтр.</p>
         <div class="manager-toggle" role="group" aria-label="Режим отображения"><button type="button" :class="{ selected: managerView === 'list' }" @click="managerView = 'list'">Список</button><button type="button" :class="{ selected: managerView === 'calendar' }" @click="managerView = 'calendar'">Календарь</button><template v-if="managerView === 'calendar'"><button type="button" :class="{ selected: calendarMode === 'day' }" @click="calendarMode = 'day'">День</button><button type="button" :class="{ selected: calendarMode === 'week' }" @click="calendarMode = 'week'">Неделя</button></template></div>
-        <p v-if="!managerLoading && !manager.items.length" class="hint">Карточки не найдены за выбранный период.</p>
+        <p v-if="!managerLoading && !manager.items.length && managerView === 'calendar'" class="hint">Карточек за выбранный период нет — календарь пуст.</p>
+        <p v-if="!managerLoading && !manager.items.length && managerView === 'list'" class="hint">Карточки не найдены за выбранный период.</p>
         <div v-else-if="managerView === 'list'" class="manager-list"><a v-for="item in manager.items" :key="item.public_id" class="manager-row panel" :href="`/cards/${item.public_id}`"><div><strong>{{ item.number }}</strong><span class="muted">Тикет {{ item.omnidesk_ticket_number }}</span></div><span class="status" :class="`status-${item.status}`">{{ item.status_label }}</span><span>{{ formatDateTime(item.planned_start_at) }} · {{ formatDuration(item.planned_duration_minutes) }}</span><span>L2: {{ item.l2_engineer_name || "Не назначен" }}</span><span v-if="item.urgent || item.overdue" class="muted">{{ item.urgent ? "Срочно " : "" }}{{ item.overdue ? "Просрочено" : "" }}</span></a></div>
         <template v-else-if="hasCalendarDstTransition">
           <p class="warning dst-notice" role="status">В выбранном периоде часового пояса {{ profileTimeZone }} происходит переход на сезонное время (DST). Карточки отображаются списком для точного отображения времени.</p>
@@ -1089,16 +1144,6 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
           <div v-else class="manager-list"><a v-for="item in calendarPeriodItems" :key="item.public_id" class="manager-row panel" :href="`/cards/${item.public_id}`"><div><strong>{{ item.number }}</strong><span class="muted">Тикет {{ item.omnidesk_ticket_number }}</span></div><span class="status" :class="`status-${item.status}`">{{ item.status_label }}</span><span>{{ formatDateTime(item.planned_start_at) }} · {{ formatDuration(item.planned_duration_minutes) }}</span><span>L2: {{ item.l2_engineer_name || "Не назначен" }}</span><span v-if="item.urgent || item.overdue" class="muted">{{ item.urgent ? "Срочно " : "" }}{{ item.overdue ? "Просрочено" : "" }}</span></a></div>
         </template>
         <div v-else class="calendar" :style="{ '--calendar-days': String(calendarDays.length) }" :data-calendar-days="calendarDays.length"><div class="calendar-head"><span>Время</span><strong v-for="day in calendarDays" :key="day.toISOString()">{{ new Intl.DateTimeFormat("ru-RU", { weekday: "short", day: "numeric", month: "short", timeZone: profileTimeZone }).format(day) }}</strong></div><div class="calendar-body"><div class="calendar-times"><span v-for="hour in calendarHours" :key="hour">{{ String(hour).padStart(2, "0") }}:00</span></div><div v-for="day in calendarDays" :key="`col-${day.toISOString()}`" class="calendar-column"><span v-for="hour in calendarHours" :key="hour" class="calendar-line" :style="{ top: `${hour * 80}px` }"></span><a v-for="item in calendarItems(day)" :key="item.public_id" class="calendar-event" :class="[`status-${item.status}`, { urgent: item.urgent, overdue: item.overdue }]" :style="calendarEventStyle(item, day)" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ formatTime(item.planned_start_at) }}–{{ formatTime(item.planned_end_at) }} · L2: {{ item.l2_engineer_name || "Не назначен" }}</span><small>{{ item.status_label }}{{ item.urgent ? " · Срочно" : "" }}{{ item.overdue ? " · Просрочено" : "" }}</small></a></div></div></div>
-        <section class="panel profile-tz-panel">
-          <h2>Часовой пояс профиля</h2>
-          <form class="inline-form" @submit.prevent="saveProfileTimezone">
-            <input v-model="editTimezone" list="staff-timezones" aria-label="Часовой пояс профиля" />
-            <datalist id="staff-timezones"><option v-for="tz in standardTimezones" :key="tz" :value="tz" /></datalist>
-            <button type="submit" :disabled="tzBusy">{{ tzBusy ? "Сохраняем…" : "Сохранить часовой пояс" }}</button>
-          </form>
-          <p v-if="tzError" class="error profile-tz-error" role="alert">{{ tzError }}</p>
-          <p v-if="tzSuccess" class="success profile-tz-success" role="status">{{ tzSuccess }}</p>
-        </section>
       </template>
 
       <template v-else>

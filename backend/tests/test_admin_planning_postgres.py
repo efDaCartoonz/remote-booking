@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import psycopg
 import pytest
@@ -122,6 +123,125 @@ def test_schedules_crud_audit_and_rbac(database_url: str) -> None:
         assert len(audit_rows) >= 1
         assert audit_rows[0]["actor_user_id"] == 93001
         assert audit_rows[0]["entity_id"] == 93003
+
+
+def test_day_shifts_replace_range_days_off_and_out_of_hours(database_url: str) -> None:
+    with psycopg.connect(database_url, row_factory=dict_row) as connection:
+        seed_users(connection)
+        app = create_app()
+        app.dependency_overrides[get_db] = lambda: connection
+        actor = {"user": make_auth_user(93002, RoleId.MANAGER)}
+        app.dependency_overrides[get_current_user] = lambda: actor["user"]
+        client = TestClient(app)
+
+        # A legacy weekly row exists before the per-date schedule is used.
+        weekly = [
+            {
+                "weekday": 1,
+                "start_time": "09:00:00",
+                "end_time": "18:00:00",
+                "timezone": "Asia/Yekaterinburg",
+            }
+        ]
+        actor["user"] = make_auth_user(93001, RoleId.ADMIN)
+        assert (
+            client.put("/api/v1/admin/schedules/93003", json=weekly).status_code == 200
+        )
+        actor["user"] = make_auth_user(93002, RoleId.MANAGER)
+
+        body = {
+            "date_from": "2026-10-05",
+            "date_to": "2026-10-11",
+            "timezone": "Asia/Yekaterinburg",
+            "days": [
+                {"day": "2026-10-05", "start_time": "07:00:00", "end_time": "16:00:00"},
+                {"day": "2026-10-07", "start_time": "13:00:00", "end_time": "22:00:00"},
+            ],
+        }
+        response = client.put("/api/v1/admin/schedules/93003/days", json=body)
+        assert response.status_code == 200, response.text
+
+        listed = client.get(
+            "/api/v1/admin/schedules/days",
+            params={"date_from": "2026-10-01", "date_to": "2026-10-31"},
+        ).json()
+        user_rows = [u for u in listed["users"] if u["user_id"] == 93003]
+        assert [d["day"] for d in user_rows[0]["days"]] == ["2026-10-05", "2026-10-07"]
+        # The legacy weekly row is gone.
+        assert (
+            connection.execute(
+                "SELECT count(*) AS n FROM schedules WHERE user_id=93003 AND valid_from IS NULL"
+            ).fetchone()["n"]
+            == 0
+        )
+
+        connection.execute(
+            "INSERT INTO user_roles (user_id, role_id) VALUES (93003, 2) ON CONFLICT DO NOTHING"
+        )
+        connection.commit()
+        employees = client.get("/api/v1/admin/schedules/employees")
+        assert employees.status_code == 200, employees.text
+        listed_employees = [e for e in employees.json() if e["id"] == 93003]
+        assert listed_employees[0]["roles"] == [2]
+        assert listed_employees[0]["timezone"]
+
+        # Replacing a sub-range keeps days outside it and clears days inside it.
+        narrow = {
+            **body,
+            "date_from": "2026-10-07",
+            "date_to": "2026-10-07",
+            "days": [],
+        }
+        assert (
+            client.put("/api/v1/admin/schedules/93003/days", json=narrow).status_code
+            == 200
+        )
+        remaining = connection.execute(
+            "SELECT valid_from FROM schedules WHERE user_id=93003 ORDER BY valid_from"
+        ).fetchall()
+        assert [str(r["valid_from"]) for r in remaining] == ["2026-10-05"]
+
+        # Availability: the dated shift counts, the day off does not.
+        from app.admin.repository import AdministrativeRepository
+
+        repo = AdministrativeRepository(connection)
+        tz = ZoneInfo("Asia/Yekaterinburg")
+        inside = datetime(2026, 10, 5, 8, 0, tzinfo=tz)
+        assert not repo.is_out_of_hours(
+            user_id=93003, start_at=inside, end_at=inside.replace(hour=9)
+        )
+        day_off = datetime(2026, 10, 7, 14, 0, tzinfo=tz)
+        assert repo.is_out_of_hours(
+            user_id=93003, start_at=day_off, end_at=day_off.replace(hour=15)
+        )
+
+        # Validation and RBAC.
+        bad = {
+            **body,
+            "days": [
+                {"day": "2026-11-01", "start_time": "07:00:00", "end_time": "16:00:00"}
+            ],
+        }
+        assert (
+            client.put("/api/v1/admin/schedules/93003/days", json=bad).status_code
+            == 422
+        )
+        assert (
+            client.put("/api/v1/admin/schedules/99999999/days", json=body).status_code
+            == 404
+        )
+        actor["user"] = make_auth_user(93003, RoleId.L2)
+        assert (
+            client.put("/api/v1/admin/schedules/93003/days", json=body).status_code
+            == 403
+        )
+        assert (
+            client.get(
+                "/api/v1/admin/schedules/days",
+                params={"date_from": "2026-10-01", "date_to": "2026-10-31"},
+            ).status_code
+            == 403
+        )
 
 
 def test_absences_crud_audit_and_rbac(database_url: str) -> None:

@@ -1,4 +1,5 @@
 import { DOMWrapper, flushPromises, mount } from "@vue/test-utils";
+import { slotInput } from "./testSlot";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App.vue";
 
@@ -234,7 +235,7 @@ describe("App manager create view", () => {
     await wrapper.find(".create-form button.secondary").trigger("click");
     await flushPromises();
 
-    const startInput = wrapper.find("input[type='datetime-local']");
+    const startInput = slotInput(wrapper);
     const durationInput = wrapper.find("input[type='number']");
     const form = wrapper.find(".create-form");
     await startInput.setValue(validFutureDate(1));
@@ -395,10 +396,10 @@ describe("App manager create view", () => {
     await flushPromises();
     await wrapper.find("input[required]").setValue("T-MANUAL");
     await wrapper.find(".create-form button.secondary").trigger("click");
-    await wrapper.find("input[type='datetime-local']").setValue(validFutureDate(4));
+    await slotInput(wrapper).setValue(validFutureDate(4));
     await flushPromises();
     await wrapper.find("input[type='radio'][value='manual']").setValue();
-    await wrapper.find(".create-form select").setValue("42");
+    await wrapper.find(".create-form select:not([data-test^='create-slot'])").setValue("42");
     await wrapper.find(".create-form").trigger("submit");
     await flushPromises();
 
@@ -444,7 +445,7 @@ describe("App manager create view", () => {
     await flushPromises();
 
     // Fill valid start date
-    const startInput = wrapper.find("input[type='datetime-local']");
+    const startInput = slotInput(wrapper);
     await startInput.setValue(validFutureDate(4));
 
     const form = wrapper.find(".create-form");

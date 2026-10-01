@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
+import ScheduleEditor from "./ScheduleEditor.vue";
+import { quarterHourOptions } from "./scheduleGenerator";
 import {
   AdminUser,
   AbsenceItem,
   CalendarDay,
-  ConnectionResult,
   DistributionMember,
   getErrorMessage,
   getIntegrationsStatus,
@@ -13,7 +14,6 @@ import {
   getPublicNotificationSettings,
   getCancellationPublicNotificationSettings,
   getSessionExtensionInterval,
-  getUserSchedules,
   IntegrationsStatus,
   listAbsences,
   listDistributionMembers,
@@ -22,12 +22,8 @@ import {
   PlanningSettings,
   PublicNotificationSettings,
   CancellationPublicNotificationSettings,
-  replaceUserSchedules,
-  ScheduleItem,
   updateCalendarDay,
   updateCancellationPublicNotificationSettings,
-  updateConnectionResult,
-  createConnectionResult,
   updateDistributionMembership,
   updateNotificationTemplate,
   updatePlanningSettings,
@@ -40,7 +36,6 @@ import {
   createAbsence,
   deleteAbsence,
   getCalendarDays,
-  getConnectionResults,
   UserUpdatePayload,
 } from "./adminApi";
 import {
@@ -337,72 +332,15 @@ async function handleSaveUser() {
 type ScheduleSubTab = "schedules" | "absences" | "calendar" | "distribution" | "planning";
 const currentScheduleSubTab = ref<ScheduleSubTab>("schedules");
 
-// Schedules subtab
-const selectedScheduleUserId = ref<number | "">("");
-const userSchedules = ref<ScheduleItem[]>([]);
-const scheduleBusy = ref(false);
-
-async function loadUserSchedules() {
-  if (!selectedScheduleUserId.value || typeof selectedScheduleUserId.value !== "number") {
-    userSchedules.value = [];
-    return;
-  }
-  scheduleBusy.value = true;
-  try {
-    userSchedules.value = await getUserSchedules(selectedScheduleUserId.value);
-  } catch (err) {
-    actionError.value = getErrorMessage(err);
-  } finally {
-    scheduleBusy.value = false;
-  }
-}
-
-function addScheduleItem() {
-  userSchedules.value.push({
-    weekday: 1,
-    start_time: "09:00:00",
-    end_time: "18:00:00",
-    timezone: profileTz.value,
-    valid_from: null,
-    valid_to: null,
-  });
-}
-
-function removeScheduleItem(index: number) {
-  userSchedules.value.splice(index, 1);
-}
-
-async function handleSaveSchedules() {
-  if (!selectedScheduleUserId.value || typeof selectedScheduleUserId.value !== "number") return;
-  clearAlerts();
-  scheduleBusy.value = true;
-  try {
-    // Clean times
-    const formatted = userSchedules.value.map((s) => ({
-      ...s,
-      start_time: s.start_time.length === 5 ? `${s.start_time}:00` : s.start_time,
-      end_time: s.end_time.length === 5 ? `${s.end_time}:00` : s.end_time,
-      valid_from: s.valid_from || null,
-      valid_to: s.valid_to || null,
-    }));
-    await replaceUserSchedules(selectedScheduleUserId.value, formatted);
-    actionSuccess.value = "Рабочий график сотрудника успешно сохранён.";
-    await loadUserSchedules();
-  } catch (err) {
-    actionError.value = getErrorMessage(err);
-  } finally {
-    scheduleBusy.value = false;
-  }
-}
-
 // Absences subtab
 const absences = ref<AbsenceItem[]>([]);
 const absenceUserIdFilter = ref<number | "">("");
 const absenceNewUserId = ref<number | "">("");
+const timeOptions = quarterHourOptions();
 const absenceStartDate = ref(getTodayDateString());
-const absenceStartTime = ref("09:00");
+const absenceStartTime = ref("00:00");
 const absenceEndDate = ref(getTodayDateString());
-const absenceEndTime = ref("18:00");
+const absenceEndTime = ref("23:59");
 const absenceReason = ref("");
 
 async function loadAbsences() {
@@ -604,7 +542,7 @@ async function handleSavePlanningSettings() {
 // ---------------------------------------------------------------------------
 // 3. Settings & Integrations Tab State
 // ---------------------------------------------------------------------------
-type SettingsSubTab = "session" | "results" | "templates" | "integrations";
+type SettingsSubTab = "session" | "templates" | "integrations";
 const currentSettingsSubTab = ref<SettingsSubTab>("session");
 
 // Session & Notification Settings
@@ -665,63 +603,6 @@ async function handleSaveCancellationWarning() {
       cancelNotificationSettings.value
     );
     actionSuccess.value = "Настройки публичного сообщения об отмене сохранены.";
-  } catch (err) {
-    actionError.value = getErrorMessage(err);
-  } finally {
-    busy.value = false;
-  }
-}
-
-// Results Catalog subtab
-const connectionResults = ref<ConnectionResult[]>([]);
-const newResultCode = ref<number | "">("");
-const newResultName = ref("");
-const newResultSortOrder = ref(10);
-const newResultIsActive = ref(true);
-
-async function loadConnectionResults() {
-  busy.value = true;
-  try {
-    connectionResults.value = await getConnectionResults();
-  } catch (err) {
-    actionError.value = getErrorMessage(err);
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function handleCreateResult() {
-  clearAlerts();
-  if (typeof newResultCode.value !== "number" || !newResultName.value.trim()) {
-    actionError.value = "Укажите код и название результата.";
-    return;
-  }
-  busy.value = true;
-  try {
-    await createConnectionResult({
-      code: newResultCode.value,
-      name: newResultName.value.trim(),
-      is_active: newResultIsActive.value,
-      sort_order: newResultSortOrder.value,
-    });
-    actionSuccess.value = "Результат подключения добавлен.";
-    newResultCode.value = "";
-    newResultName.value = "";
-    await loadConnectionResults();
-  } catch (err) {
-    actionError.value = getErrorMessage(err);
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function handleToggleResultActive(res: ConnectionResult) {
-  clearAlerts();
-  busy.value = true;
-  try {
-    await updateConnectionResult(res.code, { is_active: !res.is_active });
-    actionSuccess.value = "Статус результата обновлён.";
-    await loadConnectionResults();
   } catch (err) {
     actionError.value = getErrorMessage(err);
   } finally {
@@ -796,14 +677,12 @@ watch(
     if (tab === "users") await loadUsers();
     else if (tab === "schedules") {
       if (users.value.length === 0) await loadUsers();
-      if (currentScheduleSubTab.value === "schedules") await loadUserSchedules();
-      else if (currentScheduleSubTab.value === "absences") await loadAbsences();
+      if (currentScheduleSubTab.value === "absences") await loadAbsences();
       else if (currentScheduleSubTab.value === "calendar") await loadCalendarDays();
       else if (currentScheduleSubTab.value === "distribution") await loadDistributionMembers();
       else if (currentScheduleSubTab.value === "planning") await loadPlanningSettings();
     } else if (tab === "settings") {
       if (currentSettingsSubTab.value === "session") await loadGeneralSettings();
-      else if (currentSettingsSubTab.value === "results") await loadConnectionResults();
       else if (currentSettingsSubTab.value === "templates") await loadNotificationTemplates();
       else if (currentSettingsSubTab.value === "integrations") await loadIntegrationsStatus();
     }
@@ -814,8 +693,7 @@ watch(
   () => currentScheduleSubTab.value,
   async (subTab) => {
     if (!isAdmin.value || currentTab.value !== "schedules") return;
-    if (subTab === "schedules") await loadUserSchedules();
-    else if (subTab === "absences") await loadAbsences();
+    if (subTab === "absences") await loadAbsences();
     else if (subTab === "calendar") await loadCalendarDays();
     else if (subTab === "distribution") await loadDistributionMembers();
     else if (subTab === "planning") await loadPlanningSettings();
@@ -827,7 +705,6 @@ watch(
   async (subTab) => {
     if (!isAdmin.value || currentTab.value !== "settings") return;
     if (subTab === "session") await loadGeneralSettings();
-    else if (subTab === "results") await loadConnectionResults();
     else if (subTab === "templates") await loadNotificationTemplates();
     else if (subTab === "integrations") await loadIntegrationsStatus();
   }
@@ -1260,102 +1137,13 @@ function getUserDisplayName(userId: number): string {
 
       <!-- A. Schedules SubTab -->
       <div v-if="currentScheduleSubTab === 'schedules'" class="subtab-content">
-        <h3>Настройка рабочего графика сотрудника</h3>
-        <div class="manager-filters">
-          <label>
-            <span>Выберите сотрудника:</span>
-            <select
-              v-model.number="selectedScheduleUserId"
-              data-test="select-schedule-user"
-              @change="loadUserSchedules"
-            >
-              <option value="" disabled>-- Выберите сотрудника --</option>
-              <option v-for="u in users" :key="u.id" :value="u.id">
-                {{ u.full_name }} (@{{ u.username }})
-              </option>
-            </select>
-          </label>
-        </div>
-
-        <div v-if="selectedScheduleUserId" class="panel actions">
-          <div class="section-heading">
-            <h4>Интервалы графика</h4>
-            <button type="button" class="secondary" data-test="btn-add-schedule-item" @click="addScheduleItem">
-              + Добавить интервал
-            </button>
-          </div>
-
-          <div v-if="userSchedules.length === 0" class="muted">
-            График не настроен (сотрудник считается недоступным для распределения).
-          </div>
-
-          <div v-for="(item, idx) in userSchedules" :key="idx" class="schedule-row-box panel" :data-test="`schedule-item-${idx}`">
-            <div class="grid">
-              <label>
-                <span>День недели</span>
-                <select v-model.number="item.weekday" :data-test="`schedule-weekday-${idx}`">
-                  <option v-for="(name, dayNum) in weekdayNames" :key="dayNum + 1" :value="dayNum + 1">
-                    {{ dayNum + 1 }} — {{ name }}
-                  </option>
-                </select>
-              </label>
-              <label>
-                <span>Часовой пояс графика</span>
-                <select v-model="item.timezone" :data-test="`schedule-timezone-${idx}`">
-                  <option v-for="tz in STANDARD_TIMEZONES" :key="tz" :value="tz">{{ tz }}</option>
-                </select>
-              </label>
-            </div>
-
-            <div class="grid">
-              <label>
-                <span>Время начала</span>
-                <input v-model="item.start_time" type="time" step="1" required :data-test="`schedule-start-${idx}`" />
-              </label>
-              <label>
-                <span>Время окончания</span>
-                <input v-model="item.end_time" type="time" step="1" required :data-test="`schedule-end-${idx}`" />
-              </label>
-            </div>
-
-            <div class="grid">
-              <label>
-                <span>Действует с (опционально)</span>
-                <input v-model="item.valid_from" type="date" :data-test="`schedule-from-${idx}`" />
-              </label>
-              <label>
-                <span>Действует по (опционально)</span>
-                <input v-model="item.valid_to" type="date" :data-test="`schedule-to-${idx}`" />
-              </label>
-            </div>
-
-            <button
-              type="button"
-              class="danger"
-              style="padding: 6px 12px; margin-top: 8px;"
-              :data-test="`btn-remove-schedule-${idx}`"
-              @click="removeScheduleItem(idx)"
-            >
-              Удалить интервал
-            </button>
-          </div>
-
-          <div style="margin-top: 16px;">
-            <button
-              type="button"
-              :disabled="scheduleBusy"
-              data-test="btn-save-schedules"
-              @click="handleSaveSchedules"
-            >
-              Сохранить график
-            </button>
-          </div>
-        </div>
+        <ScheduleEditor />
       </div>
 
       <!-- B. Absences SubTab -->
       <div v-if="currentScheduleSubTab === 'absences'" class="subtab-content">
         <h3>Отсутствия сотрудников</h3>
+        <p class="hint" data-test="help-text">Отпуск, больничный или другое отсутствие. Пока оно действует, сотрудник считается недоступным: автоматически карточки ему не назначаются, а в списке выбора L2 у руководителя он отмечается как недоступный. По умолчанию отсутствие задаётся на весь день: с 00:00 до 23:59.</p>
 
         <!-- Add Absence Form -->
         <div class="panel actions">
@@ -1389,7 +1177,7 @@ function getUserDisplayName(userId: number): string {
               </label>
               <label>
                 <span>Время начала</span>
-                <input v-model="absenceStartTime" type="time" required data-test="input-absence-start-time" />
+                <select v-model="absenceStartTime" required data-test="input-absence-start-time"><option v-for="t in timeOptions" :key="t" :value="t">{{ t }}</option></select>
               </label>
             </div>
 
@@ -1400,7 +1188,7 @@ function getUserDisplayName(userId: number): string {
               </label>
               <label>
                 <span>Время окончания</span>
-                <input v-model="absenceEndTime" type="time" required data-test="input-absence-end-time" />
+                <select v-model="absenceEndTime" required data-test="input-absence-end-time"><option v-for="t in timeOptions" :key="t" :value="t">{{ t }}</option></select>
               </label>
             </div>
 
@@ -1469,6 +1257,7 @@ function getUserDisplayName(userId: number): string {
       <!-- C. Production Calendar SubTab -->
       <div v-if="currentScheduleSubTab === 'calendar'" class="subtab-content">
         <h3>Производственный календарь РФ</h3>
+        <p class="hint" data-test="help-text">Отмечайте праздничные и нерабочие дни. В такие даты сотрудники не получают автоматическое назначение, даже если в графике стоит смена, а карточки помечаются «вне рабочего времени». Календарь также подсказывает при составлении графиков: нерабочие дни подсвечены, и шаблон по умолчанию не ставит на них смены. Сам график он не меняет.</p>
         <div class="manager-filters">
           <label>
             <span>Период с:</span>
@@ -1564,6 +1353,7 @@ function getUserDisplayName(userId: number): string {
       <!-- D. Distribution Membership SubTab -->
       <div v-if="currentScheduleSubTab === 'distribution'" class="subtab-content">
         <h3>Участие сотрудников в автоматическом распределении</h3>
+        <p class="hint" data-test="help-text">Переключатель для случаев, когда у сотрудника есть график, но брать новые карточки он сейчас не может, например из-за другой нагрузки на удалённых подключениях. Выключенный сотрудник не получает автоматические назначения; его график и отсутствия не меняются. Каждое изменение требует основания и сохраняется в журнале.</p>
         <p class="hint">
           Включение и исключение сотрудника из пула распределения производится строго на основании решения руководителя с обязательной фиксацией текстового комментария.
         </p>
@@ -1656,6 +1446,7 @@ function getUserDisplayName(userId: number): string {
       <!-- E. Planning Settings SubTab -->
       <div v-if="currentScheduleSubTab === 'planning'" class="subtab-content">
         <h3>Параметры планирования подключений (ADM-010)</h3>
+        <p class="hint" data-test="help-text">Эти значения действуют во всех формах создания и переноса карточек (L1, L2, руководитель и клиентский фрейм) и подставляются в выбор даты и времени. «Минимальное время до подключения» — не раньше чем через столько минут от текущего момента; «Горизонт» — насколько дней вперёд можно планировать; длительность — значение по умолчанию, минимум и максимум. Срочные подключения не ограничены минимальным временем, ретроспективные ограничены прошлым.</p>
         <form class="form panel actions" @submit.prevent="handleSavePlanningSettings">
           <div class="grid">
             <label>
@@ -1742,14 +1533,6 @@ function getUserDisplayName(userId: number): string {
         </button>
         <button
           type="button"
-          :class="{ selected: currentSettingsSubTab === 'results' }"
-          data-test="subtab-results"
-          @click="currentSettingsSubTab = 'results'"
-        >
-          Справочник результатов
-        </button>
-        <button
-          type="button"
           :class="{ selected: currentSettingsSubTab === 'templates' }"
           data-test="subtab-templates"
           @click="currentSettingsSubTab = 'templates'"
@@ -1769,6 +1552,7 @@ function getUserDisplayName(userId: number): string {
       <!-- A. Session Extension & Public Warnings -->
       <div v-if="currentSettingsSubTab === 'session'" class="subtab-content">
         <h3>Интервал автоматического продления и публичные сообщения</h3>
+        <p class="hint" data-test="help-text">Если карточка в статусе «Выполняется» дошла до планового окончания, а инженер её ещё не завершил, система сама продлевает её на этот интервал. Когда общая длительность превысит 720 минут, карточка переходит в ожидание результата. Если продление пересекается с другой карточкой инженера, она помечается флагом коллизии.</p>
 
         <div class="panel actions">
           <h4>Автопродление выполняющейся сессии</h4>
@@ -1850,88 +1634,10 @@ function getUserDisplayName(userId: number): string {
         </div>
       </div>
 
-      <!-- B. Results Catalog -->
-      <div v-if="currentSettingsSubTab === 'results'" class="subtab-content">
-        <h3>Справочник результатов подключения</h3>
-
-        <!-- Add Result Form -->
-        <div class="panel actions">
-          <h4>Добавить результат подключения</h4>
-          <form class="form" @submit.prevent="handleCreateResult">
-            <div class="grid">
-              <label>
-                <span>Код результата (число) *</span>
-                <input v-model.number="newResultCode" type="number" required data-test="input-result-code" />
-              </label>
-              <label>
-                <span>Название результата *</span>
-                <input v-model="newResultName" type="text" required data-test="input-result-name" />
-              </label>
-            </div>
-            <div class="grid">
-              <label>
-                <span>Порядок сортировки</span>
-                <input v-model.number="newResultSortOrder" type="number" data-test="input-result-sort" />
-              </label>
-              <label class="choice">
-                <input v-model="newResultIsActive" type="checkbox" data-test="checkbox-result-active" />
-                <span>Активен</span>
-              </label>
-            </div>
-            <div>
-              <button type="submit" :disabled="busy" data-test="btn-submit-result">
-                Добавить результат
-              </button>
-            </div>
-          </form>
-        </div>
-
-        <div class="table-wrap">
-          <table class="admin-table" data-test="table-results">
-            <thead>
-              <tr>
-                <th>Код</th>
-                <th>Название</th>
-                <th>Порядок сортировки</th>
-                <th>Статус</th>
-                <th>Действия</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="r in connectionResults" :key="r.code" :data-test="`result-row-${r.code}`">
-                <td>{{ r.code }}</td>
-                <td><strong>{{ r.name }}</strong></td>
-                <td>{{ r.sort_order }}</td>
-                <td>
-                  <span :class="['flag', r.is_active ? 'success' : 'flag-danger']">
-                    {{ r.is_active ? 'Активен' : 'Отключен' }}
-                  </span>
-                </td>
-                <td>
-                  <button
-                    type="button"
-                    class="secondary"
-                    style="padding: 5px 10px; font-size: 12px;"
-                    :data-test="`btn-toggle-result-${r.code}`"
-                    @click="handleToggleResultActive(r)"
-                  >
-                    {{ r.is_active ? 'Деактивировать' : 'Активировать' }}
-                  </button>
-                </td>
-              </tr>
-              <tr v-if="connectionResults.length === 0">
-                <td colspan="5" class="muted" style="text-align: center; padding: 16px;">
-                  Результаты не найдены
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-
       <!-- C. Notification Templates -->
       <div v-if="currentSettingsSubTab === 'templates'" class="subtab-content">
         <h3>Шаблоны уведомлений</h3>
+        <p class="hint" data-test="help-text">Код шаблона состоит из события и канала, например «l1_followup.telegram». Выберите шаблон, измените текст и сохраните: следующее уведомление будет отправлено уже по новому тексту. В тексте можно использовать подстановки в фигурных скобках: {card_number} — номер карточки, {ticket} — номер тикета Omnidesk, {timestamp} — плановое время, {duration} — длительность в минутах, {client_suffix} — имя клиента (если известно), {url} — ссылка на карточку, {status} — статус, {reason} — причина, {action} — действие. Неизвестные подстановки система не сохранит. Если шаблон отключён или повреждён, отправляется стандартный текст.</p>
 
         <!-- Edit Template Modal / Panel -->
         <div v-if="editingTemplate" class="panel actions" data-test="panel-edit-template">
@@ -2009,6 +1715,7 @@ function getUserDisplayName(userId: number): string {
       <!-- D. Integrations Status (Read-Only) -->
       <div v-if="currentSettingsSubTab === 'integrations'" class="subtab-content" data-test="section-integrations">
         <h3>Статус внешних интеграций (Только чтение)</h3>
+        <p class="hint" data-test="help-text">Показывает, подключены ли Omnidesk, Telegram и Битрикс24 и включена ли отправка во внешние системы. Это только состояние: настройки и ключи хранятся в окружении сервера и здесь не меняются. Если отправка выключена, уведомления накапливаются, но во внешние системы не уходят.</p>
         <p class="hint">
           Секретные ключи, токены и URL вебхуков хранятся исключительно в конфигурационном файле окружения (.env) и никогда не передаются и не отображаются в интерфейсе.
         </p>

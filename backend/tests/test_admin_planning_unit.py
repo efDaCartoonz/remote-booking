@@ -264,3 +264,77 @@ def test_planning_settings_applied_to_window_validations() -> None:
             now=now,
             settings=custom_settings,
         )
+
+
+def test_day_shifts_request_validation() -> None:
+    from app.api.admin_planning import DayShiftsReplaceRequest
+
+    ok = DayShiftsReplaceRequest(
+        date_from=date(2026, 10, 1),
+        date_to=date(2026, 10, 31),
+        timezone="Asia/Yekaterinburg",
+        days=[{"day": "2026-10-05", "start_time": "07:00", "end_time": "16:00"}],
+    )
+    assert ok.days[0].day == date(2026, 10, 5)
+
+    with pytest.raises(ValidationError):
+        DayShiftsReplaceRequest(
+            date_from=date(2026, 10, 1),
+            date_to=date(2026, 10, 31),
+            timezone="Asia/Yekaterinburg",
+            days=[{"day": "2026-10-05", "start_time": "16:00", "end_time": "07:00"}],
+        )
+    with pytest.raises(ValidationError):
+        DayShiftsReplaceRequest(
+            date_from=date(2026, 10, 31),
+            date_to=date(2026, 10, 1),
+            timezone="Asia/Yekaterinburg",
+            days=[],
+        )
+    with pytest.raises(ValidationError):
+        DayShiftsReplaceRequest(
+            date_from=date(2026, 1, 1),
+            date_to=date(2026, 12, 31),
+            timezone="Asia/Yekaterinburg",
+            days=[],
+        )
+    with pytest.raises(ValidationError):
+        DayShiftsReplaceRequest(
+            date_from=date(2026, 10, 1),
+            date_to=date(2026, 10, 2),
+            timezone="Mars/Phobos",
+            days=[],
+        )
+
+
+def test_replace_day_shifts_rejects_bad_days_before_touching_the_database() -> None:
+    from app.admin.repository import AdministrativeRepository, DayShift
+
+    repo = AdministrativeRepository(connection=None)  # type: ignore[arg-type]
+
+    def shift(day: date, start: str = "07:00", end: str = "16:00") -> DayShift:
+        return DayShift(
+            1, day, time.fromisoformat(start), time.fromisoformat(end), "UTC"
+        )
+
+    kwargs = {
+        "user_id": 1,
+        "date_from": date(2026, 10, 1),
+        "date_to": date(2026, 10, 7),
+    }
+    with pytest.raises(ValueError, match="schedule_day_out_of_range"):
+        repo.replace_day_shifts(
+            **kwargs, shifts=[shift(date(2026, 10, 9))], actor_user_id=1
+        )
+    with pytest.raises(ValueError, match="schedule_duplicate_day"):
+        repo.replace_day_shifts(
+            **kwargs,
+            shifts=[shift(date(2026, 10, 2)), shift(date(2026, 10, 2), "08:00")],
+            actor_user_id=1,
+        )
+    with pytest.raises(ValueError, match="schedule_start_must_precede_end"):
+        repo.replace_day_shifts(
+            **kwargs,
+            shifts=[shift(date(2026, 10, 2), "16:00", "07:00")],
+            actor_user_id=1,
+        )

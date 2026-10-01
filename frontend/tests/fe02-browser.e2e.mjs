@@ -139,7 +139,8 @@ describe("RDM FE-02 Bounded Playwright Browser Suite", () => {
 
       // Create L1 card
       await page.fill(".role-create-form input[pattern]", "111-222333");
-      await page.fill(".role-create-form input[type='datetime-local']", "2026-10-01T10:00");
+      await page.selectOption(".role-create-form [data-test='role-slot-date']", { index: 2 });
+      await page.selectOption(".role-create-form [data-test='role-slot-time']", "10:00");
       await page.fill(".role-create-form textarea", "L1 client card");
       await page.click(".role-create-form button");
 

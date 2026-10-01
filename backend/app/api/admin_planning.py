@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.admin.planning_settings import PlanningSettings, get_planning_settings
-from app.admin.repository import AdministrativeRepository, WorkSchedule
+from app.admin.repository import AdministrativeRepository, DayShift, WorkSchedule
 from app.auth.dependencies import require_roles
 from app.auth.store import UserAuthRecord
 from app.cards.constants import RoleId
@@ -80,6 +80,164 @@ def _check_schedule_overlaps(items: list[ScheduleItem]) -> None:
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="schedule_intervals_overlap",
                 )
+
+
+MAX_SCHEDULE_RANGE_DAYS = 93
+
+
+class DayShiftItem(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    day: date
+    start_time: time
+    end_time: time
+
+    @model_validator(mode="after")
+    def validate_times(self) -> DayShiftItem:
+        if self.start_time >= self.end_time:
+            raise ValueError("schedule_start_must_precede_end")
+        return self
+
+
+class DayShiftsReplaceRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    date_from: date
+    date_to: date
+    timezone: str
+    days: list[DayShiftItem]
+
+    @field_validator("timezone")
+    @classmethod
+    def validate_timezone(cls, value: str) -> str:
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError, Exception):
+            raise ValueError("invalid_timezone")
+        return value
+
+    @model_validator(mode="after")
+    def validate_range(self) -> DayShiftsReplaceRequest:
+        if self.date_from > self.date_to:
+            raise ValueError("schedule_validity_range_invalid")
+        if (self.date_to - self.date_from).days + 1 > MAX_SCHEDULE_RANGE_DAYS:
+            raise ValueError("schedule_range_too_long")
+        return self
+
+
+class UserDayShiftsResponse(BaseModel):
+    user_id: int
+    timezone: str | None
+    days: list[DayShiftItem]
+
+
+class DayShiftsListResponse(BaseModel):
+    date_from: date
+    date_to: date
+    users: list[UserDayShiftsResponse]
+
+
+def _validate_range(date_from: date, date_to: date) -> None:
+    if date_from > date_to:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="schedule_validity_range_invalid",
+        )
+    if (date_to - date_from).days + 1 > MAX_SCHEDULE_RANGE_DAYS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="schedule_range_too_long",
+        )
+
+
+class ScheduleEmployee(BaseModel):
+    id: int
+    full_name: str
+    timezone: str
+    roles: list[int]
+
+
+@router.get("/schedules/employees", response_model=list[ScheduleEmployee])
+def list_schedule_employees(
+    _: Annotated[UserAuthRecord, Depends(require_admin_or_manager)],
+) -> list[ScheduleEmployee]:
+    with db_connection() as connection:
+        rows = AdministrativeRepository(connection).list_schedule_employees()
+    return [ScheduleEmployee(**row) for row in rows]
+
+
+@router.get("/schedules/days", response_model=DayShiftsListResponse)
+def list_day_shifts(
+    date_from: Annotated[date, Query()],
+    date_to: Annotated[date, Query()],
+    _: Annotated[UserAuthRecord, Depends(require_admin_or_manager)],
+) -> DayShiftsListResponse:
+    _validate_range(date_from, date_to)
+    with db_connection() as connection:
+        shifts = AdministrativeRepository(connection).list_day_shifts(
+            date_from=date_from, date_to=date_to
+        )
+    grouped: dict[int, UserDayShiftsResponse] = {}
+    for shift in shifts:
+        entry = grouped.setdefault(
+            shift.user_id,
+            UserDayShiftsResponse(
+                user_id=shift.user_id, timezone=shift.timezone, days=[]
+            ),
+        )
+        entry.days.append(
+            DayShiftItem(
+                day=shift.work_date,
+                start_time=shift.start_time,
+                end_time=shift.end_time,
+            )
+        )
+    return DayShiftsListResponse(
+        date_from=date_from, date_to=date_to, users=list(grouped.values())
+    )
+
+
+@router.put("/schedules/{user_id}/days", response_model=UserDayShiftsResponse)
+def replace_day_shifts(
+    user_id: Annotated[int, Path(gt=0)],
+    payload: DayShiftsReplaceRequest,
+    user: Annotated[UserAuthRecord, Depends(require_admin_or_manager)],
+) -> UserDayShiftsResponse:
+    shifts = [
+        DayShift(
+            user_id=user_id,
+            work_date=item.day,
+            start_time=item.start_time,
+            end_time=item.end_time,
+            timezone=payload.timezone,
+        )
+        for item in payload.days
+    ]
+    with db_connection() as connection:
+        repo = AdministrativeRepository(connection)
+        try:
+            repo.replace_day_shifts(
+                user_id=user_id,
+                date_from=payload.date_from,
+                date_to=payload.date_to,
+                shifts=shifts,
+                actor_user_id=user.id,
+            )
+        except ValueError as exc:
+            code = str(exc)
+            raise HTTPException(
+                status_code=(
+                    status.HTTP_404_NOT_FOUND
+                    if code == "user_not_found"
+                    else status.HTTP_422_UNPROCESSABLE_ENTITY
+                ),
+                detail=code,
+            ) from exc
+    return UserDayShiftsResponse(
+        user_id=user_id,
+        timezone=payload.timezone,
+        days=sorted(payload.days, key=lambda item: item.day),
+    )
 
 
 @router.get("/schedules/{user_id}", response_model=list[ScheduleItem])

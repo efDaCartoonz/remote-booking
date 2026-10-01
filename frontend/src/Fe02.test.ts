@@ -1,4 +1,5 @@
 import { flushPromises, mount } from "@vue/test-utils";
+import { slotInput } from "./testSlot";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App from "./App.vue";
 
@@ -111,7 +112,7 @@ describe("FE-02 role workspaces", () => {
     expect(wrapper.find(".work-row").text()).toContain("Отклонено");
     expect(wrapper.find(".manager-stats").exists()).toBe(false);
     await wrapper.find(".role-create-form input[pattern]").setValue("123-456789");
-    await wrapper.find(".role-create-form input[type='datetime-local']").setValue("2026-10-01T10:00");
+    await slotInput(wrapper.find(".role-create-form")).setValue("2026-10-01T10:00");
     await wrapper.find(".role-create-form").trigger("submit");
     await flushPromises();
     const post = calls.find(([path, init]) => path.endsWith("/cards/l1") && init?.method === "POST");
@@ -145,7 +146,7 @@ describe("FE-02 role workspaces", () => {
     expect(calls.some((url) => url.includes("/cards/mine?role=l2"))).toBe(true);
     expect(wrapper.text()).toContain("RDM-L2-QUEUE");
     expect(wrapper.text()).toContain("Создать карточку L2");
-    expect(wrapper.find(".role-create-form select").exists()).toBe(true);
+    expect(wrapper.find(".role-create-form select:not([data-test^='role-slot'])").exists()).toBe(true);
   });
 
   it("submits L2 urgent and retroactive create payloads with expected fields", async () => {
@@ -165,8 +166,8 @@ describe("FE-02 role workspaces", () => {
 
     // 1. Urgent scenario
     await wrapper.find(".role-create-form input[pattern]").setValue("222-333444");
-    await wrapper.find(".role-create-form input[type='datetime-local']").setValue("2026-10-01T14:00");
-    await wrapper.find(".role-create-form select").setValue("urgent");
+    await slotInput(wrapper.find(".role-create-form")).setValue("2026-10-01T14:00");
+    await wrapper.find(".role-create-form select:not([data-test^='role-slot'])").setValue("urgent");
     await flushPromises();
     const urgentReasonInput = wrapper.findAll(".role-create-form label").find((l) => l.text().includes("Причина срочности"))?.find("input");
     expect(urgentReasonInput).toBeDefined();
@@ -183,9 +184,9 @@ describe("FE-02 role workspaces", () => {
     });
 
     // 2. Retroactive scenario
-    await wrapper.find(".role-create-form select").setValue("retroactive");
+    await wrapper.find(".role-create-form select:not([data-test^='role-slot'])").setValue("retroactive");
     await flushPromises();
-    const resultSelect = wrapper.findAll(".role-create-form select").find((s) => s.text().includes("Выполнено успешно"));
+    const resultSelect = wrapper.findAll(".role-create-form select:not([data-test^='role-slot'])").find((s) => s.text().includes("Выполнено успешно"));
     await resultSelect?.setValue("9");
     const reportTextarea = wrapper.findAll(".role-create-form label").find((l) => l.text().includes("Отчёт"))?.find("textarea");
     expect(reportTextarea).toBeDefined();
@@ -405,7 +406,7 @@ describe("FE-02 role workspaces", () => {
 
     // Reschedule validation and 409 conflict
     const rescheduleForm = wrapper.find(".reschedule-form");
-    await rescheduleForm.find("input[type='datetime-local']").setValue("2026-10-02T12:00");
+    await slotInput(rescheduleForm).setValue("2026-10-02T12:00");
     const rescheduleReasonInput = wrapper.findAll(".reschedule-form label").find((l) => l.text().includes("Причина переноса"))?.find("input");
     expect(rescheduleReasonInput).toBeDefined();
     await rescheduleReasonInput?.setValue("Перенос по согласованию");

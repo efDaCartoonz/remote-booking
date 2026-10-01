@@ -29,6 +29,15 @@ class WorkSchedule:
 
 
 @dataclass(frozen=True)
+class DayShift:
+    user_id: int
+    work_date: date
+    start_time: time
+    end_time: time
+    timezone: str
+
+
+@dataclass(frozen=True)
 class NotificationTemplateRecord:
     id: int
     code: str
@@ -403,6 +412,114 @@ class AdministrativeRepository:
             old_values={"count": previous_count},
             new_values={"count": len(schedules)},
         )
+
+    def list_schedule_employees(self) -> list[dict]:
+        """Active L1/L2 employees whose work schedule is planned per date."""
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT u.id, u.full_name,
+                       COALESCE(us.timezone, 'Asia/Yekaterinburg') AS timezone,
+                       array_agg(ur.role_id ORDER BY ur.role_id) AS roles
+                FROM users u
+                JOIN user_roles ur ON ur.user_id = u.id AND ur.role_id IN (1, 2)
+                LEFT JOIN user_settings us ON us.user_id = u.id
+                WHERE u.is_active
+                GROUP BY u.id, u.full_name, us.timezone
+                ORDER BY u.full_name, u.id
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def list_day_shifts(
+        self, *, date_from: date, date_to: date, user_id: int | None = None
+    ) -> list[DayShift]:
+        """Return single-day work intervals (valid_from == valid_to) in the range."""
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT user_id, valid_from AS work_date, start_time, end_time, timezone
+                FROM schedules
+                WHERE is_active
+                  AND valid_from IS NOT NULL
+                  AND valid_from = valid_to
+                  AND valid_from BETWEEN %s AND %s
+                  AND (%s::bigint IS NULL OR user_id = %s)
+                ORDER BY user_id, valid_from
+                """,
+                (date_from, date_to, user_id, user_id),
+            )
+            return [DayShift(**row) for row in cursor.fetchall()]
+
+    def replace_day_shifts(
+        self,
+        *,
+        user_id: int,
+        date_from: date,
+        date_to: date,
+        shifts: list[DayShift],
+        actor_user_id: int,
+    ) -> dict[str, int]:
+        """Replace the user's per-day shifts in a date range.
+
+        Days without a shift are days off. Legacy weekly rows (not bound to one
+        date) are removed once the per-date schedule is used for the user.
+        """
+        for shift in shifts:
+            if shift.start_time >= shift.end_time:
+                raise ValueError("schedule_start_must_precede_end")
+            if not date_from <= shift.work_date <= date_to:
+                raise ValueError("schedule_day_out_of_range")
+        if len({shift.work_date for shift in shifts}) != len(shifts):
+            raise ValueError("schedule_duplicate_day")
+        with self.connection.cursor() as cursor:
+            cursor.execute("SELECT 1 FROM users WHERE id=%s", (user_id,))
+            if cursor.fetchone() is None:
+                raise ValueError("user_not_found")
+            cursor.execute(
+                """
+                DELETE FROM schedules
+                WHERE user_id = %s
+                  AND (
+                    valid_from IS NULL
+                    OR valid_to IS NULL
+                    OR valid_from <> valid_to
+                    OR valid_from BETWEEN %s AND %s
+                  )
+                """,
+                (user_id, date_from, date_to),
+            )
+            removed = cursor.rowcount
+            for shift in shifts:
+                cursor.execute(
+                    """
+                    INSERT INTO schedules
+                        (user_id, weekday, start_time, end_time, timezone, valid_from, valid_to)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        user_id,
+                        shift.work_date.isoweekday(),
+                        shift.start_time,
+                        shift.end_time,
+                        shift.timezone,
+                        shift.work_date,
+                        shift.work_date,
+                    ),
+                )
+        self._audit(
+            actor_user_id=actor_user_id,
+            action=AuditAction.UPDATE,
+            entity_type="schedule",
+            entity_id=user_id,
+            old_values={"removed": removed},
+            new_values={
+                "from": date_from.isoformat(),
+                "to": date_to.isoformat(),
+                "days": len(shifts),
+            },
+        )
+        return {"removed": removed, "saved": len(shifts)}
 
     def list_absences(
         self,
