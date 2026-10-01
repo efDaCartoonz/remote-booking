@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 
+from app.admin.planning_settings import (
+    DEFAULT_PLANNING_SETTINGS,
+    PlanningSettings,
+    validate_duration,
+)
 from app.cards.constants import AssignmentMethod, CardStatus
 
 
@@ -37,19 +42,21 @@ def validate_role_create(
     result_code: int | None = None,
     engineer_report: str | None = None,
     now: datetime | None = None,
+    settings: PlanningSettings | None = None,
 ) -> RoleCreatePlan:
     if planned_start_at.tzinfo is None or planned_start_at.utcoffset() is None:
         raise ValueError("planned_start_at_must_be_timezone_aware")
     now = now or datetime.now(UTC)
     start = planned_start_at.astimezone(UTC)
+    validate_duration(planned_duration_minutes, settings or DEFAULT_PLANNING_SETTINGS)
     end = start + timedelta(minutes=planned_duration_minutes)
 
     if scenario in {CreateScenario.L1, CreateScenario.L2_SELF}:
-        _validate_normal_window(start=start, now=now)
+        _validate_normal_window(start=start, now=now, settings=settings)
     elif scenario == CreateScenario.L2_URGENT:
         if start < now:
             raise ValueError("urgent_planned_start_must_not_be_in_past")
-        _validate_horizon(start=start, now=now)
+        _validate_horizon(start=start, now=now, settings=settings)
         if not (urgent_reason or "").strip():
             raise ValueError("urgent_reason_required")
     elif scenario == CreateScenario.L2_RETROACTIVE:
@@ -121,6 +128,7 @@ def validate_reschedule_window(
     planned_start_at: datetime,
     urgency_code: int,
     now: datetime | None = None,
+    settings: PlanningSettings | None = None,
 ) -> None:
     """Apply the create scheduling window to a time change.
 
@@ -138,17 +146,23 @@ def validate_reschedule_window(
     if urgency_code > 0:
         if start < now:
             raise ValueError("urgent_planned_start_must_not_be_in_past")
-        _validate_horizon(start=start, now=now)
+        _validate_horizon(start=start, now=now, settings=settings)
     else:
-        _validate_normal_window(start=start, now=now)
+        _validate_normal_window(start=start, now=now, settings=settings)
 
 
-def _validate_normal_window(*, start: datetime, now: datetime) -> None:
-    if start < now + timedelta(minutes=120):
+def _validate_normal_window(
+    *, start: datetime, now: datetime, settings: PlanningSettings | None = None
+) -> None:
+    planning = settings or DEFAULT_PLANNING_SETTINGS
+    if start < now + timedelta(minutes=planning.min_lead_minutes):
         raise ValueError("planned_start_too_soon")
-    _validate_horizon(start=start, now=now)
+    _validate_horizon(start=start, now=now, settings=planning)
 
 
-def _validate_horizon(*, start: datetime, now: datetime) -> None:
-    if start > now + timedelta(days=14):
+def _validate_horizon(
+    *, start: datetime, now: datetime, settings: PlanningSettings | None = None
+) -> None:
+    planning = settings or DEFAULT_PLANNING_SETTINGS
+    if start > now + timedelta(days=planning.horizon_days):
         raise ValueError("planned_start_too_far")

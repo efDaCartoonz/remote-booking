@@ -28,6 +28,16 @@ class WorkSchedule:
     valid_to: date | None = None
 
 
+@dataclass(frozen=True)
+class NotificationTemplateRecord:
+    id: int
+    code: str
+    channel_code: int
+    visible: bool
+    subject_template: str | None
+    body_template: str
+
+
 class AdministrativeRepository:
     """The single persistence boundary for DB-02 administrative policies.
 
@@ -338,6 +348,19 @@ class AdministrativeRepository:
         )
         return absence_id
 
+    def get_schedules(self, user_id: int) -> list[WorkSchedule]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT weekday, start_time, end_time, timezone, valid_from, valid_to
+                FROM schedules
+                WHERE user_id=%s
+                ORDER BY weekday, start_time
+                """,
+                (user_id,),
+            )
+            return [WorkSchedule(**row) for row in cursor.fetchall()]
+
     def replace_schedules(
         self, *, user_id: int, schedules: list[WorkSchedule], actor_user_id: int
     ) -> None:
@@ -379,6 +402,167 @@ class AdministrativeRepository:
             entity_id=user_id,
             old_values={"count": previous_count},
             new_values={"count": len(schedules)},
+        )
+
+    def list_absences(
+        self,
+        *,
+        user_id: int | None = None,
+        start_at: datetime | None = None,
+        end_at: datetime | None = None,
+    ) -> list[dict]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if user_id is not None:
+            clauses.append("user_id=%s")
+            params.append(user_id)
+        if start_at is not None:
+            clauses.append("end_at >= %s")
+            params.append(start_at)
+        if end_at is not None:
+            clauses.append("start_at <= %s")
+            params.append(end_at)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT id, user_id, start_at, end_at, reason, created_by_id, created_at
+                FROM absences
+                {where}
+                ORDER BY start_at, id
+                """,
+                params,
+            )
+            return cursor.fetchall()
+
+    def get_absence_by_id(self, absence_id: int) -> dict | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, user_id, start_at, end_at, reason, created_by_id, created_at
+                FROM absences
+                WHERE id=%s
+                """,
+                (absence_id,),
+            )
+            return cursor.fetchone()
+
+    def delete_absence(self, *, absence_id: int, actor_user_id: int) -> bool:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, user_id, start_at, end_at, reason FROM absences WHERE id=%s FOR UPDATE",
+                (absence_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                return False
+            cursor.execute("DELETE FROM absences WHERE id=%s", (absence_id,))
+        self._audit(
+            actor_user_id=actor_user_id,
+            action=AuditAction.UPDATE,
+            entity_type="absence",
+            entity_id=absence_id,
+            old_values={
+                "user_id": row["user_id"],
+                "start_at": row["start_at"].isoformat()
+                if hasattr(row["start_at"], "isoformat")
+                else str(row["start_at"]),
+                "end_at": row["end_at"].isoformat()
+                if hasattr(row["end_at"], "isoformat")
+                else str(row["end_at"]),
+                "reason": row["reason"],
+            },
+            new_values={"deleted": True},
+        )
+        return True
+
+    def list_calendar_days(self, *, start_date: date, end_date: date) -> list[dict]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT date, day_type_code, is_manual_override, updated_by_id, updated_at, comment
+                FROM production_calendar_days
+                WHERE date >= %s AND date <= %s
+                ORDER BY date
+                """,
+                (start_date, end_date),
+            )
+            return cursor.fetchall()
+
+    def get_calendar_day(self, calendar_date: date) -> dict | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT date, day_type_code, is_manual_override, updated_by_id, updated_at, comment
+                FROM production_calendar_days
+                WHERE date=%s
+                """,
+                (calendar_date,),
+            )
+            return cursor.fetchone()
+
+    def list_distribution_members(self, *, pool_code: int | None = None) -> list[dict]:
+        where = "WHERE pool_code=%s" if pool_code is not None else ""
+        params = (pool_code,) if pool_code is not None else ()
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                f"""
+                SELECT id, user_id, pool_code, is_enabled, enabled_by_id, enabled_at, disabled_by_id, disabled_at, comment
+                FROM distribution_members
+                {where}
+                ORDER BY pool_code, user_id
+                """,
+                params,
+            )
+            return cursor.fetchall()
+
+    def get_distribution_membership(
+        self, *, user_id: int, pool_code: int
+    ) -> dict | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, user_id, pool_code, is_enabled, enabled_by_id, enabled_at, disabled_by_id, disabled_at, comment
+                FROM distribution_members
+                WHERE user_id=%s AND pool_code=%s
+                """,
+                (user_id, pool_code),
+            )
+            return cursor.fetchone()
+
+    def get_planning_settings(self) -> dict:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT value FROM system_settings WHERE key=%s",
+                ("planning_params",),
+            )
+            row = cursor.fetchone()
+            if row and row["value"] is not None:
+                return row["value"] if isinstance(row["value"], dict) else {}
+            return {}
+
+    def set_planning_settings(self, *, settings: dict, actor_user_id: int) -> None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT value FROM system_settings WHERE key=%s FOR UPDATE",
+                ("planning_params",),
+            )
+            previous = cursor.fetchone()
+            cursor.execute(
+                """
+                INSERT INTO system_settings (key, value, updated_by_id, updated_at)
+                VALUES ('planning_params', %s, %s, now())
+                ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_by_id = EXCLUDED.updated_by_id, updated_at = now()
+                """,
+                (Jsonb(settings), actor_user_id),
+            )
+        self._audit(
+            actor_user_id=actor_user_id,
+            action=AuditAction.UPDATE,
+            entity_type="system_setting",
+            entity_id=0,
+            old_values=previous,
+            new_values={"planning_params": settings},
         )
 
     def is_out_of_hours(
@@ -547,3 +731,172 @@ class AdministrativeRepository:
                     Jsonb(new_values),
                 ),
             )
+
+    def list_all_results(self) -> list[ConnectionResult]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT code, name, is_active, sort_order FROM connection_results "
+                "ORDER BY sort_order, code"
+            )
+            return [ConnectionResult(**row) for row in cursor.fetchall()]
+
+    def get_result_by_code(self, code: int) -> ConnectionResult | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT code, name, is_active, sort_order FROM connection_results WHERE code=%s",
+                (code,),
+            )
+            row = cursor.fetchone()
+            return ConnectionResult(**row) if row else None
+
+    def create_result(
+        self, *, result: ConnectionResult, actor_user_id: int
+    ) -> ConnectionResult:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT code FROM connection_results WHERE code=%s FOR UPDATE",
+                (result.code,),
+            )
+            if cursor.fetchone() is not None:
+                raise ValueError("result_code_already_exists")
+            cursor.execute(
+                """
+                INSERT INTO connection_results (code, name, is_active, sort_order)
+                VALUES (%s, %s, %s, %s)
+                """,
+                (result.code, result.name, result.is_active, result.sort_order),
+            )
+        self._audit(
+            actor_user_id=actor_user_id,
+            action=AuditAction.CREATE,
+            entity_type="connection_result",
+            entity_id=result.code,
+            old_values=None,
+            new_values={
+                "name": result.name,
+                "is_active": result.is_active,
+                "sort_order": result.sort_order,
+            },
+        )
+        return result
+
+    def update_result(
+        self, *, result: ConnectionResult, actor_user_id: int
+    ) -> ConnectionResult:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT code, name, is_active, sort_order FROM connection_results WHERE code=%s FOR UPDATE",
+                (result.code,),
+            )
+            previous = cursor.fetchone()
+            if previous is None:
+                raise ValueError("result_not_found")
+            if previous["is_active"] and not result.is_active:
+                cursor.execute(
+                    "SELECT COUNT(*) AS count FROM connection_results WHERE is_active = true AND code != %s",
+                    (result.code,),
+                )
+                active_count = cursor.fetchone()["count"]
+                if active_count == 0:
+                    raise ValueError("cannot_deactivate_last_active_result")
+            cursor.execute(
+                """
+                UPDATE connection_results
+                SET name = %s, is_active = %s, sort_order = %s, updated_at = now()
+                WHERE code = %s
+                """,
+                (result.name, result.is_active, result.sort_order, result.code),
+            )
+        self._audit(
+            actor_user_id=actor_user_id,
+            action=AuditAction.UPDATE,
+            entity_type="connection_result",
+            entity_id=result.code,
+            old_values={
+                "name": previous["name"],
+                "is_active": previous["is_active"],
+                "sort_order": previous["sort_order"],
+            },
+            new_values={
+                "name": result.name,
+                "is_active": result.is_active,
+                "sort_order": result.sort_order,
+            },
+        )
+        return result
+
+    def list_notification_templates(self) -> list[NotificationTemplateRecord]:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, code, channel_code, visible, subject_template, body_template
+                FROM notification_templates
+                ORDER BY code
+                """
+            )
+            return [NotificationTemplateRecord(**row) for row in cursor.fetchall()]
+
+    def get_notification_template_by_code(
+        self, code: str
+    ) -> NotificationTemplateRecord | None:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, code, channel_code, visible, subject_template, body_template
+                FROM notification_templates
+                WHERE code=%s
+                """,
+                (code,),
+            )
+            row = cursor.fetchone()
+            return NotificationTemplateRecord(**row) if row else None
+
+    def update_notification_template(
+        self,
+        *,
+        code: str,
+        subject_template: str | None,
+        body_template: str,
+        visible: bool,
+        actor_user_id: int,
+    ) -> NotificationTemplateRecord:
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT id, code, channel_code, visible, subject_template, body_template
+                FROM notification_templates
+                WHERE code=%s
+                FOR UPDATE
+                """,
+                (code,),
+            )
+            previous = cursor.fetchone()
+            if previous is None:
+                raise ValueError("notification_template_not_found")
+            cursor.execute(
+                """
+                UPDATE notification_templates
+                SET subject_template = %s, body_template = %s, visible = %s
+                WHERE code = %s
+                RETURNING id, code, channel_code, visible, subject_template, body_template
+                """,
+                (subject_template, body_template, visible, code),
+            )
+            updated = cursor.fetchone()
+        self._audit(
+            actor_user_id=actor_user_id,
+            action=AuditAction.UPDATE,
+            entity_type="notification_template",
+            entity_id=previous["id"],
+            old_values={
+                "subject_template": previous["subject_template"],
+                "body_template": previous["body_template"],
+                "visible": previous["visible"],
+            },
+            new_values={
+                "subject_template": subject_template,
+                "body_template": body_template,
+                "visible": visible,
+            },
+        )
+        return NotificationTemplateRecord(**updated)

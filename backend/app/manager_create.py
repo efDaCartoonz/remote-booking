@@ -8,6 +8,11 @@ from typing import TypeVar
 from psycopg.errors import ExclusionViolation, UniqueViolation
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.admin.planning_settings import (
+    DEFAULT_PLANNING_SETTINGS,
+    PlanningSettings,
+    validate_duration,
+)
 from app.cards.schemas import TicketNumber
 
 
@@ -93,11 +98,15 @@ class ManagerL2OptionsResponse(BaseModel):
     items: list[ManagerL2Option]
 
 
-def validate_manager_window(start: datetime, duration: int) -> None:
+def validate_manager_window(
+    start: datetime, duration: int, settings: PlanningSettings | None = None
+) -> None:
+    planning = settings or DEFAULT_PLANNING_SETTINGS
+    validate_duration(duration, planning)
     now = datetime.now(UTC)
     if start.tzinfo is None or start.utcoffset() is None:
         raise ValueError("planned_start_at_must_be_timezone_aware")
-    if start < now + timedelta(minutes=120):
+    if start < now + timedelta(minutes=planning.min_lead_minutes):
         raise ValueError("planned_start_too_soon")
-    if start > now + timedelta(days=14):
+    if start > now + timedelta(days=planning.horizon_days):
         raise ValueError("planned_start_too_far")

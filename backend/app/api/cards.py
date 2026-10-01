@@ -16,6 +16,7 @@ from app.cards.policy import (
     role_ids,
 )
 from app.cards.constants import RoleId
+from app.admin.planning_settings import get_planning_settings
 from app.cards.create_policy import CreateScenario, validate_role_create
 from app.cards.repository import (
     CardRecord,
@@ -68,6 +69,11 @@ from app.omnidesk_index.resolver import (
 )
 
 router = APIRouter(prefix="/api/v1/cards", tags=["cards"])
+
+
+def _planning_settings():
+    with db_connection() as connection:
+        return get_planning_settings(connection)
 
 
 def get_card_repository(
@@ -574,6 +580,7 @@ def _create_role_card(
 
     try:
         plan = validate_role_create(
+            settings=_planning_settings(),
             scenario=scenario,
             planned_start_at=payload.planned_start_at,
             planned_duration_minutes=payload.planned_duration_minutes,

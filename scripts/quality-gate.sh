@@ -9,7 +9,7 @@ readonly GATE_COMPOSE_FILES="-f docker-compose.yml -f docker-compose.quality-gat
 
 usage() {
     cat <<'EOF'
-Usage: ./scripts/quality-gate.sh {all|backend|frontend|compose|migrations|bl04|ie02|fe03}
+Usage: ./scripts/quality-gate.sh {all|backend|frontend|compose|migrations|bl04|ie02|fe03|fe04}
 
 Runs only checks that use source-controlled inputs in isolated Docker Compose
 containers. It removes its containers and volumes when it finishes. It never
@@ -139,6 +139,20 @@ run_fe03_matrix() {
     )
 }
 
+run_fe04_matrix() {
+    require_command docker
+    (
+        cd "$ROOT_DIR"
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
+            --env-file .env.example up --detach postgres
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
+            --env-file .env.example run --rm backend alembic upgrade head
+        RDM_ENV_FILE=.env.example $COMPOSE_BIN $GATE_COMPOSE_FILES --project-name "$GATE_PROJECT" \
+            --env-file .env.example run --rm -e RDM_PG_INTEGRATION=1 quality-backend sh -ec \
+            'pytest -v tests/test_admin_users_postgres.py tests/test_admin_planning_postgres.py tests/test_admin_catalog_postgres.py tests/test_reports_postgres.py'
+    )
+}
+
 # The project name is generated per run, so cleanup cannot affect the user's
 # Compose stack even when a check fails partway through.
 trap cleanup_gate_project EXIT
@@ -152,6 +166,7 @@ case "$MODE" in
         run_bl04_matrix
         run_ie02_matrix
         run_fe03_matrix
+        run_fe04_matrix
         ;;
     backend) run_backend ;;
     frontend) run_frontend ;;
@@ -160,6 +175,7 @@ case "$MODE" in
     bl04) run_bl04_matrix ;;
     ie02) run_ie02_matrix ;;
     fe03) run_fe03_matrix ;;
+    fe04) run_fe04_matrix ;;
     -h|--help) usage ;;
     *)
         usage >&2

@@ -43,6 +43,11 @@ def test_quality_gate_uses_template_env_and_isolated_docker_project() -> None:
     assert "tests/test_fe03_cancellation_postgres.py" in script
     assert "tests/test_fe03_frame_details_postgres.py" in script
     assert "tests/test_fe03_timezone_postgres.py" in script
+    assert "run_fe04_matrix" in script
+    assert "tests/test_admin_users_postgres.py" in script
+    assert "tests/test_admin_planning_postgres.py" in script
+    assert "tests/test_admin_catalog_postgres.py" in script
+    assert "tests/test_reports_postgres.py" in script
 
 
 def test_docker_quality_path_does_not_require_host_python_or_npm() -> None:

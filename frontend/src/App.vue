@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { getDayBoundsInTz, hasDstTransitionInRange } from "./calendar-timezone";
 import { convertWallTimeToISO } from "./frame/timezone";
+import { AdminWorkspace, ReportsWorkspace } from "./admin";
 
 type Role = { id: number; name: string };
 type User = { id: number; username: string; full_name: string; roles: Role[]; timezone?: string };
@@ -162,6 +163,8 @@ const cardId = computed(() => location.pathname.match(/^\/cards\/([^/]+)\/?$/)?.
 const workplacePath = location.pathname === "/work" || location.pathname === "/";
 const managerPath = location.pathname === "/manager";
 const managerNewPath = location.pathname === "/manager/cards/new";
+const adminPath = location.pathname === "/admin";
+const reportsPath = location.pathname === "/reports";
 const manager = ref<ManagerData | null>(null);
 const managerStatus = ref("");
 const managerFrom = ref("");
@@ -888,8 +891,14 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <button @click="load">Повторить</button>
       </template>
 
+      <template v-else-if="adminPath || reportsPath">
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>{{ adminPath ? "Администрирование" : "Отчёты" }}</h1><p class="muted">Часовой пояс: {{ profileTimeZone }}</p></div><div class="top-actions"><a v-if="hasRole(3)" class="button-link" href="/manager">Панель руководителя</a><a v-if="adminPath && (hasRole(3) || hasRole(4))" class="button-link" href="/reports">Отчёты</a><a v-if="reportsPath && hasRole(4)" class="button-link" href="/admin">Администрирование</a><button class="secondary" @click="logout">Выйти</button></div></header>
+        <AdminWorkspace v-if="adminPath" :current-user="user" :timezone="profileTimeZone" />
+        <ReportsWorkspace v-else :current-user="user" :timezone="profileTimeZone" />
+      </template>
+
       <template v-else-if="workplacePath">
-        <header class="top"><div><p class="eyebrow">RDM</p><h1>Мои карточки</h1></div><div class="top-actions"><a v-if="hasRole(3)" class="button-link" href="/manager">Панель руководителя</a><button class="secondary" @click="logout">Выйти</button></div></header>
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Мои карточки</h1></div><div class="top-actions"><a v-if="hasRole(3)" class="button-link" href="/manager">Панель руководителя</a><a v-if="hasRole(3) || hasRole(4)" class="button-link" href="/reports">Отчёты</a><a v-if="hasRole(4)" class="button-link" href="/admin">Администрирование</a><button class="secondary" @click="logout">Выйти</button></div></header>
         <div v-if="hasL1Role && hasL2Role" class="manager-toggle" role="group" aria-label="Рабочая роль"><button type="button" :class="{ selected: mineRole === 'l1' }" @click="mineRole = 'l1'; loadMine()">L1</button><button type="button" :class="{ selected: mineRole === 'l2' }" @click="mineRole = 'l2'; loadMine()">L2</button></div>
         <p v-if="mineError" class="error" role="alert">{{ mineError }}</p>
         <p v-else-if="!mine.length" class="hint">Назначенных карточек пока нет.</p>
@@ -1064,7 +1073,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
         <h1>Панель руководителя</h1><p v-if="managerError" class="error" role="alert">{{ managerError }}</p><button v-if="hasRole(3)" @click="loadManager">Повторить</button>
       </template>
       <template v-else-if="managerPath && manager">
-        <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ profileTimeZone }}</p></div><div class="top-actions"><a class="button-link" href="/manager/cards/new">+ Создать карточку</a><button class="secondary" @click="logout">Выйти</button></div></header>
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Панель руководителя</h1><p class="muted">Часовой пояс: {{ profileTimeZone }}</p></div><div class="top-actions"><a class="button-link" href="/manager/cards/new">+ Создать карточку</a><a class="button-link" href="/reports">Отчёты</a><a v-if="hasRole(4)" class="button-link" href="/admin">Администрирование</a><button class="secondary" @click="logout">Выйти</button></div></header>
         <div class="manager-stats"><div class="panel"><strong>{{ manager.summary.assigned }}</strong><span>Назначено</span></div><div class="panel"><strong>{{ manager.summary.confirmed }}</strong><span>Подтверждено</span></div><div class="panel"><strong>{{ manager.summary.rejected }}</strong><span>Отклонено</span></div><div class="panel"><strong>{{ manager.summary.overdue }}</strong><span>Просрочено</span></div><div class="panel"><strong>{{ manager.summary.urgent }}</strong><span>Срочно</span></div><div class="panel"><strong>{{ manager.summary.urgent_collision }}</strong><span>Коллизии</span></div></div>
         <section v-if="attentionItems.length" class="panel"><h2>Требуют внимания</h2><div class="work-list"><a v-for="item in attentionItems" :key="item.public_id" class="work-row" :href="`/cards/${item.public_id}`"><strong>{{ item.number }}</strong><span>{{ item.repeated_unsuccessful_cycle ? 'Повторный неуспешный цикл' : item.first_unsuccessful_cycle ? 'Первый неуспешный цикл' : item.status_label }}{{ item.overdue ? ' · Просрочено' : '' }}{{ item.urgent ? ' · Срочно' : '' }}</span></a></div></section>
         <form class="manager-filters panel" @submit.prevent="loadManager"><label>Статус<select v-model="managerStatus"><option value="">Все</option><option value="assigned">Назначено</option><option value="confirmed">Подтверждено</option><option value="rejected">Отклонено</option></select></label><label>Дата с<input v-model="managerFrom" type="date" /></label><label>Дата по<input v-model="managerTo" type="date" /></label><button>Применить</button></form>

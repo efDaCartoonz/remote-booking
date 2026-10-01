@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from app.admin.planning_settings import get_planning_settings
 from app.cards.constants import ActorType, CardStatus, CreatedSource
 from app.cards.repository import CardRecord, CardRepository, ClientSyncData
 from app.cards.schemas import CardCreateRequest
@@ -266,10 +267,12 @@ class FrameService:
             raise
 
     def _validate_planning_window(self, planned_start_at: datetime) -> None:
+        connection = getattr(self.repository, "connection", None)
+        planning = get_planning_settings(connection)
         now = datetime.now(UTC)
-        if planned_start_at < now + timedelta(minutes=120):
+        if planned_start_at < now + timedelta(minutes=planning.min_lead_minutes):
             raise FrameCardValidationError("planned_start_too_soon")
-        if planned_start_at > now + timedelta(days=14):
+        if planned_start_at > now + timedelta(days=planning.horizon_days):
             raise FrameCardValidationError("planned_start_too_far")
 
 

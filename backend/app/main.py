@@ -3,12 +3,16 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.api.admin_catalog import router as admin_catalog_router
+from app.api.admin_planning import router as admin_planning_router
+from app.api.admin_users import router as admin_users_router
 from app.api.auth import router as auth_router
 from app.api.cancellation import router as cancellation_router
 from app.api.cards import router as cards_router
 from app.api.frame import router as frame_router
 from app.api.health import router as health_router
 from app.api.manager import router as manager_router
+from app.api.reports import router as reports_router
 from app.api.results import router as results_router
 from app.core.config import settings
 
@@ -65,6 +69,10 @@ def create_app() -> FastAPI:
     app.include_router(cards_router)
     app.include_router(frame_router)
     app.include_router(manager_router)
+    app.include_router(admin_users_router)
+    app.include_router(admin_planning_router)
+    app.include_router(admin_catalog_router)
+    app.include_router(reports_router)
     return app
 
 

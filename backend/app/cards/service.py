@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from uuid import UUID
 
+from app.admin.planning_settings import get_planning_settings
 from app.assignments.repository import AssignmentRepository
 from app.assignments.service import (
     AssignmentDecisionError,
@@ -233,6 +234,9 @@ class CardService:
             raise InvalidCardTransitionError("assigned_l1_required")
         try:
             validate_reschedule_window(
+                settings=get_planning_settings(
+                    getattr(self.repository, "connection", None)
+                ),
                 planned_start_at=planned_start_at,
                 urgency_code=card.urgency_code,
             )
@@ -327,6 +331,9 @@ class CardService:
 
         try:
             validate_reschedule_window(
+                settings=get_planning_settings(
+                    getattr(self.repository, "connection", None)
+                ),
                 planned_start_at=planned_start_at,
                 urgency_code=card.urgency_code,
                 now=self.clock() if now is None else now,

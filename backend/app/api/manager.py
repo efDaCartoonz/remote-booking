@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request
 from fastapi import status as http_status
 from pydantic import BaseModel, Field
 
+from app.admin.planning_settings import get_planning_settings
 from app.admin.repository import AdministrativeRepository
 from app.auth.dependencies import get_current_user, require_roles
 from app.auth.store import UserAuthRecord
@@ -44,6 +45,11 @@ from app.omnidesk_index.resolver import (
 )
 
 router = APIRouter(prefix="/api/v1/manager", tags=["manager"])
+
+
+def _planning_settings():
+    with db_connection() as connection:
+        return get_planning_settings(connection)
 
 
 class ManagerSummary(BaseModel):
@@ -302,6 +308,7 @@ def manager_l2_options(
         validate_manager_window(
             planned_start_at.astimezone(datetime.now().astimezone().tzinfo),
             planned_duration_minutes,
+            settings=_planning_settings(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -346,7 +353,9 @@ def manager_create_card(
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
     try:
         validate_manager_window(
-            payload.planned_start_at, payload.planned_duration_minutes
+            payload.planned_start_at,
+            payload.planned_duration_minutes,
+            settings=_planning_settings(),
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
