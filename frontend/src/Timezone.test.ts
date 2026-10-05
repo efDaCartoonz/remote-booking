@@ -171,8 +171,12 @@ describe("FE-03 Profile Timezone in UI", () => {
     window.history.pushState({}, "", "/profile");
     const profile = mount(App);
     await flushPromises();
-    const tzSelect = profile.find('.profile-tz-panel input[list="staff-timezones"]');
+    const tzSelect = profile.find(".profile-tz-panel select");
     expect(tzSelect.exists()).toBe(true);
+    const labels = tzSelect.findAll("option").map((option) => option.text());
+    expect(labels.length).toBeGreaterThan(10);
+    expect(labels.some((label) => label.includes("Екатеринбург (UTC+05:00)"))).toBe(true);
+    expect(labels.some((label) => label.includes("Москва (UTC+03:00)"))).toBe(true);
     await tzSelect.setValue("UTC");
 
     const tzForm = profile.find(".profile-tz-panel form");

@@ -1948,16 +1948,11 @@ class PostgresCardRepository:
                 FROM connection_cards c
                 LEFT JOIN users l1 ON l1.id = c.l1_owner_id
                 LEFT JOIN users l2 ON l2.id = c.l2_engineer_id
-                WHERE c.l1_owner_id = %(user_id)s
-                  AND (c.status_code = %(status_rejected)s OR c.overdue_flag IS TRUE)
+                WHERE c.l1_owner_id = %(user_id)s OR c.created_by_id = %(user_id)s
                 ORDER BY c.planned_start_at DESC, c.id DESC
                 LIMIT %(limit)s
             """
-            params = {
-                "user_id": user_id,
-                "status_rejected": int(CardStatus.REJECTED),
-                "limit": bounded_limit,
-            }
+            params = {"user_id": user_id, "limit": bounded_limit}
         elif role == "l2":
             query = """
                 SELECT c.*,
@@ -2013,21 +2008,27 @@ class PostgresCardRepository:
             return cursor.fetchall()
 
     def get_l1_reminder_interval(self, card_id: int) -> int | None:
+        """Active interval in minutes, 0 when reminders were switched off, else None."""
         with self.connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT interval_seconds
+                SELECT interval_seconds,
+                       closed_at,
+                       settings_snapshot->>'disabled' AS disabled
                 FROM reminder_schedules
                 WHERE card_id = %(card_id)s
                   AND kind = 'l1_reminder'
-                  AND closed_at IS NULL
                 ORDER BY id DESC
                 LIMIT 1
                 """,
                 {"card_id": card_id},
             )
             row = cursor.fetchone()
-        if row and row.get("interval_seconds"):
+        if not row:
+            return None
+        if row.get("disabled") == "true":
+            return 0
+        if row.get("closed_at") is None and row.get("interval_seconds"):
             return int(row["interval_seconds"]) // 60
         return None
 
@@ -2062,6 +2063,11 @@ class PostgresCardRepository:
                 """,
                 {"card_id": card_id, "now": now},
             )
+            if interval_minutes == 0:
+                # Reminders are switched off: keep a closed marker so the choice is
+                # remembered and the reminder worker never picks it up.
+                snapshot = {**snapshot, "disabled": True}
+                interval_seconds = 60
             cursor.execute(
                 """
                 INSERT INTO reminder_schedules (
@@ -2072,6 +2078,7 @@ class PostgresCardRepository:
                     interval_seconds,
                     escalation_after_count,
                     next_due_at,
+                    closed_at,
                     settings_snapshot
                 ) VALUES (
                     %(card_id)s,
@@ -2081,6 +2088,7 @@ class PostgresCardRepository:
                     %(interval)s,
                     %(threshold)s,
                     %(next_due)s,
+                    %(closed_at)s,
                     %(snapshot)s
                 )
                 """,
@@ -2091,6 +2099,7 @@ class PostgresCardRepository:
                     "interval": interval_seconds,
                     "threshold": threshold,
                     "next_due": now + timedelta(seconds=interval_seconds),
+                    "closed_at": now if interval_minutes == 0 else None,
                     "snapshot": Jsonb(snapshot),
                 },
             )

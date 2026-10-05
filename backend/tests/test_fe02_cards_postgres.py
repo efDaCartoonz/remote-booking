@@ -73,13 +73,27 @@ def test_mine_notifications_and_manual_l1_interval_are_persisted() -> None:
                 )
                 l2_card = cursor.fetchone()
 
+                # A card the L1 created that has no follow-up owner yet is listed too.
+                cursor.execute(
+                    "INSERT INTO connection_cards "
+                    "(omnidesk_ticket_number, status_code, planned_start_at, "
+                    "planned_duration_minutes, created_by_id) "
+                    "VALUES (%s, 1, %s, 60, %s) RETURNING id",
+                    (
+                        f"998-{uuid4().int % 1_000_000:06d}",
+                        now + timedelta(days=3),
+                        l1_id,
+                    ),
+                )
+                created_card = cursor.fetchone()
+
             repository = PostgresCardRepository(connection)
             assert [
                 item.id
                 for item in repository.list_mine_cards(
                     user_id=l1_id, role="l1", limit=100
                 )
-            ] == [card["id"]]
+            ] == [created_card["id"], l2_card["id"], card["id"]]
             assert (
                 repository.list_mine_cards(user_id=other_id, role="l1", limit=100) == []
             )
@@ -153,5 +167,42 @@ def test_mine_notifications_and_manual_l1_interval_are_persisted() -> None:
                 minutes=30
             )
             assert active[0]["settings_snapshot"]["l1_mode"] == "post_informed"
+
+            # 0 switches the reminders off: nothing is active, the choice is remembered
+            assert (
+                service.l1_reminder_interval(
+                    card["public_id"],
+                    actor_user_id=l1_id,
+                    actor_role_ids={1},
+                    interval_minutes=0,
+                )
+                == 0
+            )
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT count(*) AS n FROM reminder_schedules "
+                    "WHERE card_id=%s AND kind='l1_reminder' AND closed_at IS NULL",
+                    (card["id"],),
+                )
+                assert cursor.fetchone()["n"] == 0
+            assert repository.get_l1_reminder_interval(card["id"]) == 0
+            assert (
+                service.l1_reminder_interval(
+                    card["public_id"], actor_user_id=l1_id, actor_role_ids={1}
+                )
+                == 0
+            )
+
+            # and a longer interval can be chosen again afterwards
+            assert (
+                service.l1_reminder_interval(
+                    card["public_id"],
+                    actor_user_id=l1_id,
+                    actor_role_ids={1},
+                    interval_minutes=120,
+                )
+                == 120
+            )
+            assert repository.get_l1_reminder_interval(card["id"]) == 120
         finally:
             connection.rollback()

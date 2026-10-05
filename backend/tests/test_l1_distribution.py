@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import time, timedelta
+from datetime import UTC, datetime, time, timedelta
 
 import pytest
 from test_cards import (
@@ -12,6 +12,7 @@ from test_cards import (
     seed_l2_candidate,
 )
 
+import app.assignments.l1_service as l1_service
 from app.assignments.l1_service import L1DistributionService
 from app.assignments.types import TimeInterval
 from app.cards.constants import AssignmentAttemptStatus, CardStatus
@@ -203,6 +204,47 @@ def test_l1_excludes_absent_outside_schedule_and_overlapping_candidates() -> Non
 
     assert card.status_code == int(CardStatus.REJECTED)
     assert card.l1_owner_id == 40
+
+
+def test_creator_is_chosen_when_available_now_even_if_off_shift_at_the_planned_time(
+    monkeypatch,
+) -> None:
+    # The connection is planned for Monday 10:00, but the rejection happens on a
+    # Tuesday afternoon, when the creating L1 is on shift (REQ-FR-066).
+    now = datetime(2026, 9, 8, 14, 0, tzinfo=UTC)
+    monkeypatch.setattr(l1_service, "_now", lambda: now)
+    repository = FakeCardRepository()
+    seed_l1_candidate(repository, 10, planned_start_at=now)
+    seed_l1_candidate(repository, 20, planned_start_at=now)
+
+    card = CardService(repository).create_card(
+        create_payload(planned_start_at=DEFAULT_PLANNED_START_AT),
+        actor_user_id=20,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert card.status_code == int(CardStatus.REJECTED)
+    assert card.l1_owner_id == 20
+
+
+def test_no_owner_when_nobody_is_available_now_even_if_planned_time_is_covered(
+    monkeypatch,
+) -> None:
+    now = datetime(2026, 9, 9, 23, 0, tzinfo=UTC)  # a Wednesday night
+    monkeypatch.setattr(l1_service, "_now", lambda: now)
+    repository = FakeCardRepository()
+    seed_l1_candidate(repository, 10, planned_start_at=DEFAULT_PLANNED_START_AT)
+
+    card = CardService(repository).create_card(
+        create_payload(planned_start_at=DEFAULT_PLANNED_START_AT),
+        actor_user_id=10,
+        ip_address=None,
+        user_agent=None,
+    )
+
+    assert card.status_code == int(CardStatus.REJECTED)
+    assert card.l1_owner_id is None
 
 
 def test_full_l2_rejection_assigns_l1_and_preserves_l2_attempt() -> None:

@@ -231,7 +231,7 @@ class CardNotificationListResponse(BaseModel):
 
 
 class CardReminderIntervalRequest(BaseModel):
-    interval_minutes: Literal[10, 30]
+    interval_minutes: Literal[0, 10, 15, 30, 60, 120, 240, 480, 1440]
 
 
 class CardReminderIntervalResponse(BaseModel):

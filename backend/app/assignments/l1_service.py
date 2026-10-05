@@ -14,6 +14,10 @@ from app.cards.repository import CardRecord
 from app.notifications import NotificationService
 
 
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
 class L1DistributionService:
     """Assigns the follow-up owner; it deliberately does not create L2 attempts."""
 
@@ -46,15 +50,16 @@ class L1DistributionService:
         ):
             return card
 
-        end = card.planned_start_at + timedelta(minutes=card.planned_duration_minutes)
+        # REQ-FR-066/067: the follow-up owner must be available at the moment of
+        # assignment, not at the planned time of the connection.
+        now = _now()
+        until = now + timedelta(minutes=1)
         candidates = [
             c
             for c in self.repository.list_l1_distribution_candidates(
-                planned_start_at=card.planned_start_at, planned_end_at=end
+                planned_start_at=now, planned_end_at=until
             )
-            if _candidate_is_available(
-                c, planned_start_at=card.planned_start_at, planned_end_at=end
-            )
+            if _candidate_is_available(c, planned_start_at=now, planned_end_at=until)
         ]
         last = self.repository.get_distribution_last_user_id_for_update(
             DistributionPool.L1

@@ -51,11 +51,49 @@ type CreateValidation = CreateValidationSuccess | { ok: false; error: string };
 
 const RETURN_TO_KEY = "rdm.return_to";
 const user = ref<User | null>(null);
+const timezoneOptions = computed(() => {
+  const zones = Array.from(new Set([...standardTimezones, editTimezone.value, user.value?.timezone || ""].filter(Boolean)));
+  return zones
+    .map((value) => ({ value, label: timezoneLabel(value), offset: utcOffsetMinutes(value) }))
+    .sort((a, b) => a.offset - b.offset || a.label.localeCompare(b.label));
+});
 const profileTimeZone = computed(() => user.value?.timezone || "Asia/Yekaterinburg");
 const editTimezone = ref("Asia/Yekaterinburg");
 const tzBusy = ref(false);
 const tzError = ref("");
 const tzSuccess = ref("");
+const TIMEZONE_NAMES: Record<string, string> = {
+  "Europe/Kaliningrad": "Калининград",
+  "Europe/Moscow": "Москва",
+  "Europe/Samara": "Самара",
+  "Asia/Yekaterinburg": "Екатеринбург",
+  "Asia/Omsk": "Омск",
+  "Asia/Novosibirsk": "Новосибирск",
+  "Asia/Krasnoyarsk": "Красноярск",
+  "Asia/Irkutsk": "Иркутск",
+  "Asia/Yakutsk": "Якутск",
+  "Asia/Vladivostok": "Владивосток",
+  "Asia/Magadan": "Магадан",
+  "Asia/Kamchatka": "Камчатка",
+  UTC: "UTC",
+};
+function utcOffsetMinutes(timeZone: string): number {
+  try {
+    const part = new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" }).formatToParts(new Date()).find((item) => item.type === "timeZoneName")?.value ?? "GMT";
+    const match = /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(part);
+    if (!match) return 0;
+    return (match[1] === "-" ? -1 : 1) * (Number(match[2]) * 60 + Number(match[3] ?? 0));
+  } catch {
+    return 0;
+  }
+}
+function timezoneLabel(timeZone: string): string {
+  const minutes = utcOffsetMinutes(timeZone);
+  const offset = `UTC${minutes < 0 ? "-" : "+"}${String(Math.floor(Math.abs(minutes) / 60)).padStart(2, "0")}:${String(Math.abs(minutes) % 60).padStart(2, "0")}`;
+  const name = TIMEZONE_NAMES[timeZone];
+  if (timeZone === "UTC") return "UTC (UTC+00:00)";
+  return name ? `${name} (${offset}), ${timeZone}` : `${timeZone} (${offset})`;
+}
 const standardTimezones = [
   "Asia/Yekaterinburg",
   "Europe/Moscow",
@@ -137,6 +175,23 @@ const notifications = ref<NotificationEntry[]>([]);
 const notificationError = ref("");
 const mine = ref<Card[]>([]);
 const mineError = ref("");
+type MineTab = "attention" | "active" | "done" | "all";
+const mineTab = ref<MineTab>("attention");
+const ACTIVE_STATUSES = ["created", "assigned", "confirmed", "in_progress", "completed_pending_result"];
+function inMineTab(item: Card, tab: MineTab): boolean {
+  if (tab === "all") return true;
+  const attention = item.status === "rejected" || item.overdue_flag;
+  if (tab === "attention") return attention;
+  if (tab === "active") return !attention && ACTIVE_STATUSES.includes(item.status);
+  return !attention && !ACTIVE_STATUSES.includes(item.status);
+}
+const mineTabs = computed(() => ([
+  { key: "attention" as MineTab, label: "Требуют работы" },
+  { key: "active" as MineTab, label: "В работе" },
+  { key: "done" as MineTab, label: "Завершённые и отменённые" },
+  { key: "all" as MineTab, label: "Все" },
+]).map((tab) => ({ ...tab, count: mine.value.filter((item) => inMineTab(item, tab.key)).length })));
+const mineVisible = computed(() => (mineRole.value === "l1" ? mine.value.filter((item) => inMineTab(item, mineTab.value)) : mine.value));
 const mineRole = ref<"l1" | "l2">("l1");
 const roleCreate = ref({ caseNumber: "", start: "", duration: 60, description: "", scenario: "normal", urgentReason: "", resultCode: "", report: "" });
 const roleCreateBusy = ref(false);
@@ -149,6 +204,17 @@ const assignL2Id = ref("");
 const assignmentReason = ref("");
 const assignmentOptions = ref<L2Option[]>([]);
 const reminderInterval = ref(10);
+const reminderOptions = [
+  { value: 10, label: "Каждые 10 минут" },
+  { value: 15, label: "Каждые 15 минут" },
+  { value: 30, label: "Каждые 30 минут" },
+  { value: 60, label: "Каждый час" },
+  { value: 120, label: "Каждые 2 часа" },
+  { value: 240, label: "Каждые 4 часа" },
+  { value: 480, label: "Каждые 8 часов" },
+  { value: 1440, label: "Раз в сутки" },
+  { value: 0, label: "Не напоминать" },
+];
 const busy = ref(true);
 const errorStatus = ref<number | null>(null);
 const historyError = ref("");
@@ -767,6 +833,11 @@ async function runAction(name: string, path: string, init?: RequestInit): Promis
   actionError.value = "";
   try {
     await api<Card>(path, init);
+    // Only the text typed for this very action is cleared.
+    if (name === "reschedule") rescheduleReason.value = "";
+    else if (name === "reject") rejectionReason.value = "";
+    else if (name === "cancel") cancellationReason.value = "";
+    else if (name === "assign") assignmentReason.value = "";
     await load();
   } catch (error) {
     if ((error as ApiError).status === 401) handleUnauthorized();
@@ -953,8 +1024,7 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
           <h2>Часовой пояс</h2>
           <p class="muted">По нему отображается время карточек и календарей. Сохранённые моменты времени при смене пояса не меняются.</p>
           <form class="inline-form" @submit.prevent="saveProfileTimezone">
-            <input v-model="editTimezone" list="staff-timezones" aria-label="Часовой пояс профиля" />
-            <datalist id="staff-timezones"><option v-for="tz in standardTimezones" :key="tz" :value="tz" /></datalist>
+            <select v-model="editTimezone" aria-label="Часовой пояс профиля"><option v-for="option in timezoneOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select>
             <button type="submit" :disabled="tzBusy">{{ tzBusy ? "Сохраняем…" : "Сохранить часовой пояс" }}</button>
           </form>
           <p v-if="tzError" class="error profile-tz-error" role="alert">{{ tzError }}</p>
@@ -978,20 +1048,21 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
       <template v-else-if="workplacePath">
         <header class="top"><div><p class="eyebrow">RDM</p><h1>Мои карточки</h1></div></header>
         <div v-if="hasL1Role && hasL2Role" class="manager-toggle" role="group" aria-label="Рабочая роль"><button type="button" :class="{ selected: mineRole === 'l1' }" @click="mineRole = 'l1'; loadMine()">L1</button><button type="button" :class="{ selected: mineRole === 'l2' }" @click="mineRole = 'l2'; loadMine()">L2</button></div>
+        <div v-if="mineRole === 'l1'" class="manager-toggle" role="group" aria-label="Раздел списка" data-test="mine-tabs"><button v-for="tab in mineTabs" :key="tab.key" type="button" :class="{ selected: mineTab === tab.key }" :data-test="`mine-tab-${tab.key}`" @click="mineTab = tab.key">{{ tab.label }} ({{ tab.count }})</button></div>
         <p v-if="mineError" class="error" role="alert">{{ mineError }}</p>
-        <p v-else-if="!mine.length" class="hint">Назначенных карточек пока нет.</p>
-        <div v-else class="work-list"><a v-for="item in mine" :key="item.id" class="panel work-row" :href="`/cards/${item.id}`"><strong>{{ item.number }}</strong><span>{{ item.status_label }}<template v-if="item.overdue_flag"> · Просрочено</template></span><span>{{ formatDateTime(item.planned_start_at) }}</span></a></div>
+        <p v-else-if="!mineVisible.length" class="hint">{{ mine.length ? "В этом разделе карточек нет." : "Карточек пока нет." }}</p>
+        <div v-else class="work-list"><a v-for="item in mineVisible" :key="item.id" class="panel work-row" :href="`/cards/${item.id}`"><strong>{{ item.number }}</strong><span>{{ item.status_label }}<template v-if="item.overdue_flag"> · Просрочено</template></span><span v-if="item.l2_engineer_name" class="muted">L2: {{ item.l2_engineer_name }}</span><span>{{ formatDateTime(item.planned_start_at) }}</span></a></div>
         <section v-if="hasL1Role || hasL2Role" class="panel"><h2>Создать карточку {{ mineRole.toUpperCase() }}</h2>
-          <form class="form role-create-form" @submit.prevent="submitRoleCreate">
-            <label>Номер тикета<input v-model.trim="roleCreate.caseNumber" pattern="[0-9]{3}-[0-9]{6}" required /></label>
-            <label>Начало<SlotPicker v-model="roleCreate.start" :min="roleWindow.min" :max="roleWindow.max" required data-test="role-slot" /></label>
+          <form class="form form-grid role-create-form" @submit.prevent="submitRoleCreate">
+            <label>Номер тикета<input v-model.trim="roleCreate.caseNumber" pattern="[0-9]{3}-[0-9]{6}" placeholder="123-456789" required /></label>
             <label>Длительность, минут<input v-model.number="roleCreate.duration" type="number" :min="planning.min_duration_minutes" :max="planning.max_duration_minutes" required /></label>
-            <label>Описание<textarea v-model="roleCreate.description" rows="3"></textarea></label>
-            <template v-if="mineRole === 'l2'"><label>Сценарий<select v-model="roleCreate.scenario"><option value="normal">Обычное для себя</option><option value="urgent">Срочное для себя</option><option value="retroactive">Ретроспективное для себя</option></select></label>
-              <label v-if="roleCreate.scenario === 'urgent'">Причина срочности<input v-model="roleCreate.urgentReason" required /></label>
-              <template v-if="roleCreate.scenario === 'retroactive'"><label>Результат<select v-model="roleCreate.resultCode"><option value="">Не указан</option><option v-for="option in results" :key="option.code" :value="String(option.code)">{{ option.name }}</option></select></label><label>Отчёт<textarea v-model="roleCreate.report" rows="3"></textarea></label></template>
-            </template>
-            <p v-if="roleCreateError" class="error" role="alert">{{ roleCreateError }}</p><button :disabled="roleCreateBusy">{{ roleCreateBusy ? "Создаём…" : "Создать карточку" }}</button>
+            <label>Начало<SlotPicker v-model="roleCreate.start" :min="roleWindow.min" :max="roleWindow.max" required data-test="role-slot" /></label>
+            <label v-if="mineRole === 'l2'">Сценарий<select v-model="roleCreate.scenario"><option value="normal">Обычное для себя</option><option value="urgent">Срочное для себя</option><option value="retroactive">Ретроспективное для себя</option></select></label>
+            <label v-if="mineRole === 'l2' && roleCreate.scenario === 'urgent'" class="span-2">Причина срочности<input v-model="roleCreate.urgentReason" required /></label>
+            <template v-if="mineRole === 'l2' && roleCreate.scenario === 'retroactive'"><label>Результат<select v-model="roleCreate.resultCode"><option value="">Не указан</option><option v-for="option in results" :key="option.code" :value="String(option.code)">{{ option.name }}</option></select></label><label class="span-2">Отчёт<textarea v-model="roleCreate.report" rows="3"></textarea></label></template>
+            <label class="span-2">Описание<textarea v-model="roleCreate.description" rows="2"></textarea></label>
+            <p v-if="roleCreateError" class="error span-2" role="alert">{{ roleCreateError }}</p>
+            <button class="form-submit" :disabled="roleCreateBusy">{{ roleCreateBusy ? "Создаём…" : "Создать карточку" }}</button>
           </form>
         </section>
       </template>
@@ -1066,11 +1137,11 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
           <h2>Сопровождение L1</h2>
           <button v-if="!card.client_informed" :disabled="!!actionBusy" @click="markClientInformed">{{ actionBusy === "informed" ? "Сохраняем…" : "Клиент проинформирован" }}</button>
           <p v-else class="success">Клиент отмечен как проинформированный.</p>
-          <form v-if="card.client_informed" class="inline-form" @submit.prevent="setReminderInterval"><label>Интервал напоминаний<select v-model.number="reminderInterval"><option :value="10">10 минут</option><option :value="30">30 минут</option></select></label><button :disabled="!!actionBusy">Сохранить интервал</button></form>
+          <form v-if="card.client_informed" class="inline-form" @submit.prevent="setReminderInterval"><label>Интервал напоминаний<select v-model.number="reminderInterval"><option v-for="option in reminderOptions" :key="option.value" :value="option.value">{{ option.label }}</option></select></label><button :disabled="!!actionBusy">Сохранить интервал</button></form>
         </section>
         <p v-else-if="hasL1Role && card.status === 'rejected'" class="hint">Сопровождение доступно только назначенному специалисту L1.</p>
 
-        <section v-if="canReschedule" class="panel actions"><h2>Перенос времени</h2><form class="form reschedule-form" @submit.prevent="rescheduleCard"><label>Новое начало<SlotPicker v-model="rescheduleStart" :min="rescheduleWindow.min" :max="rescheduleWindow.max" required data-test="reschedule-slot" /></label><label>Длительность, минут<input v-model.number="rescheduleDuration" type="number" :min="planning.min_duration_minutes" :max="planning.max_duration_minutes" required /></label><label>Описание<textarea v-model="rescheduleDescription" rows="4"></textarea></label><label>Причина переноса<input v-model="rescheduleReason" required /></label><button :disabled="!!actionBusy">{{ actionBusy === "reschedule" ? "Сохраняем…" : "Сохранить изменения" }}</button></form></section>
+        <section v-if="canReschedule" class="panel actions"><h2>Перенос времени</h2><form class="form form-grid reschedule-form" @submit.prevent="rescheduleCard"><label>Новое начало<SlotPicker v-model="rescheduleStart" :min="rescheduleWindow.min" :max="rescheduleWindow.max" required data-test="reschedule-slot" /></label><label>Длительность, минут<input v-model.number="rescheduleDuration" type="number" :min="planning.min_duration_minutes" :max="planning.max_duration_minutes" required /></label><label class="span-2">Причина переноса<input v-model="rescheduleReason" required /></label><label class="span-2">Описание<textarea v-model="rescheduleDescription" rows="3"></textarea></label><button class="form-submit" :disabled="!!actionBusy">{{ actionBusy === "reschedule" ? "Сохраняем…" : "Сохранить изменения" }}</button></form></section>
 
         <section v-if="canExecute || canComplete || canEndPendingResult" class="panel actions">
           <h2>Выполнение</h2>
@@ -1111,16 +1182,16 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
       </template>
       <template v-else-if="managerNewPath">
         <header class="top"><div><p class="eyebrow">RDM</p><h1>Новая карточка</h1><p class="muted">Создание доступно только руководителю.</p></div><a class="button-link" href="/manager">← Вернуться к панели</a></header>
-        <p class="hint">Допустимое начало: не раньше чем через 2 часа и не позднее 14 дней. Длительность: 30–720 минут. Часовой пояс: {{ profileTimeZone }}.</p>
-        <form class="form create-form" @submit.prevent="submitCreate">
+        <p class="hint">Допустимое начало: не раньше чем через {{ leadText(planning.min_lead_minutes) }} и не позднее {{ planning.horizon_days }} {{ plural(planning.horizon_days, "дня", "дней", "дней") }}. Длительность: {{ planning.min_duration_minutes }}–{{ planning.max_duration_minutes }} минут. Часовой пояс: {{ profileTimeZone }}.</p>
+        <form class="form form-grid create-form" @submit.prevent="submitCreate">
           <label>Номер тикета<input v-model.trim="create.caseNumber" required /></label>
-          <button type="button" class="secondary" :disabled="preflightLoading || !create.caseNumber" @click="preflightTicket">{{ preflightLoading ? "Проверяем…" : "Проверить тикет" }}</button>
-          <section v-if="ticketPreflight && ticketPreflight.case_number === create.caseNumber" class="panel"><strong>Тикет {{ ticketPreflight.case_number }}</strong><p class="muted">Статус: {{ ticketPreflight.status }} · Клиент: {{ ticketPreflight.client_display_name || "Не указан" }}</p><p v-if="!ticketPreflight.can_create" class="error">Для этого тикета нельзя создать новую активную карточку.</p></section>
-          <div class="grid"><label>Начало<SlotPicker v-model="create.start" :min="createMin" :max="createMax" required data-test="create-slot" /></label><label>Длительность, минут<input v-model.number="create.duration" type="number" :min="planning.min_duration_minutes" :max="planning.max_duration_minutes" required /></label></div>
-          <label>Описание<textarea v-model="create.description" rows="4"></textarea></label>
-          <fieldset><legend>Назначение L2</legend><label class="choice"><input v-model="create.assignment" type="radio" value="auto" /> Автоматически</label><label class="choice"><input v-model="create.assignment" type="radio" value="manual" /> Конкретный L2</label><select v-if="create.assignment === 'manual'" v-model="create.l2UserId" required><option value="" disabled>Выберите L2</option><option v-for="option in l2Options" :key="option.user_id" :value="String(option.user_id)" :disabled="!option.available">{{ option.display_name }}{{ option.available ? "" : ` — ${option.reason_code === "schedule_or_conflict" ? "занят или вне графика" : "недоступен"}` }}</option></select><p v-if="create.assignment === 'manual' && !l2Options.length" class="hint">Укажите время и длительность, чтобы загрузить список L2.</p></fieldset>
-          <p v-if="createError" class="error" role="alert">{{ createError }}</p><p v-if="createNotice" class="hint">{{ createNotice }}</p>
-          <button type="submit" :disabled="createBusy || preflightLoading || createLoading || !ticketPreflight || ticketPreflight.case_number !== create.caseNumber || !ticketPreflight.can_create">{{ createBusy ? "Создаём…" : "Создать карточку" }}</button>
+          <button type="button" class="secondary check-button" :disabled="preflightLoading || !create.caseNumber" @click="preflightTicket">{{ preflightLoading ? "Проверяем…" : "Проверить тикет" }}</button>
+          <section v-if="ticketPreflight && ticketPreflight.case_number === create.caseNumber" class="panel span-2"><strong>Тикет {{ ticketPreflight.case_number }}</strong><p class="muted">Статус: {{ ticketPreflight.status }} · Клиент: {{ ticketPreflight.client_display_name || "Не указан" }}</p><p v-if="!ticketPreflight.can_create" class="error">Для этого тикета нельзя создать новую активную карточку.</p></section>
+          <label>Начало<SlotPicker v-model="create.start" :min="createMin" :max="createMax" required data-test="create-slot" /></label><label>Длительность, минут<input v-model.number="create.duration" type="number" :min="planning.min_duration_minutes" :max="planning.max_duration_minutes" required /></label>
+          <label class="span-2">Описание<textarea v-model="create.description" rows="3"></textarea></label>
+          <fieldset class="span-2"><legend>Назначение L2</legend><label class="choice"><input v-model="create.assignment" type="radio" value="auto" /> Автоматически</label><label class="choice"><input v-model="create.assignment" type="radio" value="manual" /> Конкретный L2</label><select v-if="create.assignment === 'manual'" v-model="create.l2UserId" required><option value="" disabled>Выберите L2</option><option v-for="option in l2Options" :key="option.user_id" :value="String(option.user_id)" :disabled="!option.available">{{ option.display_name }}{{ option.available ? "" : ` — ${option.reason_code === "schedule_or_conflict" ? "занят или вне графика" : "недоступен"}` }}</option></select><p v-if="create.assignment === 'manual' && !l2Options.length" class="hint">Укажите время и длительность, чтобы загрузить список L2.</p></fieldset>
+          <p v-if="createError" class="error span-2" role="alert">{{ createError }}</p><p v-if="createNotice" class="hint span-2">{{ createNotice }}</p>
+          <button type="submit" class="form-submit" :disabled="createBusy || preflightLoading || createLoading || !ticketPreflight || ticketPreflight.case_number !== create.caseNumber || !ticketPreflight.can_create">{{ createBusy ? "Создаём…" : "Создать карточку" }}</button>
         </form>
       </template>
       <template v-else-if="managerPath && !manager">
@@ -1147,9 +1218,10 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
       </template>
 
       <template v-else>
-        <h1>RDM</h1>
-        <p>Карточка не выбрана.</p>
-        <button class="secondary" @click="logout">Выйти</button>
+        <p class="eyebrow">RDM</p>
+        <h1>Страница не найдена</h1>
+        <p class="muted">Такого раздела нет. Воспользуйтесь меню слева или вернитесь на главную.</p>
+        <a class="button-link" href="/">На главную</a>
       </template>
     </section>
   </main>

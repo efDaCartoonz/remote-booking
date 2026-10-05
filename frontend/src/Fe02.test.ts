@@ -122,6 +122,53 @@ describe("FE-02 role workspaces", () => {
     expect(String(post?.[1]?.body)).not.toContain("case_id");
   });
 
+  it("groups L1 cards into work sections with counters", async () => {
+    window.history.pushState({}, "", "/work");
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const path = String(input);
+      if (path.endsWith("/auth/me")) return ok(user(11, 1));
+      if (path.includes("/cards/mine?role=l1")) {
+        return ok({
+          items: [
+            card({ id: "a", number: "RDM-REJ", status: "rejected", status_label: "Отклонено" }),
+            card({ id: "b", number: "RDM-ASG", status: "assigned", status_label: "Назначено" }),
+            card({ id: "c", number: "RDM-PRG", status: "in_progress", status_label: "Выполняется" }),
+            card({ id: "d", number: "RDM-OVD", status: "confirmed", status_label: "Подтверждено", overdue_flag: true }),
+            card({ id: "e", number: "RDM-DONE", status: "completed", status_label: "Завершено" }),
+            card({ id: "f", number: "RDM-CNL", status: "cancelled", status_label: "Отменено" }),
+          ],
+          limit: 100,
+        });
+      }
+      return fail(404, "missing");
+    });
+    const wrapper = mount(App);
+    await flushPromises();
+
+    const tab = (key: string) => wrapper.find(`[data-test="mine-tab-${key}"]`);
+    expect(tab("attention").text()).toContain("(2)");
+    expect(tab("active").text()).toContain("(2)");
+    expect(tab("done").text()).toContain("(2)");
+    expect(tab("all").text()).toContain("(6)");
+
+    // The default section holds the cards that need the L1's work: rejected and overdue ones.
+    expect(wrapper.find(".work-list").text()).toContain("RDM-REJ");
+    expect(wrapper.find(".work-list").text()).toContain("RDM-OVD");
+    expect(wrapper.find(".work-list").text()).not.toContain("RDM-ASG");
+
+    await tab("active").trigger("click");
+    expect(wrapper.find(".work-list").text()).toContain("RDM-ASG");
+    expect(wrapper.find(".work-list").text()).toContain("RDM-PRG");
+    expect(wrapper.find(".work-list").text()).not.toContain("RDM-DONE");
+
+    await tab("done").trigger("click");
+    expect(wrapper.find(".work-list").text()).toContain("RDM-DONE");
+    expect(wrapper.find(".work-list").text()).toContain("RDM-CNL");
+
+    await tab("all").trigger("click");
+    expect(wrapper.findAll(".work-list a")).toHaveLength(6);
+  });
+
   it("switches queues and create forms for dual-role users", async () => {
     window.history.pushState({}, "", "/work");
     const calls: string[] = [];
@@ -129,7 +176,7 @@ describe("FE-02 role workspaces", () => {
       const path = String(input);
       calls.push(path);
       if (path.endsWith("/auth/me")) return ok(user(15, 1, [2]));
-      if (path.includes("/cards/mine?role=l1")) return ok({ items: [card({ number: "RDM-L1-QUEUE" })], limit: 100 });
+      if (path.includes("/cards/mine?role=l1")) return ok({ items: [card({ number: "RDM-L1-QUEUE", status: "rejected", status_label: "Отклонено" })], limit: 100 });
       if (path.includes("/cards/mine?role=l2")) return ok({ items: [card({ number: "RDM-L2-QUEUE" })], limit: 100 });
       if (path.endsWith("/results")) return ok({ items: [{ code: 1, name: "Успешно" }] });
       return fail(404, "missing");

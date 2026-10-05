@@ -1,6 +1,10 @@
 """Shared expectations for PostgreSQL notification tests."""
 
+from datetime import UTC, datetime
+
 import pytest
+
+import app.assignments.l1_service as l1_service
 
 
 @pytest.fixture
@@ -34,3 +38,13 @@ def role_notification_channels():
         return channels
 
     return collect
+
+
+# Candidate schedules in the unit tests are weekday based, so the L1 availability
+# check ("at the moment of assignment") must not depend on the day the suite runs.
+DEFAULT_CLOCK = datetime(2026, 9, 7, 10, tzinfo=UTC)
+
+
+@pytest.fixture(autouse=True)
+def frozen_l1_assignment_clock(monkeypatch):
+    monkeypatch.setattr(l1_service, "_now", lambda: DEFAULT_CLOCK)

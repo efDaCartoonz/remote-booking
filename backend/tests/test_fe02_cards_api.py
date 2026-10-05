@@ -123,6 +123,10 @@ def test_l1_interval_contract_and_validation():
             "can_change": True,
         }
         assert service.interval_calls[-1]["interval_minutes"] == 30
-        assert client.post(path, json={"interval_minutes": 15}).status_code == 422
+        for allowed in (0, 15, 60, 120, 240, 480, 1440):
+            assert (
+                client.post(path, json={"interval_minutes": allowed}).status_code == 200
+            )
+        assert client.post(path, json={"interval_minutes": 20}).status_code == 422
         app.dependency_overrides[get_current_user] = lambda: user(22, 1)
         assert client.get(path).status_code == 403
