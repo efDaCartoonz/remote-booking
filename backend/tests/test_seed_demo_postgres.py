@@ -94,6 +94,20 @@ def test_seed_is_idempotent_feeds_reports_and_removes_only_demo_records(
         ).fetchone()["password_hash"]
         assert SECRET not in stored
 
+        # Named fixtures exist for every role block and are described in the table.
+        fixtures = connection.execute(
+            "SELECT count(*) AS n FROM connection_cards WHERE omnidesk_ticket_number LIKE '910-%'"
+        ).fetchone()["n"]
+        assert fixtures == len(seed_demo.FIXTURES)
+        table = seed_demo.render_fixtures(connection)
+        for label in ("L1-1", "L1-7", "L2-4", "L2-5", "M-1"):
+            assert f"| {label} |" in table
+        inactive = connection.execute(
+            "SELECT is_active FROM users WHERE username = %s",
+            (seed_demo.INACTIVE_USER,),
+        ).fetchone()
+        assert inactive["is_active"] is False
+
         # Reports have something to show.
         now = datetime.now(UTC)
         summary = PostgresReportsRepository(connection).get_summary(

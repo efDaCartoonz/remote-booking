@@ -205,7 +205,9 @@ main() {
     fi
 
     printf '\n[Step 4/7] Building images for release %s...\n' "$release"
-    compose build
+    # backend, worker and beat share one image tag; building them in parallel makes the
+    # image export fail with "already exists", so build one service at a time.
+    COMPOSE_BAKE=false COMPOSE_PARALLEL_LIMIT=1 compose build
 
     if [[ "$fresh" == true ]]; then
         printf '\n[Step 5/7] --fresh: removing the stage containers and volumes of project %s...\n' "$project"

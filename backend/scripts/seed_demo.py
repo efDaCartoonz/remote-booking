@@ -33,6 +33,8 @@ from app.cards.constants import (
 from app.db import db_connection
 
 DEMO_TZ = "Asia/Yekaterinburg"
+INACTIVE_USER = "demo-inactive"
+FIXTURE_TICKET_PREFIX = "910"
 USER_PREFIX = "demo-"
 TICKET_PREFIX = "900"
 DESCRIPTION_PREFIX = "DEMO:"
@@ -46,6 +48,7 @@ DEMO_USERS: list[tuple[str, str, RoleId, str]] = [
     ("demo-l2-maria", "DEMO Мария Козлова", RoleId.L2, "cycle_2_2"),
     ("demo-l2-denis", "DEMO Денис Орлов", RoleId.L2, "weekdays_late"),
     ("demo-manager", "DEMO Руководитель", RoleId.MANAGER, "none"),
+    (INACTIVE_USER, "DEMO Неактивный сотрудник", RoleId.L1, "none"),
 ]
 
 RESULT_CODES = (0, 0, 0, 1, 2, 3)
@@ -461,6 +464,451 @@ def seed_cards(connection, l1_ids, l2_ids, days: int) -> int:
     return count
 
 
+# ---------------------------------------------------------------------------
+# Named fixtures: one card per situation a tester has to reach, grouped by role block.
+# ---------------------------------------------------------------------------
+
+# label, block, status, creator, L1 owner, L2, when, duration, flags, purpose
+# when: ("ahead", business_days, "HH:MM") | ("ago", minutes) started that long ago
+FIXTURES: list[dict] = [
+    {
+        "label": "L1-1",
+        "block": "L1",
+        "status": CardStatus.REJECTED,
+        "creator": "demo-l1-anna",
+        "l1": "demo-l1-anna",
+        "l2": None,
+        "when": ("ahead", 2, "11:00"),
+        "uc": 2,
+        "purpose": "Отклонена после двух неуспешных циклов, вы сопровождающий: «Клиент проинформирован», напоминания, перенос, отмена.",
+    },
+    {
+        "label": "L1-2",
+        "block": "L1",
+        "status": CardStatus.REJECTED,
+        "creator": "demo-l1-anna",
+        "l1": "demo-l1-anna",
+        "l2": None,
+        "when": ("ahead", 3, "12:00"),
+        "uc": 1,
+        "informed": True,
+        "purpose": "Отклонена, клиент уже проинформирован: смена интервала напоминаний и «Не напоминать».",
+    },
+    {
+        "label": "L1-3",
+        "block": "L1",
+        "status": CardStatus.REJECTED,
+        "creator": "demo-l1-oleg",
+        "l1": "demo-l1-oleg",
+        "l2": None,
+        "when": ("ahead", 2, "15:00"),
+        "uc": 1,
+        "purpose": "Чужая карточка (сопровождающий Олег): в списке Анны её нет, открыть по ссылке можно, действия L1 запрещены.",
+    },
+    {
+        "label": "L1-4",
+        "block": "L1",
+        "status": CardStatus.ASSIGNED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": "demo-l2-denis",
+        "when": ("ahead", 3, "15:00"),
+        "purpose": "Создана вами и назначена: раздел «В работе», перенос по желанию клиента и отмена с причиной.",
+    },
+    {
+        "label": "L1-5",
+        "block": "L1",
+        "status": CardStatus.CONFIRMED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": "demo-l2-denis",
+        "when": ("ahead", 4, "16:00"),
+        "purpose": "Подтверждена инженером: перенос и отмена в статусе «Подтверждено».",
+    },
+    {
+        "label": "L1-6",
+        "block": "L1",
+        "status": CardStatus.IN_PROGRESS,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": "demo-l2-denis",
+        "when": ("ago", 30),
+        "duration": 120,
+        "purpose": "Выполняется: L1 не может отменить и перенести (запрещено в этом статусе).",
+    },
+    {
+        "label": "L1-7",
+        "block": "L1",
+        "status": CardStatus.ASSIGNED,
+        "creator": "demo-l1-anna",
+        "l1": "demo-l1-anna",
+        "l2": "demo-l2-maria",
+        "when": ("ago", 180),
+        "overdue": True,
+        "purpose": "Просроченная назначенная карточка: попадает в «Требуют работы».",
+    },
+    {
+        "label": "L1-8",
+        "block": "L1",
+        "status": CardStatus.COMPLETED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": "demo-l2-ivan",
+        "when": ("ago", 24 * 60 + 120),
+        "purpose": "Завершена: раздел «Завершённые и отменённые», действий нет.",
+    },
+    {
+        "label": "L1-9",
+        "block": "L1",
+        "status": CardStatus.CANCELLED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": None,
+        "when": ("ago", 2 * 24 * 60),
+        "purpose": "Отменена: раздел «Завершённые и отменённые».",
+    },
+    {
+        "label": "L2-1",
+        "block": "L2",
+        "status": CardStatus.ASSIGNED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": "demo-l2-ivan",
+        "when": ("ahead", 2, "10:00"),
+        "purpose": "Назначена Ивану: «Подтвердить».",
+    },
+    {
+        "label": "L2-2",
+        "block": "L2",
+        "status": CardStatus.ASSIGNED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": "demo-l2-ivan",
+        "when": ("ahead", 2, "13:00"),
+        "purpose": "Назначена Ивану: «Отклонить» с причиной (уйдёт следующему L2 по кругу).",
+    },
+    {
+        "label": "L2-3",
+        "block": "L2",
+        "status": CardStatus.CONFIRMED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": "demo-l2-ivan",
+        "when": ("ahead", 3, "10:00"),
+        "purpose": "Подтверждена: «Начать».",
+    },
+    {
+        "label": "L2-4",
+        "block": "L2",
+        "status": CardStatus.IN_PROGRESS,
+        "creator": "demo-l1-oleg",
+        "l1": None,
+        "l2": "demo-l2-ivan",
+        "when": ("ago", 40),
+        "duration": 120,
+        "purpose": "Выполняется: «Завершить» с результатом и отчётом либо без результата; автопродление после планового окончания.",
+    },
+    {
+        "label": "L2-5",
+        "block": "L2",
+        "status": CardStatus.COMPLETED_PENDING_RESULT,
+        "creator": "demo-l1-oleg",
+        "l1": None,
+        "l2": "demo-l2-ivan",
+        "when": ("ago", 24 * 60 + 30),
+        "purpose": "Ожидает результат: результат вносит только назначенный L2.",
+    },
+    {
+        "label": "L2-6",
+        "block": "L2",
+        "status": CardStatus.ASSIGNED,
+        "creator": "demo-l1-oleg",
+        "l1": None,
+        "l2": "demo-l2-maria",
+        "when": ("ahead", 2, "10:00"),
+        "purpose": "Карточка другого инженера (Мария): Иван не может подтвердить, начать, завершить.",
+    },
+    {
+        "label": "L2-7",
+        "block": "L2",
+        "status": CardStatus.REJECTED,
+        "creator": "demo-l1-oleg",
+        "l1": "demo-l1-oleg",
+        "l2": None,
+        "when": ("ahead", 4, "11:00"),
+        "uc": 1,
+        "purpose": "Без инженера: «Назначить на себя» (только на себя и с комментарием).",
+    },
+    {
+        "label": "M-1",
+        "block": "Руководитель",
+        "status": CardStatus.ASSIGNED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": "demo-l2-ivan",
+        "when": ("ahead", 1, "15:00"),
+        "urgent": True,
+        "purpose": "Срочная карточка: счётчик «Срочно», переназначение, перенос.",
+    },
+    {
+        "label": "M-2",
+        "block": "Руководитель",
+        "status": CardStatus.CONFIRMED,
+        "creator": "demo-l1-oleg",
+        "l1": None,
+        "l2": "demo-l2-maria",
+        "when": ("ahead", 5, "10:00"),
+        "purpose": "Переназначение на другого L2, отмена, перенос, действия за инженера.",
+    },
+]
+
+
+def _weekday_at(now_local: datetime, days: int, at: str) -> datetime:
+    """The `days`-th business day after today (distinct for distinct `days`)."""
+    day = now_local.date()
+    for _ in range(days):
+        day += timedelta(days=1)
+        while day.isoweekday() > 5:
+            day += timedelta(days=1)
+    hour, minute = (int(part) for part in at.split(":"))
+    return local_dt(day, time(hour, minute))
+
+
+def seed_fixtures(connection, user_ids: dict[str, int]) -> int:
+    """Create the named fixture cards; returns how many were added."""
+    now = datetime.now(UTC)
+    now_local = now.astimezone(ZoneInfo(DEMO_TZ))
+    client_ids: list[int] = []
+    count = 0
+    with connection.cursor() as cursor:
+        for i in range(1, 4):
+            cursor.execute(
+                "INSERT INTO clients (omnidesk_user_id, display_name, last_confirmed_timezone) "
+                "VALUES (%s, %s, %s) RETURNING id",
+                (f"demo-fixture-client-{i}", f"DEMO Клиент фикстур {i}", DEMO_TZ),
+            )
+            client_ids.append(cursor.fetchone()["id"])
+        for number, spec in enumerate(FIXTURES, start=1):
+            status: CardStatus = spec["status"]
+            kind = spec["when"][0]
+            if kind == "ahead":
+                planned = _weekday_at(now_local, spec["when"][1], spec["when"][2])
+                created = now - timedelta(hours=3)
+            else:
+                planned = now - timedelta(minutes=spec["when"][1])
+                created = planned - timedelta(hours=5)
+            duration = spec.get("duration", 60)
+            creator = user_ids[spec["creator"]]
+            l1 = user_ids[spec["l1"]] if spec["l1"] else None
+            l2 = user_ids[spec["l2"]] if spec["l2"] else None
+            actual_start = actual_end = None
+            if status in (
+                CardStatus.IN_PROGRESS,
+                CardStatus.COMPLETED,
+                CardStatus.COMPLETED_PENDING_RESULT,
+            ):
+                actual_start = planned
+            if status in (CardStatus.COMPLETED, CardStatus.COMPLETED_PENDING_RESULT):
+                actual_end = planned + timedelta(minutes=70)
+            result = 0 if status == CardStatus.COMPLETED else None
+            overdue = bool(spec.get("overdue"))
+            urgent = bool(spec.get("urgent"))
+            cursor.execute(
+                """
+                INSERT INTO connection_cards
+                    (omnidesk_ticket_number, client_id, status_code, urgency_code, planned_start_at,
+                     planned_duration_minutes, actual_start_at, actual_end_at, l1_owner_id,
+                     l2_engineer_id, assignment_method_code, unsuccessful_cycle_count, description,
+                     urgent_reason, overdue_flag, overdue_at, result_code, engineer_report,
+                     client_informed, created_source_code, created_by_id, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
+                RETURNING id
+                """,
+                (
+                    f"{FIXTURE_TICKET_PREFIX}-{number:06d}",
+                    client_ids[number % len(client_ids)],
+                    int(status),
+                    1 if urgent else 0,
+                    planned,
+                    duration,
+                    actual_start,
+                    actual_end,
+                    l1,
+                    l2,
+                    spec.get("uc", 0),
+                    f"{DESCRIPTION_PREFIX} [{spec['label']}] {spec['purpose']}",
+                    "DEMO: срочное подключение" if urgent else None,
+                    overdue,
+                    planned + timedelta(minutes=duration) if overdue else None,
+                    result,
+                    "DEMO: работы выполнены" if result is not None else None,
+                    bool(spec.get("informed")),
+                    creator,
+                    created,
+                    created,
+                ),
+            )
+            card = cursor.fetchone()["id"]
+            count += 1
+            add_event(
+                cursor,
+                card,
+                CardEventType.CREATED,
+                created,
+                creator,
+                ActorType.INTERNAL_USER,
+                {"status_code": int(CardStatus.CREATED)},
+            )
+            engineers = [user_ids["demo-l2-ivan"], user_ids["demo-l2-maria"]]
+            if status == CardStatus.REJECTED:
+                for cycle_number in range(1, spec.get("uc", 1) + 1):
+                    started = created + timedelta(minutes=10 * cycle_number)
+                    cursor.execute(
+                        "INSERT INTO assignment_cycles (card_id, cycle_number, status_code, started_at, completed_at) "
+                        "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                        (
+                            card,
+                            cycle_number,
+                            int(AssignmentCycleStatus.ALL_REJECTED),
+                            started,
+                            started + timedelta(minutes=8),
+                        ),
+                    )
+                    cycle_id = cursor.fetchone()["id"]
+                    for step, engineer in enumerate(engineers):
+                        at = started + timedelta(minutes=2 + 3 * step)
+                        attempt(
+                            cursor,
+                            card,
+                            cycle_id,
+                            engineer,
+                            AssignmentAttemptStatus.REJECTED,
+                            at,
+                            at + timedelta(minutes=1),
+                            "DEMO: нет возможности",
+                        )
+                    status_event(
+                        cursor,
+                        card,
+                        started + timedelta(minutes=8),
+                        None,
+                        CardStatus.REJECTED,
+                    )
+            elif l2 is not None:
+                cursor.execute(
+                    "INSERT INTO assignment_cycles (card_id, cycle_number, status_code, started_at, completed_at) "
+                    "VALUES (%s, 1, %s, %s, %s) RETURNING id",
+                    (
+                        card,
+                        int(AssignmentCycleStatus.ASSIGNED),
+                        created,
+                        created + timedelta(minutes=5),
+                    ),
+                )
+                cycle_id = cursor.fetchone()["id"]
+                confirmed = status != CardStatus.ASSIGNED
+                attempt(
+                    cursor,
+                    card,
+                    cycle_id,
+                    l2,
+                    AssignmentAttemptStatus.CONFIRMED
+                    if confirmed
+                    else AssignmentAttemptStatus.PENDING,
+                    created + timedelta(minutes=5),
+                    created + timedelta(minutes=9) if confirmed else None,
+                )
+                add_event(
+                    cursor,
+                    card,
+                    CardEventType.ENGINEER_ASSIGNED,
+                    created + timedelta(minutes=5),
+                    None,
+                    ActorType.SYSTEM,
+                    {"l2_engineer_id": l2},
+                )
+                status_event(
+                    cursor,
+                    card,
+                    created + timedelta(minutes=5),
+                    None,
+                    CardStatus.ASSIGNED,
+                )
+                if confirmed:
+                    status_event(
+                        cursor,
+                        card,
+                        created + timedelta(minutes=9),
+                        l2,
+                        CardStatus.CONFIRMED,
+                    )
+                if actual_start is not None:
+                    status_event(cursor, card, actual_start, l2, CardStatus.IN_PROGRESS)
+                if status in (
+                    CardStatus.COMPLETED,
+                    CardStatus.COMPLETED_PENDING_RESULT,
+                ):
+                    status_event(cursor, card, actual_end, l2, status)
+                if overdue:
+                    status_event(
+                        cursor,
+                        card,
+                        planned + timedelta(minutes=duration),
+                        None,
+                        status,
+                        {"overdue": True},
+                    )
+            elif status == CardStatus.CANCELLED:
+                status_event(
+                    cursor,
+                    card,
+                    created + timedelta(minutes=45),
+                    creator,
+                    CardStatus.CANCELLED,
+                )
+    return count
+
+
+def fixture_rows(connection) -> list[dict]:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT c.public_id, c.number, c.omnidesk_ticket_number AS ticket, c.status_code,
+                   c.description, c.planned_start_at,
+                   l1.full_name AS l1_name, l2.full_name AS l2_name
+            FROM connection_cards c
+            LEFT JOIN users l1 ON l1.id = c.l1_owner_id
+            LEFT JOIN users l2 ON l2.id = c.l2_engineer_id
+            WHERE c.omnidesk_ticket_number LIKE %s
+            ORDER BY c.id
+            """,
+            (f"{FIXTURE_TICKET_PREFIX}-%",),
+        )
+        return cursor.fetchall()
+
+
+def render_fixtures(connection) -> str:
+    by_label = {spec["label"]: spec for spec in FIXTURES}
+    rows = fixture_rows(connection)
+    lines = [
+        "| Метка | Карточка | Тикет | Статус | Сопровождающий L1 | Инженер L2 | Плановое начало | Ссылка | Для чего |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        label = row["description"].split("[", 1)[1].split("]", 1)[0]
+        spec = by_label[label]
+        start = (
+            row["planned_start_at"]
+            .astimezone(ZoneInfo(DEMO_TZ))
+            .strftime("%d.%m %H:%M")
+        )
+        lines.append(
+            f"| {label} | {row['number']} | {row['ticket']} | {CardStatus(row['status_code']).name} | "
+            f"{row['l1_name'] or '—'} | {row['l2_name'] or '—'} | {start} | `/cards/{row['public_id']}` | {spec['purpose']} |"
+        )
+    return "\n".join(lines)
+
+
 def seed(connection, password: str, days: int) -> dict[str, int]:
     repo = PostgresAdminUserRepository(connection)
     user_ids: dict[str, int] = {}
@@ -490,6 +938,10 @@ def seed(connection, password: str, days: int) -> dict[str, int]:
                 continue
             user_ids[username] = user.id
             created_users += 1
+            if username == INACTIVE_USER:
+                cursor.execute(
+                    "UPDATE users SET is_active = false WHERE id = %s", (user.id,)
+                )
         today = datetime.now(UTC).date()
         for username, _name, role, kind in DEMO_USERS:
             user_id = user_ids.get(username)
@@ -524,7 +976,9 @@ def seed(connection, password: str, days: int) -> dict[str, int]:
                 (user_id, 1 if role == RoleId.L1 else 2),
             )
     l1_ids = [
-        user_ids[u] for u, _n, r, _k in DEMO_USERS if r == RoleId.L1 and u in user_ids
+        user_ids[u]
+        for u, _n, r, _k in DEMO_USERS
+        if r == RoleId.L1 and u in user_ids and u != INACTIVE_USER
     ]
     l2_ids = [
         user_ids[u] for u, _n, r, _k in DEMO_USERS if r == RoleId.L2 and u in user_ids
@@ -538,6 +992,7 @@ def seed(connection, password: str, days: int) -> dict[str, int]:
         already = cursor.fetchone()["n"]
     if not already and l1_ids and len(l2_ids) >= 2:
         cards = seed_cards(connection, l1_ids, l2_ids, days)
+        cards += seed_fixtures(connection, user_ids)
     return {"users": created_users, "cards": cards}
 
 
@@ -552,6 +1007,11 @@ def main(argv: Sequence[str] | None = None, stdin=None) -> int:
     mode.add_argument(
         "--remove", action="store_true", help="delete exactly the demo records"
     )
+    mode.add_argument(
+        "--fixtures",
+        action="store_true",
+        help="print the named test fixtures as a markdown table",
+    )
     parser.add_argument(
         "--password-stdin",
         action="store_true",
@@ -561,6 +1021,10 @@ def main(argv: Sequence[str] | None = None, stdin=None) -> int:
         "--days", type=int, default=30, help="how many past days of cards to create"
     )
     args = parser.parse_args(argv)
+    if args.fixtures:
+        with db_connection() as connection:
+            print(render_fixtures(connection))
+        return 0
     if args.remove:
         with db_connection() as connection:
             removed = remove_demo(connection)
