@@ -1,6 +1,7 @@
 """Create or remove synthetic demo data for the test stand.
 
-Everything created here is marked as demo data and nothing else is touched:
+Everything created here is marked as demo data and nothing else is touched
+(``--remove`` also deletes cards that testers created under a demo account):
 users are named ``demo-*``, clients ``DEMO ...``, cards carry ``DEMO:`` in the
 description and use ticket numbers from the ``900-`` range. ``--remove`` deletes
 exactly those records. No external system is contacted.
@@ -73,15 +74,35 @@ def schedule_day(kind: str, day: date) -> tuple[time, time] | None:
 
 
 def remove_demo(connection) -> dict[str, int]:
+    """Delete the demo records.
+
+    Cards that testers created by hand under a demo account (no DEMO marker) are
+    removed too: they reference the demo users and would block deleting them.
+    """
+    demo_users = "SELECT id FROM users WHERE username LIKE %(prefix)s"
+    params = {"marker": f"{DESCRIPTION_PREFIX}%", "prefix": f"{USER_PREFIX}%"}
     with connection.cursor() as cursor:
         cursor.execute(
-            "DELETE FROM connection_cards WHERE description LIKE %s",
-            (f"{DESCRIPTION_PREFIX}%",),
+            f"""
+            DELETE FROM connection_cards
+            WHERE description LIKE %(marker)s
+               OR created_by_id IN ({demo_users})
+               OR l1_owner_id IN ({demo_users})
+               OR l2_engineer_id IN ({demo_users})
+               OR id IN (
+                   SELECT card_id FROM assignment_attempts
+                   WHERE l2_engineer_id IN ({demo_users})
+               )
+            """,
+            params,
         )
         cards = cursor.rowcount
         cursor.execute("DELETE FROM clients WHERE display_name LIKE 'DEMO %'")
         clients = cursor.rowcount
-        cursor.execute("DELETE FROM users WHERE username LIKE %s", (f"{USER_PREFIX}%",))
+        cursor.execute(
+            "DELETE FROM users WHERE username LIKE %(prefix)s",
+            {"prefix": params["prefix"]},
+        )
         users = cursor.rowcount
     return {"cards": cards, "clients": clients, "users": users}
 

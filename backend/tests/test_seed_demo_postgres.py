@@ -130,6 +130,30 @@ def test_seed_is_idempotent_feeds_reports_and_removes_only_demo_records(
         ).fetchone()["n"]
         assert overlaps == 0
 
+        # A card a tester created by hand under a demo account (no DEMO marker) must not
+        # block removing the demo users.
+        l1 = connection.execute(
+            "SELECT id FROM users WHERE username = 'demo-l1-anna'"
+        ).fetchone()["id"]
+        l2 = connection.execute(
+            "SELECT id FROM users WHERE username = 'demo-l2-ivan'"
+        ).fetchone()["id"]
+        manual = connection.execute(
+            "INSERT INTO connection_cards (omnidesk_ticket_number, status_code, planned_start_at, "
+            "planned_duration_minutes, created_by_id, l2_engineer_id, description) "
+            "VALUES ('971-000001', 1, now() + interval '3 days', 60, %s, %s, 'manual check') RETURNING id",
+            (l1, l2),
+        ).fetchone()["id"]
+        cycle = connection.execute(
+            "INSERT INTO assignment_cycles (card_id, cycle_number, status_code) VALUES (%s, 1, 1) RETURNING id",
+            (manual,),
+        ).fetchone()["id"]
+        connection.execute(
+            "INSERT INTO assignment_attempts (cycle_id, card_id, l2_engineer_id, status_code) VALUES (%s, %s, %s, 0)",
+            (cycle, manual, l2),
+        )
+        connection.commit()
+
         assert seed_demo.main(["--remove"]) == 0
         assert counts(connection) == {"users": 0, "cards": 0, "shifts": 0}
         after_other_cards = connection.execute(
