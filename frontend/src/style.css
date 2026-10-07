@@ -258,7 +258,7 @@ input[type="checkbox"], input[type="radio"] { width: 16px; min-height: 16px; pad
 .shell.with-sidebar .card { width: 100%; max-width: 720px; margin: 0; padding: 32px; border: 0; background: transparent; }
 .shell.with-sidebar .manager-card { width: 100%; }
 /* Pages with data grids (calendar, schedules, reports, administration) get more room, still left aligned. */
-.shell.with-sidebar .card.wide { max-width: 1120px; }
+.shell.with-sidebar .card.wide { max-width: 1360px; }
 .sidebar { position: sticky; top: 0; display: flex; flex-direction: column; align-self: start; height: 100vh; padding: 0; border-right: 1px solid var(--rdm-border); border-radius: 0; background: var(--rdm-layer); }
 .sidebar-brand { display: flex; align-items: center; height: 48px; padding: 0 16px; background: var(--rdm-header); }
 .sidebar-brand .eyebrow { margin: 0; color: var(--rdm-header-text); font-size: 14px; font-weight: 600; letter-spacing: .16px; }
