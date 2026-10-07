@@ -112,6 +112,7 @@ describe("FE-02 role workspaces", () => {
     await flushPromises();
     expect(wrapper.find(".work-row").text()).toContain("Отклонено");
     expect(wrapper.find(".manager-stats").exists()).toBe(false);
+    await wrapper.find('[data-test="open-create"]').trigger("click");
     await wrapper.find(".role-create-form input[pattern]").setValue("123-456789");
     await slotInput(wrapper.find(".role-create-form")).setValue("2026-10-01T10:00");
     await wrapper.find(".role-create-form").trigger("submit");
@@ -184,7 +185,12 @@ describe("FE-02 role workspaces", () => {
     const wrapper = mount(App);
     await flushPromises();
     expect(wrapper.text()).toContain("RDM-L1-QUEUE");
-    expect(wrapper.text()).toContain("Создать карточку L1");
+    // The create form is not on the page until it is requested with the button.
+    expect(wrapper.find('[data-test="create-modal"]').exists()).toBe(false);
+    await wrapper.find('[data-test="open-create"]').trigger("click");
+    expect(wrapper.find('[data-test="create-modal"]').text()).toContain("Создать карточку L1");
+    await wrapper.find('[data-test="close-create"]').trigger("click");
+    expect(wrapper.find('[data-test="create-modal"]').exists()).toBe(false);
 
     const l2Toggle = wrapper.findAll(".manager-toggle button").find((btn) => btn.text() === "L2");
     expect(l2Toggle).toBeDefined();
@@ -193,7 +199,12 @@ describe("FE-02 role workspaces", () => {
 
     expect(calls.some((url) => url.includes("/cards/mine?role=l2"))).toBe(true);
     expect(wrapper.text()).toContain("RDM-L2-QUEUE");
-    expect(wrapper.text()).toContain("Создать карточку L2");
+    await wrapper.find('[data-test="open-create"]').trigger("click");
+    expect(wrapper.find('[data-test="create-modal"]').text()).toContain("Создать карточку L2");
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    await flushPromises();
+    expect(wrapper.find('[data-test="create-modal"]').exists()).toBe(false);
+    await wrapper.find('[data-test="open-create"]').trigger("click");
     expect(wrapper.find(".role-create-form select:not([data-test^='role-slot'])").exists()).toBe(true);
   });
 
@@ -252,6 +263,7 @@ describe("FE-02 role workspaces", () => {
     await flushPromises();
 
     // 1. Urgent scenario
+    await wrapper.find('[data-test="open-create"]').trigger("click");
     await wrapper.find(".role-create-form input[pattern]").setValue("222-333444");
     await slotInput(wrapper.find(".role-create-form")).setValue("2026-10-01T14:00");
     await wrapper.find(".role-create-form select:not([data-test^='role-slot'])").setValue("urgent");

@@ -100,13 +100,27 @@ def test_seed_is_idempotent_feeds_reports_and_removes_only_demo_records(
         ).fetchone()["n"]
         assert fixtures == len(seed_demo.FIXTURES)
         table = seed_demo.render_fixtures(connection)
-        for label in ("L1-1", "L1-7", "L2-4", "L2-5", "M-1"):
+        for label in ("L1-1", "L1-7", "L2-4", "L2-5", "M-1", "V-1", "V-10", "V-13"):
             assert f"| {label} |" in table
         inactive = connection.execute(
             "SELECT is_active FROM users WHERE username = %s",
             (seed_demo.INACTIVE_USER,),
         ).fetchone()
         assert inactive["is_active"] is False
+        viewer_roles = connection.execute(
+            "SELECT array_agg(ur.role_id ORDER BY ur.role_id) AS roles FROM users u "
+            "JOIN user_roles ur ON ur.user_id = u.id WHERE u.username = %s",
+            (seed_demo.VIEWER_USER,),
+        ).fetchone()["roles"]
+        assert viewer_roles == [1, 2, 3, 4]
+        assert (
+            connection.execute(
+                "SELECT count(*) AS n FROM distribution_members dm JOIN users u ON u.id = dm.user_id "
+                "WHERE u.username = %s",
+                (seed_demo.VIEWER_USER,),
+            ).fetchone()["n"]
+            == 0
+        )
 
         # Reports have something to show.
         now = datetime.now(UTC)

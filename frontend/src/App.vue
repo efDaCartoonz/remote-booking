@@ -196,6 +196,10 @@ const mineRole = ref<"l1" | "l2">("l1");
 const roleCreate = ref({ caseNumber: "", start: "", duration: 60, description: "", scenario: "normal", urgentReason: "", resultCode: "", report: "" });
 const roleCreateBusy = ref(false);
 const roleCreateError = ref("");
+const showRoleCreate = ref(false);
+function openRoleCreate(): void { roleCreateError.value = ""; showRoleCreate.value = true; }
+function closeRoleCreate(): void { showRoleCreate.value = false; }
+function onEscape(event: KeyboardEvent): void { if (event.key === "Escape" && showRoleCreate.value) closeRoleCreate(); }
 const results = ref<ResultOption[]>([]);
 const completion = ref({ resultCode: "", report: "", duration: "" });
 const cancellationReason = ref("");
@@ -986,15 +990,19 @@ function refreshCreateNow(): void { createNow.value = new Date(); }
 onMounted(() => {
   refreshCreateNow();
   createTimer = setInterval(refreshCreateNow, 60_000);
+  window.addEventListener("keydown", onEscape);
   load();
 });
-onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
+onBeforeUnmount(() => {
+  if (createTimer) clearInterval(createTimer);
+  window.removeEventListener("keydown", onEscape);
+});
 </script>
 
 <template>
   <main class="shell" :class="{ 'with-sidebar': showSidebar }">
     <AppSidebar v-if="showSidebar && user" :roles="user.roles.map((role) => role.id)" :full-name="user.full_name" :path="currentPath" @logout="logout" />
-    <section class="card" :class="{ 'manager-card': managerPath && !!user }" aria-live="polite">
+    <section class="card" :class="{ 'manager-card': managerPath && !!user, wide: !!user && (managerPath || schedulesPath || adminPath || reportsPath) }" aria-live="polite">
       <p v-if="busy">Проверяем сессию…</p>
 
       <template v-else-if="!user">
@@ -1046,13 +1054,15 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
       </template>
 
       <template v-else-if="workplacePath">
-        <header class="top"><div><p class="eyebrow">RDM</p><h1>Мои карточки</h1></div></header>
+        <header class="top"><div><p class="eyebrow">RDM</p><h1>Мои карточки</h1></div><button v-if="hasL1Role || hasL2Role" type="button" data-test="open-create" @click="openRoleCreate">+ Создать карточку</button></header>
         <div v-if="hasL1Role && hasL2Role" class="manager-toggle" role="group" aria-label="Рабочая роль"><button type="button" :class="{ selected: mineRole === 'l1' }" @click="mineRole = 'l1'; loadMine()">L1</button><button type="button" :class="{ selected: mineRole === 'l2' }" @click="mineRole = 'l2'; loadMine()">L2</button></div>
         <div v-if="mineRole === 'l1'" class="manager-toggle" role="group" aria-label="Раздел списка" data-test="mine-tabs"><button v-for="tab in mineTabs" :key="tab.key" type="button" :class="{ selected: mineTab === tab.key }" :data-test="`mine-tab-${tab.key}`" @click="mineTab = tab.key">{{ tab.label }} ({{ tab.count }})</button></div>
         <p v-if="mineError" class="error" role="alert">{{ mineError }}</p>
         <p v-else-if="!mineVisible.length" class="hint">{{ mine.length ? "В этом разделе карточек нет." : "Карточек пока нет." }}</p>
         <div v-else class="work-list"><a v-for="item in mineVisible" :key="item.id" class="panel work-row" :href="`/cards/${item.id}`"><strong>{{ item.number }}</strong><span>{{ item.status_label }}<template v-if="item.overdue_flag"> · Просрочено</template></span><span v-if="item.l2_engineer_name" class="muted">L2: {{ item.l2_engineer_name }}</span><span>{{ formatDateTime(item.planned_start_at) }}</span></a></div>
-        <section v-if="hasL1Role || hasL2Role" class="panel"><h2>Создать карточку {{ mineRole.toUpperCase() }}</h2>
+        <div v-if="showRoleCreate && (hasL1Role || hasL2Role)" class="modal-backdrop" data-test="create-modal" @click.self="closeRoleCreate">
+          <section class="modal" role="dialog" aria-modal="true" :aria-label="`Создать карточку ${mineRole.toUpperCase()}`">
+            <header class="modal-head"><h2>Создать карточку {{ mineRole.toUpperCase() }}</h2><button type="button" class="secondary modal-close" aria-label="Закрыть" @click="closeRoleCreate">×</button></header>
           <form class="form form-grid role-create-form" @submit.prevent="submitRoleCreate">
             <label>Номер тикета<input v-model.trim="roleCreate.caseNumber" pattern="[0-9]{3}-[0-9]{6}" placeholder="123-456789" required /></label>
             <label>Длительность, минут<input v-model.number="roleCreate.duration" type="number" :min="planning.min_duration_minutes" :max="planning.max_duration_minutes" required /></label>
@@ -1062,9 +1072,10 @@ onBeforeUnmount(() => { if (createTimer) clearInterval(createTimer); });
             <template v-if="mineRole === 'l2' && roleCreate.scenario === 'retroactive'"><label>Результат<select v-model="roleCreate.resultCode"><option value="">Не указан</option><option v-for="option in results" :key="option.code" :value="String(option.code)">{{ option.name }}</option></select></label><label class="span-2">Отчёт<textarea v-model="roleCreate.report" rows="3"></textarea></label></template>
             <label class="span-2">Описание<textarea v-model="roleCreate.description" rows="2"></textarea></label>
             <p v-if="roleCreateError" class="error span-2" role="alert">{{ roleCreateError }}</p>
-            <button class="form-submit" :disabled="roleCreateBusy">{{ roleCreateBusy ? "Создаём…" : "Создать карточку" }}</button>
+            <div class="span-2 action-row"><button :disabled="roleCreateBusy">{{ roleCreateBusy ? "Создаём…" : "Создать карточку" }}</button><button type="button" class="secondary" data-test="close-create" @click="closeRoleCreate">Отмена</button></div>
           </form>
-        </section>
+          </section>
+        </div>
       </template>
 
       <template v-else-if="showCard && card">

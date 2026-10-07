@@ -35,6 +35,7 @@ from app.db import db_connection
 
 DEMO_TZ = "Asia/Yekaterinburg"
 INACTIVE_USER = "demo-inactive"
+VIEWER_USER = "demo-viewer"
 FIXTURE_TICKET_PREFIX = "910"
 USER_PREFIX = "demo-"
 TICKET_PREFIX = "900"
@@ -42,7 +43,7 @@ DESCRIPTION_PREFIX = "DEMO:"
 MIN_PASSWORD_LENGTH = 8
 
 # (username, full name, role, schedule kind)
-DEMO_USERS: list[tuple[str, str, RoleId, str]] = [
+DEMO_USERS: list[tuple[str, str, RoleId | tuple[RoleId, ...], str]] = [
     ("demo-l1-anna", "DEMO Анна Смирнова", RoleId.L1, "weekdays_day"),
     ("demo-l1-oleg", "DEMO Олег Фёдоров", RoleId.L1, "weekdays_day"),
     ("demo-l2-ivan", "DEMO Иван Петров", RoleId.L2, "weekdays_day"),
@@ -50,6 +51,13 @@ DEMO_USERS: list[tuple[str, str, RoleId, str]] = [
     ("demo-l2-denis", "DEMO Денис Орлов", RoleId.L2, "weekdays_late"),
     ("demo-manager", "DEMO Руководитель", RoleId.MANAGER, "none"),
     (INACTIVE_USER, "DEMO Неактивный сотрудник", RoleId.L1, "none"),
+    # All four roles at once, to look through every screen of the interface.
+    (
+        VIEWER_USER,
+        "DEMO Просмотр интерфейса",
+        (RoleId.L1, RoleId.L2, RoleId.MANAGER, RoleId.ADMIN),
+        "weekdays_day",
+    ),
 ]
 
 RESULT_CODES = (0, 0, 0, 1, 2, 3)
@@ -681,6 +689,143 @@ FIXTURES: list[dict] = [
         "when": ("ahead", 5, "10:00"),
         "purpose": "Переназначение на другого L2, отмена, перенос, действия за инженера.",
     },
+    {
+        "label": "V-1",
+        "block": "Просмотр",
+        "status": CardStatus.REJECTED,
+        "creator": VIEWER_USER,
+        "l1": VIEWER_USER,
+        "l2": None,
+        "when": ("ahead", 3, "11:00"),
+        "uc": 2,
+        "purpose": "Просмотр: отклонена, вы сопровождающий L1 (раздел «Требуют работы»).",
+    },
+    {
+        "label": "V-2",
+        "block": "Просмотр",
+        "status": CardStatus.REJECTED,
+        "creator": VIEWER_USER,
+        "l1": VIEWER_USER,
+        "l2": None,
+        "when": ("ahead", 4, "11:00"),
+        "uc": 1,
+        "informed": True,
+        "purpose": "Просмотр: отклонена, клиент проинформирован (интервал напоминаний).",
+    },
+    {
+        "label": "V-3",
+        "block": "Просмотр",
+        "status": CardStatus.ASSIGNED,
+        "creator": VIEWER_USER,
+        "l1": None,
+        "l2": "demo-l2-ivan",
+        "when": ("ahead", 5, "10:00"),
+        "purpose": "Просмотр: создана вами, назначена инженеру.",
+    },
+    {
+        "label": "V-4",
+        "block": "Просмотр",
+        "status": CardStatus.CONFIRMED,
+        "creator": VIEWER_USER,
+        "l1": None,
+        "l2": "demo-l2-ivan",
+        "when": ("ahead", 5, "14:00"),
+        "purpose": "Просмотр: подтверждена инженером.",
+    },
+    {
+        "label": "V-5",
+        "block": "Просмотр",
+        "status": CardStatus.IN_PROGRESS,
+        "creator": VIEWER_USER,
+        "l1": None,
+        "l2": "demo-l2-maria",
+        "when": ("ago", 20),
+        "duration": 120,
+        "purpose": "Просмотр: выполняется.",
+    },
+    {
+        "label": "V-6",
+        "block": "Просмотр",
+        "status": CardStatus.COMPLETED,
+        "creator": VIEWER_USER,
+        "l1": None,
+        "l2": "demo-l2-maria",
+        "when": ("ago", 26 * 60),
+        "purpose": "Просмотр: завершена.",
+    },
+    {
+        "label": "V-7",
+        "block": "Просмотр",
+        "status": CardStatus.CANCELLED,
+        "creator": VIEWER_USER,
+        "l1": None,
+        "l2": None,
+        "when": ("ago", 3 * 24 * 60),
+        "purpose": "Просмотр: отменена.",
+    },
+    {
+        "label": "V-8",
+        "block": "Просмотр",
+        "status": CardStatus.ASSIGNED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": VIEWER_USER,
+        "when": ("ahead", 2, "15:00"),
+        "urgent": True,
+        "purpose": "Просмотр: вы инженер L2, срочная карточка на подтверждение.",
+    },
+    {
+        "label": "V-9",
+        "block": "Просмотр",
+        "status": CardStatus.CONFIRMED,
+        "creator": "demo-l1-oleg",
+        "l1": None,
+        "l2": VIEWER_USER,
+        "when": ("ahead", 3, "15:00"),
+        "purpose": "Просмотр: вы инженер L2, подтверждена.",
+    },
+    {
+        "label": "V-10",
+        "block": "Просмотр",
+        "status": CardStatus.IN_PROGRESS,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": VIEWER_USER,
+        "when": ("ago", 15),
+        "duration": 90,
+        "purpose": "Просмотр: вы инженер L2, выполняется (завершение с результатом).",
+    },
+    {
+        "label": "V-11",
+        "block": "Просмотр",
+        "status": CardStatus.COMPLETED_PENDING_RESULT,
+        "creator": "demo-l1-oleg",
+        "l1": None,
+        "l2": VIEWER_USER,
+        "when": ("ago", 30 * 60),
+        "purpose": "Просмотр: вы инженер L2, ожидает результат.",
+    },
+    {
+        "label": "V-12",
+        "block": "Просмотр",
+        "status": CardStatus.COMPLETED,
+        "creator": "demo-l1-anna",
+        "l1": None,
+        "l2": VIEWER_USER,
+        "when": ("ago", 50 * 60),
+        "purpose": "Просмотр: вы инженер L2, завершена.",
+    },
+    {
+        "label": "V-13",
+        "block": "Просмотр",
+        "status": CardStatus.ASSIGNED,
+        "creator": VIEWER_USER,
+        "l1": VIEWER_USER,
+        "l2": "demo-l2-denis",
+        "when": ("ago", 200),
+        "overdue": True,
+        "purpose": "Просмотр: просроченная назначенная карточка (признак «Просрочено»).",
+    },
 ]
 
 
@@ -949,7 +1094,9 @@ def seed(connection, password: str, days: int) -> dict[str, int]:
                     email=None,
                     phone=None,
                     omnidesk_staff_id=None,
-                    roles=[int(role)],
+                    roles=[
+                        int(r) for r in (role if isinstance(role, tuple) else (role,))
+                    ],
                     is_active=True,
                     actor_user_id=None,
                     ip_address=None,
@@ -988,6 +1135,8 @@ def seed(connection, password: str, days: int) -> dict[str, int]:
                             day,
                         ),
                     )
+            if isinstance(role, tuple):  # the viewer never takes part in distribution
+                continue
             cursor.execute(
                 """
                 INSERT INTO distribution_members (user_id, pool_code, is_enabled, enabled_at, comment)

@@ -138,6 +138,7 @@ describe("RDM FE-02 Bounded Playwright Browser Suite", () => {
       assert.match(workListText, /Отклонено/);
 
       // Create L1 card
+      await page.click("[data-test='open-create']");
       await page.fill(".role-create-form input[pattern]", "111-222333");
       const inTwoDays = new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
       await page.fill(".role-create-form [data-test='role-slot-date']", inTwoDays);
